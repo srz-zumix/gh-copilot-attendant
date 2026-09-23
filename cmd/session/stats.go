@@ -104,7 +104,7 @@ any of multiple values.`,
 	f.StringVar(&since, "since", "", "only count requests made at or after this time (RFC3339, YYYY-MM-DD, or a relative duration like 2w/7d/24h/30m)")
 	f.StringVar(&until, "until", "", "only count requests made before this time (RFC3339, YYYY-MM-DD, or a relative duration like 2w/7d/24h/30m)")
 	f.StringVar(&period, "period", "", "only count requests made within this period back from now (e.g. 7d, 3w, 6m, 1y); shorthand for --since")
-	f.StringArrayVar(&operations, "operation", nil, "only count requests classified as this operation (read or write); may be repeated to match multiple operations")
+	cmdutil.StringSliceEnumFlag(cmd, &operations, "operation", "", nil, []string{"read", "write"}, "only count requests classified as this operation; may be repeated to match multiple operations")
 	f.StringArrayVar(&kinds, "kind", nil, "only count requests of this exact tool kind (e.g. shell, read, write); may be repeated to match multiple kinds")
 	f.StringArrayVar(&commands, "command", nil, "only count requests that include this exact command identifier; may be repeated to match multiple commands")
 	f.StringArrayVar(&paths, "path", nil, "only count requests with a recorded path matching this regular expression; may be repeated to match any of multiple patterns")
