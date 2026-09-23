@@ -3,8 +3,9 @@ module github.com/srz-zumix/gh-copilot-attendant
 go 1.26.1
 
 require (
+	github.com/cli/cli/v2 v2.97.0
 	github.com/spf13/cobra v1.10.2
-	github.com/srz-zumix/go-gh-extension v0.6.15
+	github.com/srz-zumix/go-gh-extension v0.6.16
 )
 
 require (
@@ -20,8 +21,10 @@ require (
 	github.com/Songmu/skillsmith v0.1.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
+	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0 // indirect
 	github.com/briandowns/spinner v1.23.2 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
@@ -33,15 +36,19 @@ require (
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/cli/browser v1.3.0 // indirect
-	github.com/cli/cli/v2 v2.97.0 // indirect
 	github.com/cli/go-gh/v2 v2.13.0 // indirect
 	github.com/cli/safeexec v1.0.1 // indirect
 	github.com/cli/shurcooL-graphql v0.0.4 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/ddddddO/gtree v1.14.9 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/google/go-github/v88 v88.0.0 // indirect
+	github.com/google/go-github/v90 v90.0.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/henvic/httpretty v0.1.4 // indirect
@@ -61,6 +68,11 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
+	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
+	github.com/olekukonko/errors v1.2.0 // indirect
+	github.com/olekukonko/ll v0.1.6 // indirect
+	github.com/olekukonko/tablewriter v1.1.4 // indirect
+	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/githubv4 v0.0.0-20240727222349-48295856cce7 // indirect
@@ -70,11 +82,11 @@ require (
 	github.com/stretchr/testify v1.12.0 // indirect
 	github.com/thlib/go-timezone-local v0.0.6 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/crypto v0.56.0 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
