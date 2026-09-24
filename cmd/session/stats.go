@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cli/cli/v2/pkg/cmdutil"
@@ -51,7 +52,7 @@ any of multiple values.`,
 
 			scope, err := copilotext.ResolveSessionScope(ctx, all, cwd, worktree)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve session scope: %w", err)
 			}
 
 			opts := copilotext.PermissionStatsOptions{
@@ -62,21 +63,21 @@ any of multiple values.`,
 			if since != "" {
 				t, err := parser.ParseTime(since)
 				if err != nil {
-					return err
+					return fmt.Errorf("parse --since: %w", err)
 				}
 				opts.Since = t
 			}
 			if until != "" {
 				t, err := parser.ParseTime(until)
 				if err != nil {
-					return err
+					return fmt.Errorf("parse --until: %w", err)
 				}
 				opts.Until = t
 			}
 			if period != "" {
 				d, err := parser.ParsePeriod(period)
 				if err != nil {
-					return err
+					return fmt.Errorf("parse --period: %w", err)
 				}
 				opts.Since = time.Now().Add(-d)
 			}
@@ -88,11 +89,14 @@ any of multiple values.`,
 
 			stats, err := copilotext.CollectPermissionStats(opts)
 			if err != nil {
-				return err
+				return fmt.Errorf("collect permission stats: %w", err)
 			}
 
 			r := render.NewRenderer(exporter)
-			return r.RenderCopilotPermissionStats(stats)
+			if err := r.RenderCopilotPermissionStats(stats); err != nil {
+				return fmt.Errorf("render permission stats: %w", err)
+			}
+			return nil
 		},
 	}
 

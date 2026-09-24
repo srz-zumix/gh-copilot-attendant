@@ -32,7 +32,7 @@ session history recorded under `~/.copilot/session-state` (or `$COPILOT_HOME/ses
 #### session stats
 
 ```sh
-gh copilot-attendant session stats [--all | --cwd <path> | --worktree|-W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--operation <read|write>]... [--kind <kind>]... [--command <identifier>]... [--path <pattern>]... [--url <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
+gh copilot-attendant session stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--operation <read|write>]... [--kind <kind>]... [--command <identifier>]... [--path <pattern>]... [--url <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
 ```
 
 Scans the local Copilot CLI session history and reports how often each tool, command, file
