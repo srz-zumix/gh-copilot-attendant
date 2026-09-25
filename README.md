@@ -58,6 +58,33 @@ statistic (default `10`; `0` keeps every entry).
 `gh copilot-attendant skills` manages the agent skills bundled with this extension. Run
 `gh copilot-attendant skills --help` for its subcommands.
 
+### vscode
+
+`gh copilot-attendant vscode` groups commands that inspect the local VS Code GitHub Copilot
+Chat extension's debug logs, recorded under
+`~/Library/Application Support/Code/User/workspaceStorage`. Only the stable, non-Insiders
+VS Code installation on macOS is supported.
+
+#### vscode stats
+
+```sh
+gh copilot-attendant vscode stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--tool <pattern>]... [--model <pattern>]... [--agent <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
+```
+
+Scans the local VS Code Copilot Chat debug logs and reports tool usage, LLM token and usage
+totals, turn counts, and subagent invocations. `--all`, `--cwd`, and `--worktree`/`-W` are
+mutually exclusive and all optional; when none are given, only sessions belonging to the
+current git worktree are counted. `--session` restricts to a single session ID. `--since`
+and `--until` accept RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as
+`7d`/`24h`/`30m`, and default to no bound. `--period` is shorthand for `--since` using a
+coarser window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`.
+`--tool`, `--model`, and `--agent` restrict to tool calls, LLM requests, or subagent
+invocations matching the given regular expression (a plain substring is also a valid,
+unanchored regular expression), and may each be repeated to match any of multiple values.
+`--top` keeps only the top N entries per statistic (default `10`; `0` keeps every entry).
+`--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
+`--format json`, results are printed as tables.
+
 ## Development
 
 ```bash
