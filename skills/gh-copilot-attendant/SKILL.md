@@ -20,3 +20,10 @@ history. See the [README](../../README.md#session-stats) for the full flag refer
 Reports tool usage, LLM token/usage, turn, and subagent statistics from local VS Code
 GitHub Copilot Chat debug logs. See the [README](../../README.md#vscode-stats) for the full
 flag reference.
+
+## Dashboard canvas
+
+In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
+`.github/extensions/attendant-dashboard` in this repository) visualizes the same
+`session stats` and `vscode stats` results. See its
+[README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.

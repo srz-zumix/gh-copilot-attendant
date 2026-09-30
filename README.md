@@ -85,6 +85,14 @@ unanchored regular expression), and may each be repeated to match any of multipl
 `--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
 `--format json`, results are printed as tables.
 
+## Copilot app dashboard
+
+This repository ships a canvas extension for the GitHub Copilot app in
+[`.github/extensions/attendant-dashboard`](.github/extensions/attendant-dashboard/README.md).
+When a Copilot session runs inside this repository, ask the agent to open the
+"Copilot attendant dashboard" to browse `session stats` and `vscode stats` results as
+interactive charts, filter by clicking entries, and hand the data back to the agent.
+
 ## Development
 
 ```bash
