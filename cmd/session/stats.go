@@ -22,6 +22,7 @@ func NewStatsCmd() *cobra.Command {
 	var period string
 	var operations []string
 	var kinds []string
+	var decisionSources []string
 	var commands []string
 	var paths []string
 	var urls []string
@@ -30,9 +31,11 @@ func NewStatsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Report tool, path, and URL permission statistics from local Copilot CLI session history",
+		Short: "Report tool, path, URL permission, and usage statistics from local Copilot CLI session history",
 		Long: `Scan the GitHub Copilot CLI's local session history and report how often each
-tool, command, file path, and URL was requested, and whether it was approved or denied.
+tool, command, file path, and URL was requested, and whether it was approved or denied. It
+also reports each session's usage totals (premium requests, AIU, and token counts) from its
+"session.shutdown" event, when recorded.
 
 By default only sessions whose recorded working directory is inside the current git
 worktree are counted. Use --worktree to scope to a different worktree, --cwd to match a
@@ -44,8 +47,13 @@ Use --period as shorthand for --since when you only need a time window back from
 Use --operation to restrict to non-mutating ("read") or mutating ("write") requests, and
 --kind, --command, --path, or --url to restrict to requests matching that tool kind,
 command, path, or URL. --path and --url match as regular expressions (a plain substring is
-also a valid, unanchored regular expression). Each of these flags may be repeated to match
-any of multiple values.`,
+also a valid, unanchored regular expression). --decision-source restricts to permission
+outcomes whose recorded decision source matches exactly (e.g. human_response,
+unattended_fallback, or unknown for CLI versions that did not record one). Each of these
+flags may be repeated to match any of multiple values. --since, --until, and --period also
+bound which sessions' usage totals are counted, by their "session.shutdown" event's time;
+--operation, --kind, --decision-source, --command, --path, and --url do not affect usage
+totals, since usage is not recorded per permission request.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -83,6 +91,7 @@ any of multiple values.`,
 			}
 			opts.Operations = operations
 			opts.Kind = kinds
+			opts.DecisionSource = decisionSources
 			opts.Command = commands
 			opts.Path = paths
 			opts.URL = urls
@@ -110,6 +119,7 @@ any of multiple values.`,
 	f.StringVar(&period, "period", "", "only count requests made within this period back from now (e.g. 7d, 3w, 6m, 1y); shorthand for --since")
 	cmdutil.StringSliceEnumFlag(cmd, &operations, "operation", "", nil, []string{"read", "write"}, "only count requests classified as this operation; may be repeated to match multiple operations")
 	f.StringArrayVar(&kinds, "kind", nil, "only count requests of this exact tool kind (e.g. shell, read, write); may be repeated to match multiple kinds")
+	f.StringArrayVar(&decisionSources, "decision-source", nil, "only count permission outcomes with this exact decision source (e.g. human_response, unattended_fallback, unknown); may be repeated to match multiple values")
 	f.StringArrayVar(&commands, "command", nil, "only count requests that include this exact command identifier; may be repeated to match multiple commands")
 	f.StringArrayVar(&paths, "path", nil, "only count requests with a recorded path matching this regular expression; may be repeated to match any of multiple patterns")
 	f.StringArrayVar(&urls, "url", nil, "only count requests with a recorded URL matching this regular expression; may be repeated to match any of multiple patterns")
