@@ -38,7 +38,8 @@ gh copilot-attendant session stats [--all | --cwd <path> | --worktree <path> | -
 Scans the local Copilot CLI session history and reports how often each tool, command, file
 path, and URL was requested, broken down by whether it was approved or denied, as well as
 by the CLI's own `decisionSource` for that outcome (e.g. `human_response`; `unknown` when
-the recording CLI version did not capture it). It also reports each session's usage totals
+no decision source was recorded, including sessions from older CLI versions and unresolved
+requests without a recorded outcome). It also reports each session's usage totals
 (premium requests, AIU, and token counts) recorded by its `session.shutdown` event, summed
 overall and broken down by working directory; usage is counted independently of the
 permission-request filters below, since it is not recorded per permission request. `--all`,
@@ -52,7 +53,7 @@ window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `-
 restricts to non-mutating (`read`) or mutating (`write`) requests. `--kind` restricts to an
 exact tool kind (e.g. `shell`, `read`, `write`); `--decision-source` restricts to permission
 outcomes with an exact decision source (e.g. `human_response`, `unattended_fallback`, or `unknown`
-for CLI versions that did not record one); `--command` restricts to requests that include an
+when no decision source was recorded, including older CLI versions and unresolved requests); `--command` restricts to requests that include an
 exact command identifier; `--path` and `--url` restrict to requests with a recorded path or
 URL matching the given regular expression (a plain substring is also a valid, unanchored
 regular expression). `--operation`, `--kind`, `--decision-source`, `--command`, `--path`, and

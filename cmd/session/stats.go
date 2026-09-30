@@ -49,7 +49,8 @@ Use --operation to restrict to non-mutating ("read") or mutating ("write") reque
 command, path, or URL. --path and --url match as regular expressions (a plain substring is
 also a valid, unanchored regular expression). --decision-source restricts to permission
 outcomes whose recorded decision source matches exactly (e.g. human_response,
-unattended_fallback, or unknown for CLI versions that did not record one). Each of these
+unattended_fallback, or unknown when no decision source was recorded, including older CLI
+versions and unresolved requests without a recorded outcome). Each of these
 flags may be repeated to match any of multiple values. --since, --until, and --period also
 bound which sessions' usage totals are counted, by their "session.shutdown" event's time;
 --operation, --kind, --decision-source, --command, --path, and --url do not affect usage
