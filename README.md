@@ -24,6 +24,63 @@ instructions.
 
 ## Commands
 
+### copilot
+
+`gh copilot-attendant copilot` groups commands that manage the GitHub Copilot CLI canvas
+extensions bundled with this repository (currently `attendant-dashboard`). Extensions are
+downloaded from this repository's GitHub sources. All `[name...]` arguments are optional;
+when omitted, every bundled extension is targeted.
+
+#### copilot extension install
+
+```sh
+gh copilot-attendant copilot extension install [name...] [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
+```
+
+Downloads and installs the given extensions. `--scope` selects the installation scope:
+`user` (default) installs under `$COPILOT_HOME/extensions` (`~/.copilot/extensions` when
+unset) and `repo` installs into the current repository's `.github/extensions`. `--prefix`
+overrides the install directory and takes precedence over `--scope`. `--ref` overrides the
+default git ref (`main`). `--dry-run` prints what would be installed without writing files.
+`--force` overwrites an existing destination directory that is not managed by this command.
+
+#### copilot extension list
+
+```sh
+gh copilot-attendant copilot extension list
+```
+
+Lists the bundled extensions with their source URL and default ref.
+
+#### copilot extension status
+
+```sh
+gh copilot-attendant copilot extension status [name...] [--scope <user|repo>] [--prefix <dir>]
+```
+
+Shows whether the given extensions are installed and which ref and commit they were installed
+from. Only the local filesystem is inspected. `--scope` defaults to `user`.
+
+#### copilot extension uninstall
+
+```sh
+gh copilot-attendant copilot extension uninstall [name...] [--scope <user|repo>] [--prefix <dir>] [--dry-run] [--force]
+```
+
+Removes the given extensions. `--scope` defaults to `user`. `--dry-run` prints what would be
+removed. `--force` removes a destination directory even if it is not managed by this command.
+
+#### copilot extension update
+
+```sh
+gh copilot-attendant copilot extension update [name...] [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
+```
+
+Re-installs the given installed extensions when their ref resolves to a different commit than
+the installed one. Fails if an extension is not installed yet. `--scope` defaults to `user`.
+`--ref` overrides the default git ref (`main`). `--dry-run` prints what would be updated.
+`--force` re-installs even when already up to date, or overwrites an unmanaged directory.
+
 ### session
 
 `gh copilot-attendant session` groups commands that inspect the local GitHub Copilot CLI
