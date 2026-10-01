@@ -90,6 +90,13 @@ function exactPattern(value) {
     return `^${String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
+/** Quotes one argument for a POSIX shell so a copied command keeps its argv. */
+function shellQuote(arg) {
+    const value = String(arg);
+    if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+    return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function isZeroTime(value) {
     return !value || String(value).startsWith("0001-01-01");
 }
@@ -215,7 +222,7 @@ function render() {
             : [h("div", { class: "empty" }, result.status === "loading" ? "Running gh copilot-attendant…" : "No data yet.")]),
     );
     $("refresh").disabled = false;
-    $("command").textContent = `gh copilot-attendant ${result.command.join(" ")}`;
+    $("command").textContent = `gh copilot-attendant ${result.command.map(shellQuote).join(" ")}`;
     renderPresets(source, result);
 }
 

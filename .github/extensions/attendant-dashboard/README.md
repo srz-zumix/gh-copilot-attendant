@@ -67,7 +67,8 @@ rejected before the command runs.
 - **Ask agent** — preset prompts (summarize, suggest allow rules, tool health, token cost) and a
   free-text box; the current tab's data is sent to the agent as delimited, untrusted JSON.
   Asking is only available once the current tab has a successful result for the current query.
-- The footer shows the exact `gh copilot-attendant` command for the current query.
+- The footer shows the `gh copilot-attendant` command for the current query, with each argument
+  quoted for a POSIX shell (not PowerShell or `cmd.exe`) so it can be copied and pasted safely.
 
 ## Actions
 
