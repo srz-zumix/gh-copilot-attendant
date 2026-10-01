@@ -1,7 +1,7 @@
 ---
 name: gh-copilot-attendant
 description: Basic skill package for the gh-copilot-attendant GitHub CLI extension.
-allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
+allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant copilot extension:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
 ---
 
 # gh-copilot-attendant
@@ -9,6 +9,11 @@ allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh co
 This is a minimal skill bundle for `gh-copilot-attendant`.
 
 ## Commands
+
+### copilot extension install / update / uninstall / list / status
+
+Manages the bundled Copilot CLI canvas extension (`attendant-dashboard`). See the
+[README](../../README.md#copilot-extension-install) for the full flag reference.
 
 ### session stats
 
@@ -21,3 +26,10 @@ requests, AIU, token counts) from local GitHub Copilot CLI session history. See 
 Reports tool usage, LLM token/usage, turn, and subagent statistics from local VS Code
 GitHub Copilot Chat debug logs. See the [README](../../README.md#vscode-stats) for the full
 flag reference.
+
+## Dashboard canvas
+
+In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
+`.github/extensions/attendant-dashboard` in this repository) visualizes the same
+`session stats` and `vscode stats` results. See its
+[README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.

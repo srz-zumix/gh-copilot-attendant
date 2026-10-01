@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="dashboard-token" content="__DASHBOARD_TOKEN__" />
+        <title>Copilot attendant</title>
+        <link rel="icon" href="data:," />
+        <link rel="stylesheet" href="/styles.css" />
+        <script type="module" src="/app.js"></script>
+    </head>
+    <body>
+        <header class="topbar">
+            <nav class="tabs" role="tablist" aria-label="Data source">
+                <button type="button" role="tab" data-source="session">Copilot CLI</button>
+                <button type="button" role="tab" data-source="vscode">VS Code</button>
+            </nav>
+            <div class="status" id="status" aria-live="polite"></div>
+            <button type="button" class="btn primary" id="refresh">Refresh</button>
+        </header>
+
+        <form class="query" id="query" autocomplete="off">
+            <label>
+                <span>Scope</span>
+                <select name="scope">
+                    <option value="worktree">Current worktree</option>
+                    <option value="cwd">Exact directory</option>
+                    <option value="all">All sessions</option>
+                </select>
+            </label>
+            <label class="grow">
+                <span>Path</span>
+                <input name="path" type="text" spellcheck="false" />
+            </label>
+            <label>
+                <span>Period</span>
+                <select name="period">
+                    <option value="">None</option>
+                    <option value="1d">1 day</option>
+                    <option value="7d">7 days</option>
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="6m">6 months</option>
+                    <option value="1y">1 year</option>
+                </select>
+            </label>
+            <label>
+                <span>Since</span>
+                <input name="since" type="text" placeholder="YYYY-MM-DD or 7d" spellcheck="false" />
+            </label>
+            <label>
+                <span>Until</span>
+                <input name="until" type="text" placeholder="YYYY-MM-DD or 1d" spellcheck="false" />
+            </label>
+            <label>
+                <span>Session</span>
+                <input name="session" type="text" placeholder="any" spellcheck="false" />
+            </label>
+            <label class="narrow">
+                <span>Top</span>
+                <input name="top" type="number" min="0" max="1000" step="1" />
+            </label>
+            <div class="form-actions">
+                <button type="submit" class="btn">Apply</button>
+                <button type="button" class="btn subtle" id="reset">Reset</button>
+            </div>
+        </form>
+
+        <section class="filters" id="filters" aria-label="Filters"></section>
+
+        <div class="banner error" id="error" hidden></div>
+        <details class="banner warn" id="warnings" hidden>
+            <summary></summary>
+            <ul></ul>
+        </details>
+
+        <main id="content" class="content"></main>
+
+        <section class="ask" aria-labelledby="ask-title">
+            <h2 id="ask-title">Ask agent</h2>
+            <div class="presets" id="presets"></div>
+            <div class="ask-row">
+                <textarea id="ask-text" rows="2" placeholder="Ask the agent about the data on this tab…"></textarea>
+                <button type="button" class="btn primary" id="ask-send">Send</button>
+            </div>
+            <div class="muted small" id="ask-status" aria-live="polite"></div>
+        </section>
+
+        <footer class="command">
+            <code id="command"></code>
+            <button type="button" class="btn subtle small" id="copy">Copy</button>
+        </footer>
+    </body>
+</html>
