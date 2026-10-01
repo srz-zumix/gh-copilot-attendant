@@ -72,7 +72,7 @@ export class Dashboard {
 
     getRunner() {
         if (!this.runnerPromise) {
-            this.runnerPromise = this.resolveRunner(this.runnerMode).then(
+            this.runnerPromise = this.resolveRunner(this.runnerMode, { cwd: this.cwd }).then(
                 (runner) => {
                     this.runnerInfo = { mode: this.runnerMode, label: runner.label, error: null };
                     return runner;

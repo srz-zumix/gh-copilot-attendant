@@ -147,7 +147,7 @@ const canvas = createCanvas({
             runner: {
                 type: "string",
                 enum: RUNNERS,
-                description: "auto (installed gh extension, else build from this repo), gh, or source",
+                description: "auto (installed gh extension, else build from a gh-copilot-attendant checkout), gh, or source",
             },
             query: QUERY_SCHEMA,
         },

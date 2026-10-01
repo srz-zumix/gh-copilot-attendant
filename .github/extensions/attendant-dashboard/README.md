@@ -6,9 +6,9 @@ and renders the result as an interactive dashboard.
 
 ## Requirements
 
-- The `gh` CLI with the `copilot-attendant` extension installed, **or** Go, to build the
-  binary from this repository's sources (used automatically when the gh extension is not
-  installed).
+- The `gh` CLI with the `copilot-attendant` extension installed, **or** Go and a
+  `gh-copilot-attendant` checkout to build the binary from (used automatically when the gh
+  extension is not installed; see [Runner resolution](#runner-resolution)).
 
 ## Usage
 
@@ -26,7 +26,7 @@ input (all fields are optional):
 | --------- | -------- | ----------------------------------------------------------------------------------------------- |
 | `profile` | `string` | Name the last query is remembered under for the current working directory (default `default`).  |
 | `query`   | `object` | Partial query applied on open; see [Query](#query).                                             |
-| `runner`  | `string` | `auto` (default), `gh` (installed gh extension only), or `source` (build from this repository). |
+| `runner`  | `string` | `auto` (default), `gh` (installed gh extension only), or `source` (build from a checkout).      |
 | `source`  | `string` | Tab to show first: `session` (Copilot CLI) or `vscode` (VS Code Copilot Chat).                  |
 
 ### Query
@@ -81,14 +81,28 @@ rejected before the command runs.
 ## Storage
 
 The last query is saved per working directory and profile in
-`$COPILOT_HOME/extensions/attendant-dashboard/artifacts/queries.json` (`$COPILOT_HOME` defaults
-to `~/.copilot`). Results are not persisted; they are re-computed from the local logs.
+`$COPILOT_HOME/extension-data/attendant-dashboard/queries.json` (`$COPILOT_HOME` defaults
+to `~/.copilot`). It is kept outside the installed extension directory so that
+`gh copilot-attendant copilot extension update` and `uninstall` do not discard it. Results are
+not persisted; they are re-computed from the local logs.
 
 ## Runner resolution
 
 With `runner: "auto"`, `$COPILOT_ATTENDANT_BIN` is executed when set; otherwise the installed
 `gh copilot-attendant` is used. Only when gh reports that the extension is not installed (or `gh`
-is missing) is the binary built from this repository with `go build` into a temporary directory.
+is missing) is the binary built with `go build` into a temporary directory. `runner: "source"`
+always builds.
+
+The binary is built from the first `gh-copilot-attendant` checkout (a directory whose `go.mod`
+declares `github.com/srz-zumix/gh-copilot-attendant`) found in this order:
+
+1. The repository containing the extension, when it is loaded from that repository's
+   `.github/extensions/attendant-dashboard`.
+2. The session's working directory, then each of its parent directories.
+
+A user-scoped install (`$COPILOT_HOME/extensions/attendant-dashboard`) does not include the
+sources, so building from source requires the session to run inside a checkout. The checkout is
+built and executed as is, so only run the dashboard from checkouts you trust.
 
 ## Security
 

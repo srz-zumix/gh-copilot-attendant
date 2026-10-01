@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execCapture, isMissingExtension, parseWarnings, runStats } from "../lib/runner.mjs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+    execCapture,
+    findRepoCheckout,
+    isMissingExtension,
+    MODULE_PATH,
+    parseWarnings,
+    resolveRunner,
+    runStats,
+} from "../lib/runner.mjs";
+import { artifactsDir } from "../lib/store.mjs";
 import { composePrompt, summarize } from "../lib/summary.mjs";
 
 const node = process.execPath;
@@ -56,6 +68,39 @@ test("aborting kills the whole process group", { skip: process.platform === "win
     await assert.rejects(running, (error) => error.aborted === true);
     await new Promise((r) => setTimeout(r, 300));
     assert.throws(() => process.kill(grandchild, 0), "grandchild is gone");
+});
+
+test("findRepoCheckout prefers repoRoot, then searches cwd and its parents", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "attendant-runner-"));
+    try {
+        const checkout = path.join(tmp, "checkout");
+        const nested = path.join(checkout, "a", "b");
+        const other = path.join(tmp, "other");
+        const home = path.join(tmp, "home");
+        await mkdir(nested, { recursive: true });
+        await mkdir(path.join(other, "x"), { recursive: true });
+        await mkdir(home, { recursive: true });
+        await writeFile(path.join(checkout, "go.mod"), `module ${MODULE_PATH}\n\ngo 1.22\n`);
+        await writeFile(path.join(other, "go.mod"), "module example.com/other\n");
+
+        assert.equal(await findRepoCheckout({ repoRoot: checkout, cwd: other }), checkout);
+        assert.equal(await findRepoCheckout({ repoRoot: home, cwd: nested }), checkout);
+        assert.equal(await findRepoCheckout({ repoRoot: home, cwd: path.join(other, "x") }), null);
+        assert.equal(await findRepoCheckout({ repoRoot: home }), null);
+        await assert.rejects(
+            resolveRunner("source", { repoRoot: home, cwd: other }),
+            /no github\.com\/srz-zumix\/gh-copilot-attendant checkout found/,
+        );
+    } finally {
+        await rm(tmp, { recursive: true, force: true });
+    }
+});
+
+test("artifactsDir is outside the installed extension directory", () => {
+    const home = path.join(os.tmpdir(), "copilot-home");
+    const dir = artifactsDir({ COPILOT_HOME: home });
+    assert.equal(dir, path.join(home, "extension-data", "attendant-dashboard"));
+    assert.ok(path.relative(path.join(home, "extensions"), dir).startsWith(".."));
 });
 
 test("timeouts reject with a clear reason", async () => {

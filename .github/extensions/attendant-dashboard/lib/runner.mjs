@@ -3,9 +3,14 @@
 // Resolution order for the "auto" runner:
 //   1. `$COPILOT_ATTENDANT_BIN`, when set, is executed directly.
 //   2. The installed gh extension (`gh copilot-attendant`).
-//   3. A binary built from this repository's sources, used only when the gh
-//      extension is not installed (or `gh` itself is missing).
+//   3. A binary built from a gh-copilot-attendant checkout, used only when the
+//      gh extension is not installed (or `gh` itself is missing).
 // The "gh" and "source" runners force options 2 and 3 respectively.
+//
+// The checkout is the repository containing this extension when it is loaded
+// from the repository's `.github/extensions/`. A user-scoped install
+// (`$COPILOT_HOME/extensions/<name>/`) only contains the extension itself, so
+// the working directory and its ancestors are searched instead.
 
 import { spawn } from "node:child_process";
 import { access, mkdir, readFile } from "node:fs/promises";
@@ -18,7 +23,7 @@ export const RUNNERS = ["auto", "gh", "source"];
 export const MODULE_PATH = "github.com/srz-zumix/gh-copilot-attendant";
 
 const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-/** Repository root, assuming the extension lives at `.github/extensions/<name>/`. */
+/** Repository root, valid only when the extension lives at `<repo>/.github/extensions/<name>/`. */
 export const REPO_ROOT = path.resolve(EXTENSION_DIR, "..", "..", "..");
 
 const MAX_OUTPUT = 64 * 1024 * 1024;
@@ -167,9 +172,30 @@ async function isRepoCheckout(root) {
     }
 }
 
-async function buildFromSource(root) {
-    if (!(await isRepoCheckout(root))) {
-        throw new RunError(`cannot build from source: ${root} is not a ${MODULE_PATH} checkout`);
+/**
+ * Finds a checkout to build from: `repoRoot` first, then `cwd` and each of its
+ * ancestors (nearest first). Returns null when none is a checkout.
+ *
+ * @param {{repoRoot?: string, cwd?: string}} [options]
+ * @returns {Promise<string|null>}
+ */
+export async function findRepoCheckout({ repoRoot = REPO_ROOT, cwd } = {}) {
+    if (repoRoot && (await isRepoCheckout(repoRoot))) return path.resolve(repoRoot);
+    if (!cwd) return null;
+    let dir = path.resolve(cwd);
+    for (;;) {
+        if (await isRepoCheckout(dir)) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) return null;
+        dir = parent;
+    }
+}
+
+async function buildFromSource({ repoRoot, cwd }) {
+    const root = await findRepoCheckout({ repoRoot, cwd });
+    if (!root) {
+        const searched = cwd ? `${repoRoot} or ${path.resolve(cwd)} and its parents` : repoRoot;
+        throw new RunError(`cannot build from source: no ${MODULE_PATH} checkout found in ${searched}`);
     }
     const hash = createHash("sha256").update(root).digest("hex").slice(0, 12);
     const dir = path.join(os.tmpdir(), `attendant-dashboard-${hash}`);
@@ -198,12 +224,12 @@ async function probeGh() {
  * Resolves the executable for the requested runner mode.
  *
  * @param {"auto"|"gh"|"source"} [mode]
- * @param {{repoRoot?: string, env?: object}} [options]
+ * @param {{repoRoot?: string, cwd?: string, env?: object}} [options]
  * @returns {Promise<{cmd: string, prefix: string[], label: string}>}
  */
-export async function resolveRunner(mode = "auto", { repoRoot = REPO_ROOT, env = process.env } = {}) {
+export async function resolveRunner(mode = "auto", { repoRoot = REPO_ROOT, cwd, env = process.env } = {}) {
     if (!RUNNERS.includes(mode)) throw new RunError(`runner must be one of ${RUNNERS.join(", ")}`);
-    if (mode === "source") return buildFromSource(repoRoot);
+    if (mode === "source") return buildFromSource({ repoRoot, cwd });
     if (mode === "auto" && env.COPILOT_ATTENDANT_BIN) {
         const bin = env.COPILOT_ATTENDANT_BIN;
         await access(bin).catch(() => {
@@ -213,7 +239,7 @@ export async function resolveRunner(mode = "auto", { repoRoot = REPO_ROOT, env =
     }
     const probe = await probeGh();
     if (probe.ok) return { cmd: "gh", prefix: ["copilot-attendant"], label: `gh ${probe.version}` };
-    if (mode === "auto" && probe.missing) return buildFromSource(repoRoot);
+    if (mode === "auto" && probe.missing) return buildFromSource({ repoRoot, cwd });
     throw new RunError("gh copilot-attendant is not available", { stderr: probe.stderr });
 }
 

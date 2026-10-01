@@ -1,9 +1,11 @@
 // Persists the last dashboard query per (working directory, profile).
 //
 // Queries are user preferences, so they live under
-// `$COPILOT_HOME/extensions/attendant-dashboard/artifacts/` rather than in the
-// repository. Keying by working directory keeps a path-specific scope chosen
-// in one repository from leaking into another.
+// `$COPILOT_HOME/extension-data/attendant-dashboard/` rather than in the
+// repository. They are kept outside `$COPILOT_HOME/extensions/`, because
+// `gh copilot-attendant copilot extension update` replaces and `uninstall`
+// removes the whole installed extension directory. Keying by working directory
+// keeps a path-specific scope chosen in one repository from leaking into another.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -13,7 +15,7 @@ export const EXTENSION_NAME = "attendant-dashboard";
 
 export function artifactsDir(env = process.env) {
     const home = env.COPILOT_HOME || path.join(os.homedir(), ".copilot");
-    return path.join(home, "extensions", EXTENSION_NAME, "artifacts");
+    return path.join(home, "extension-data", EXTENSION_NAME);
 }
 
 export function storeKey(cwd, profile = "default") {
