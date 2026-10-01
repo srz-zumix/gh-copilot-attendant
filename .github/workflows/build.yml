@@ -38,4 +38,4 @@ jobs:
           node-version: lts/*
 
       - name: Run attendant-dashboard extension tests
-        run: node --test .github/extensions/attendant-dashboard/test/
+        run: node --test .github/extensions/attendant-dashboard/test/*.test.mjs

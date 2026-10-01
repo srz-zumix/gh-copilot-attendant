@@ -109,11 +109,12 @@ built and executed as is, so only run the dashboard from checkouts you trust.
 
 The dashboard server binds to `127.0.0.1` on an ephemeral port. API requests must carry a
 per-instance token embedded in the page, a matching `Host` header, and (when sent) a matching
-`Origin`. Commands are spawned without a shell, and every value is passed as a single
+`Origin`. The page that carries the token is served only at an unguessable per-instance URL
+handed to the canvas; `/` and `/index.html` return 404. Commands are spawned without a shell, and every value is passed as a single
 `--flag=value` argument.
 
 ## Development
 
 ```sh
-node --test .github/extensions/attendant-dashboard/test/
+node --test .github/extensions/attendant-dashboard/test/*.test.mjs
 ```

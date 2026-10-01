@@ -4,7 +4,9 @@
 // over plain HTTP on 127.0.0.1. Because any local process or web page can
 // reach a loopback port, every API request must carry a per-instance token
 // (delivered only inside the same-origin HTML page), a matching Host header,
-// and, when present, a matching Origin header.
+// and, when present, a matching Origin header. The token-bearing page itself is
+// served only at an unguessable per-instance path handed to the canvas, so a
+// local process cannot obtain the token by simply fetching "/".
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -20,9 +22,8 @@ const TOKEN_HEADER = "x-dashboard-token";
 const MAX_BODY = 64 * 1024;
 const MAX_ASK = 8 * 1024;
 
+const PAGE = ["index.html", "text/html; charset=utf-8"];
 const STATIC = {
-    "/": ["index.html", "text/html; charset=utf-8"],
-    "/index.html": ["index.html", "text/html; charset=utf-8"],
     "/app.js": ["app.js", "text/javascript; charset=utf-8"],
     "/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
@@ -84,10 +85,11 @@ function tokenMatches(expected, actual) {
  * @param {import("./dashboard.mjs").Dashboard} options.dashboard
  * @param {(args: {source: string, text: string}) => Promise<void>} options.ask
  * @param {string} [options.host]
- * @returns {Promise<{url: string, token: string, close: () => Promise<void>}>}
+ * @returns {Promise<{url: string, origin: string, token: string, close: () => Promise<void>}>}
  */
 export async function startServer({ dashboard, ask, host = "127.0.0.1" }) {
     const token = randomBytes(24).toString("hex");
+    const pagePath = `/${randomBytes(24).toString("hex")}/`;
     const streams = new Set();
     let origin = "";
 
@@ -159,7 +161,7 @@ export async function startServer({ dashboard, ask, host = "127.0.0.1" }) {
     const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? "/", "http://placeholder");
         try {
-            const file = STATIC[url.pathname];
+            const file = url.pathname === pagePath ? PAGE : STATIC[url.pathname];
             if (req.method === "GET" && file) {
                 checkRequest(req, { api: false });
                 let body = await readFile(path.join(UI_DIR, file[0]), "utf-8");
@@ -204,7 +206,8 @@ export async function startServer({ dashboard, ask, host = "127.0.0.1" }) {
     origin = `http://${host}:${port}`;
 
     return {
-        url: `${origin}/`,
+        url: `${origin}${pagePath}`,
+        origin,
         token,
         close: () =>
             new Promise((resolve) => {

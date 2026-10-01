@@ -53,13 +53,25 @@ test("index.html embeds the token and sets a CSP", async (t) => {
     assert.match(res.headers["content-security-policy"], /script-src 'self'/);
 });
 
+test("the token-bearing page is only served at the secret URL", async (t) => {
+    const { server } = await setup();
+    t.after(() => server.close());
+    assert.notEqual(server.url, `${server.origin}/`);
+    for (const p of ["/", "/index.html"]) {
+        const res = await call(`${server.origin}${p}`);
+        assert.equal(res.status, 404);
+        assert.ok(!res.text.includes(server.token));
+    }
+    assert.equal((await call(`${server.origin}/app.js`)).status, 200);
+});
+
 test("API requests require the token", async (t) => {
     const { server, auth } = await setup();
     t.after(() => server.close());
-    assert.equal((await call(`${server.url}api/state`)).status, 401);
-    assert.equal((await call(`${server.url}api/state`, { headers: { "X-Dashboard-Token": "nope" } })).status, 401);
-    assert.equal((await call(`${server.url}events`)).status, 401);
-    const ok = await call(`${server.url}api/state`, { headers: auth });
+    assert.equal((await call(`${server.origin}/api/state`)).status, 401);
+    assert.equal((await call(`${server.origin}/api/state`, { headers: { "X-Dashboard-Token": "nope" } })).status, 401);
+    assert.equal((await call(`${server.origin}/events`)).status, 401);
+    const ok = await call(`${server.origin}/api/state`, { headers: auth });
     assert.equal(ok.status, 200);
     assert.equal(ok.json.query.source, "session");
     assert.ok(ok.json.meta.presets.length > 0);
@@ -68,15 +80,15 @@ test("API requests require the token", async (t) => {
 test("foreign Host and Origin headers are rejected", async (t) => {
     const { server, auth } = await setup();
     t.after(() => server.close());
-    assert.equal((await call(`${server.url}api/state`, { headers: { ...auth, Host: "evil.example" } })).status, 421);
-    assert.equal((await call(`${server.url}api/state`, { headers: { ...auth, Origin: "http://evil.example" } })).status, 403);
+    assert.equal((await call(`${server.origin}/api/state`, { headers: { ...auth, Host: "evil.example" } })).status, 421);
+    assert.equal((await call(`${server.origin}/api/state`, { headers: { ...auth, Origin: "http://evil.example" } })).status, 403);
     assert.equal((await call(server.url, { headers: { Host: "evil.example" } })).status, 421);
 });
 
 test("POST requires JSON and validates the query", async (t) => {
     const { server, auth, json, dashboard } = await setup();
     t.after(() => server.close());
-    const url = `${server.url}api/query`;
+    const url = `${server.origin}/api/query`;
     assert.equal((await call(url, { method: "POST", headers: { ...auth, "Content-Type": "text/plain" }, body: "{}" })).status, 415);
     assert.equal((await call(url, { method: "POST", headers: json, body: "{not json" })).status, 400);
     const invalid = await call(url, { method: "POST", headers: json, body: JSON.stringify({ query: { top: -1 } }) });
@@ -92,7 +104,7 @@ test("POST requires JSON and validates the query", async (t) => {
 test("ask requires a fresh, successful result and forwards presets", async (t) => {
     const { server, json, dashboard, asked } = await setup();
     t.after(() => server.close());
-    const url = `${server.url}api/ask`;
+    const url = `${server.origin}/api/ask`;
     assert.equal((await call(url, { method: "POST", headers: json, body: JSON.stringify({ text: "hi" }) })).status, 409);
     await dashboard.refresh("session");
     assert.equal((await call(url, { method: "POST", headers: json, body: JSON.stringify({}) })).status, 400);
