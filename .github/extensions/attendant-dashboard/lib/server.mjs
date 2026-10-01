@@ -127,7 +127,12 @@ export async function startServer({ dashboard, ask, host = "127.0.0.1" }) {
             }
             if (!text) throw new HttpError(400, "text or preset is required");
             if (text.length > MAX_ASK) throw new HttpError(413, "message too long");
-            if (!dashboard.results[source].data) throw new HttpError(409, "no data loaded for this source yet");
+            const result = dashboard.results[source];
+            if (!result.data) throw new HttpError(409, "no data loaded for this source yet");
+            // The prompt combines the current query with the result, so both must match.
+            if (result.status !== "ok" || !dashboard.isFresh(source)) {
+                throw new HttpError(409, "the result for this source is out of date; refresh it first");
+            }
             await ask({ source, text });
             return { sent: true };
         },

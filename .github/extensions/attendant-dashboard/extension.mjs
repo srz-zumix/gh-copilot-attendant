@@ -45,10 +45,6 @@ const QUERY_SCHEMA = {
                         command: stringArray,
                         path: { ...stringArray, description: "Regular expressions" },
                         url: { ...stringArray, description: "Regular expressions" },
-                        decisionSource: {
-                            ...stringArray,
-                            description: "Exact decision sources, e.g. human_response, unattended_fallback, unknown",
-                        },
                     },
                 },
                 vscode: {

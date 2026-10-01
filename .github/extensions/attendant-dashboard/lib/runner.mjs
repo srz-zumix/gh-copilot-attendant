@@ -38,13 +38,16 @@ export class RunError extends Error {
  *
  * Aborting `signal` (or hitting `timeoutMs`) terminates the whole group, so
  * grandchildren such as the binary `gh` launches do not outlive the request.
+ * The group first receives SIGTERM; if it has not exited after `killGraceMs`
+ * it is killed forcibly, and after another `killGraceMs` the promise rejects
+ * even if some process still holds the output pipes open.
  *
  * @param {string} cmd
  * @param {string[]} args
- * @param {{cwd?: string, signal?: AbortSignal, timeoutMs?: number, env?: object}} [options]
+ * @param {{cwd?: string, signal?: AbortSignal, timeoutMs?: number, killGraceMs?: number, env?: object}} [options]
  * @returns {Promise<{stdout: string, stderr: string, code: number}>}
  */
-export function execCapture(cmd, args, { cwd, signal, timeoutMs = 120_000, env } = {}) {
+export function execCapture(cmd, args, { cwd, signal, timeoutMs = 120_000, killGraceMs = 3_000, env } = {}) {
     return new Promise((resolve, reject) => {
         if (signal?.aborted) {
             reject(new RunError("run was cancelled", { aborted: true }));
@@ -68,14 +71,39 @@ export function execCapture(cmd, args, { cwd, signal, timeoutMs = 120_000, env }
         let settled = false;
         let reason = null;
 
-        const killTree = () => {
-            if (child.exitCode !== null || child.signalCode !== null) return;
+        let killTimer = null;
+        let deadlineTimer = null;
+
+        // The group is signalled even when the direct child has already exited,
+        // because a grandchild may still be running and holding the pipes open.
+        const signalTree = (sig) => {
+            if (!child.pid) return;
             try {
-                if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM");
-                else child.kill("SIGTERM");
+                if (process.platform !== "win32") {
+                    process.kill(-child.pid, sig);
+                } else if (sig === "SIGKILL") {
+                    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
+                        "error",
+                        () => {},
+                    );
+                } else {
+                    child.kill(sig);
+                }
             } catch {
                 // The group may already be gone.
             }
+        };
+        const killTree = () => {
+            if (settled || killTimer) return;
+            signalTree("SIGTERM");
+            killTimer = setTimeout(() => {
+                signalTree("SIGKILL");
+                deadlineTimer = setTimeout(() => {
+                    child.stdout.destroy();
+                    child.stderr.destroy();
+                    settle(null);
+                }, killGraceMs);
+            }, killGraceMs);
         };
         const onAbort = () => {
             reason = "cancelled";
@@ -91,8 +119,19 @@ export function execCapture(cmd, args, { cwd, signal, timeoutMs = 120_000, env }
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            clearTimeout(killTimer);
+            clearTimeout(deadlineTimer);
             signal?.removeEventListener("abort", onAbort);
             fn();
+        };
+        const settle = (code) => {
+            const out = Buffer.concat(stdout).toString("utf-8");
+            const err = Buffer.concat(stderr).toString("utf-8");
+            finish(() => {
+                if (reason === "cancelled") reject(new RunError("run was cancelled", { stderr: err, aborted: true }));
+                else if (reason) reject(new RunError(`run aborted: ${reason}`, { stderr: err }));
+                else resolve({ stdout: out, stderr: err, code: code ?? -1 });
+            });
         };
 
         child.stdout.on("data", (chunk) => {
@@ -110,15 +149,7 @@ export function execCapture(cmd, args, { cwd, signal, timeoutMs = 120_000, env }
         child.on("error", (error) => {
             finish(() => reject(new RunError(`failed to start ${cmd}: ${error.message}`, { code: error.code })));
         });
-        child.on("close", (code) => {
-            const out = Buffer.concat(stdout).toString("utf-8");
-            const err = Buffer.concat(stderr).toString("utf-8");
-            finish(() => {
-                if (reason === "cancelled") reject(new RunError("run was cancelled", { stderr: err, aborted: true }));
-                else if (reason) reject(new RunError(`run aborted: ${reason}`, { stderr: err }));
-                else resolve({ stdout: out, stderr: err, code: code ?? -1 });
-            });
-        });
+        child.on("close", (code) => settle(code));
     });
 }
 

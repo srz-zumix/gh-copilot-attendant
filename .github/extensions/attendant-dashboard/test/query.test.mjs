@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildArgv, defaultQuery, exactPattern, normalizeQuery, QueryError } from "../lib/query.mjs";
+import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, normalizeQuery, QueryError } from "../lib/query.mjs";
 
 test("default query builds the worktree-scoped session command", () => {
     assert.deepEqual(buildArgv(normalizeQuery()), ["session", "stats", "--period=30d", "--top=10", "--format", "json"]);
@@ -30,13 +30,24 @@ test("filters are emitted only for their own source", () => {
     assert.ok(!buildArgv(q, "vscode").some((a) => a.startsWith("--kind")));
 });
 
-test("decisionSource maps to --decision-source", () => {
-    const q = normalizeQuery({ filters: { session: { decisionSource: ["unattended_fallback", "unknown"] } } });
-    const argv = buildArgv(q, "session");
-    assert.ok(argv.includes("--decision-source=unattended_fallback"));
-    assert.ok(argv.includes("--decision-source=unknown"));
-    assert.ok(!argv.some((a) => a.startsWith("--decisionSource")));
-    assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.decisionSource, []);
+test("decisionSource is not a filter the CLI supports", () => {
+    assert.throws(() => normalizeQuery({ filters: { session: { decisionSource: ["unknown"] } } }), /unknown session filter/);
+    // Queries persisted by older builds must still load.
+    const q = normalizeQuery({}, { filters: { session: { kind: ["shell"], decisionSource: ["unknown"] } } });
+    assert.deepEqual(q.filters.session.kind, ["shell"]);
+    assert.ok(!("decisionSource" in q.filters.session));
+    assert.ok(!buildArgv(q, "session").some((a) => a.startsWith("--decision")));
+});
+
+test("regex filters are checked against Go's RE2 syntax", () => {
+    for (const bad of ["(?=a)", "(?!a)", "(?<=a)b", "(?<!a)b", "(?>a)", "(a)\\1", "(?P<n>a)(?P=n)", "\\k<n>", "a\\Z", "\\9"]) {
+        assert.equal(typeof checkGoRegexp(bad), "string", bad);
+        assert.throws(() => normalizeQuery({ filters: { session: { path: [bad] } } }), /regular expression/, bad);
+    }
+    for (const good of ["(?i)foo", "(?i:foo)bar", "(?P<name>a)", "(?<name>a)", "\\Q(a+)\\E", "\\Qa.b", "[[:alpha:]]+", "\\A/tmp\\z", "\\pL", "\\x{41}", "\\101", "[]a]", "(?s-i)x"]) {
+        assert.equal(checkGoRegexp(good), null, good);
+    }
+    assert.deepEqual(normalizeQuery({ filters: { vscode: { tool: ["(?i)read"] } } }).filters.vscode.tool, ["(?i)read"]);
 });
 
 test("patches keep unspecified filters and merge onto the base", () => {

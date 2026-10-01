@@ -31,17 +31,21 @@ input (all fields are optional):
 
 ### Query
 
-| Field     | Type      | Default    | CLI flag                                                                                                                             |
-| --------- | --------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `filters` | `object`  | none       | `session`: `operation`, `kind`, `command`, `path`, `url`, `decisionSource` (`--decision-source`); `vscode`: `tool`, `model`, `agent` |
-| `path`    | `string`  | empty      | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree`                                                               |
-| `period`  | `string`  | `30d`      | `--period` (mutually exclusive with `since`)                                                                                         |
-| `scope`   | `string`  | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd`                                                                         |
-| `session` | `string`  | empty      | `--session`                                                                                                                          |
-| `since`   | `string`  | empty      | `--since`                                                                                                                            |
-| `source`  | `string`  | `session`  | `session stats` or `vscode stats`                                                                                                    |
-| `top`     | `integer` | `10`       | `--top` (`0` keeps every entry)                                                                                                      |
-| `until`   | `string`  | empty      | `--until`                                                                                                                            |
+| Field     | Type      | Default    | CLI flag                                                                                       |
+| --------- | --------- | ---------- | ---------------------------------------------------------------------------------------------- |
+| `filters` | `object`  | none       | `session`: `operation`, `kind`, `command`, `path`, `url`; `vscode`: `tool`, `model`, `agent`   |
+| `path`    | `string`  | empty      | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree`                         |
+| `period`  | `string`  | `30d`      | `--period` (mutually exclusive with `since`)                                                   |
+| `scope`   | `string`  | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd`                                   |
+| `session` | `string`  | empty      | `--session`                                                                                    |
+| `since`   | `string`  | empty      | `--since`                                                                                      |
+| `source`  | `string`  | `session`  | `session stats` or `vscode stats`                                                              |
+| `top`     | `integer` | `10`       | `--top` (`0` keeps every entry)                                                                |
+| `until`   | `string`  | empty      | `--until`                                                                                      |
+
+The `path` and `url` session filters and all `vscode` filters are regular expressions in
+Go's RE2 syntax. Constructs RE2 does not support, such as lookaround and backreferences, are
+rejected before the command runs.
 
 ## Dashboard
 
@@ -55,12 +59,14 @@ input (all fields are optional):
   bar and a per-working-directory table. Permission filters do not apply to usage totals.
 - **Copilot CLI permissions** — sessions, permission requests, and approved/denied/unresolved totals, with
   stacked bars per result, decision source (when the CLI reports it), read-only/read-write,
-  tool kind, command, path, URL, and working directory. Click an entry to add it as a filter (or, for working directories, to scope to it).
+  tool kind, command, path, URL, and working directory. Click a tool kind, command, path, or URL
+  entry to add it as a filter, or a working directory to scope to it.
 - **VS Code** — sessions, turns, LLM requests, tool calls, token and AIU totals, a usage share
   bar per model, model token breakdown (cached / uncached input / output), tool calls with
   error rates and durations, subagents, and workspaces. Click an entry to filter or scope.
 - **Ask agent** — preset prompts (summarize, suggest allow rules, tool health, token cost) and a
   free-text box; the current tab's data is sent to the agent as delimited, untrusted JSON.
+  Asking is only available once the current tab has a successful result for the current query.
 - The footer shows the exact `gh copilot-attendant` command for the current query.
 
 ## Actions

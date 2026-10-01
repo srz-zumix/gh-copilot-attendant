@@ -15,7 +15,6 @@ const LABELS = {
         command: "Command",
         path: "Path",
         url: "URL",
-        decisionSource: "Decision source",
         tool: "Tool",
         model: "Model",
         agent: "Agent",
@@ -23,7 +22,7 @@ const LABELS = {
 };
 
 /** Filters the CLI matches exactly rather than as regular expressions. */
-const EXACT_FILTERS = new Set(["kind", "command", "decisionSource"]);
+const EXACT_FILTERS = new Set(["kind", "command"]);
 
 let state = null;
 let meta = null;
@@ -375,12 +374,15 @@ function decisionRows(entries, { onPick, pickTitle, display } = {}) {
         { class: "rows" },
         entries.map((e) => {
             const breakdown = DECISION_COLORS.map(([label, , field]) => `${label}: ${num(e[field])}`).join("\n");
+            const bar = stackedBar(DECISION_COLORS.map(([label, color, field]) => [e[field], color, `${label}: ${num(e[field])}`]), max);
+            // The bar is visual only; screen readers get the breakdown next to the total.
+            bar.setAttribute("aria-hidden", "true");
             const row = h(
                 "div",
                 { class: "row", title: breakdown },
                 keyCell(e.Key, onPick, pickTitle, display ? display(e.Key) : e.Key),
-                stackedBar(DECISION_COLORS.map(([label, color, field]) => [e[field], color, `${label}: ${num(e[field])}`]), max),
-                h("span", { class: "num" }, num(e.Total)),
+                bar,
+                h("span", { class: "num" }, num(e.Total), h("span", { class: "visually-hidden" }, ` total (${breakdown.replaceAll("\n", ", ")})`)),
             );
             return row;
         }),
@@ -502,13 +504,7 @@ function renderSession(data) {
             "div",
             { class: "grid" },
             panel("Results", null, decisionRows(data.ByResult)),
-            data.ByDecisionSource
-                ? panel(
-                      "Decision sources",
-                      "click to filter",
-                      decisionRows(data.ByDecisionSource, { onPick: (k) => addFilter("decisionSource", k), pickTitle: "Filter by this decision source" }),
-                  )
-                : null,
+            data.ByDecisionSource ? panel("Decision sources", null, decisionRows(data.ByDecisionSource)) : null,
             panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly)),
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" })),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" })),
@@ -696,7 +692,7 @@ function renderVscode(data) {
 
 function renderPresets(source, result) {
     const presets = meta.presets.filter((p) => p.sources.includes(source));
-    const disabled = !result.data;
+    const disabled = !(result.data && result.status === "ok" && result.fresh);
     $("presets").replaceChildren(
         ...presets.map((p) => h("button", { type: "button", class: "btn small", disabled, onclick: () => ask({ preset: p.id }) }, p.label)),
     );

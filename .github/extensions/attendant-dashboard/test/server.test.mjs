@@ -89,7 +89,7 @@ test("POST requires JSON and validates the query", async (t) => {
     assert.equal(dashboard.query.top, 4);
 });
 
-test("ask requires loaded data and forwards presets", async (t) => {
+test("ask requires a fresh, successful result and forwards presets", async (t) => {
     const { server, json, dashboard, asked } = await setup();
     t.after(() => server.close());
     const url = `${server.url}api/ask`;
@@ -101,4 +101,20 @@ test("ask requires loaded data and forwards presets", async (t) => {
     assert.equal(ok.status, 200);
     assert.equal(asked.length, 1);
     assert.match(asked[0].text, /focus on shell/);
+
+    // Changing the query keeps the old data, which must not be sent with the new query.
+    dashboard.applyQuery({ top: 5 });
+    const stale = await call(url, { method: "POST", headers: json, body: JSON.stringify({ text: "hi" }) });
+    assert.equal(stale.status, 409);
+    assert.match(stale.json.error, /out of date/);
+
+    // A failed refresh keeps the previous data but is not a successful result.
+    await dashboard.refresh("session");
+    dashboard.runStats = async () => {
+        throw new Error("boom");
+    };
+    await dashboard.refresh("session");
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal((await call(url, { method: "POST", headers: json, body: JSON.stringify({ text: "hi" }) })).status, 409);
+    assert.equal(asked.length, 1);
 });

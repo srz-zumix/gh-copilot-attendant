@@ -12,13 +12,8 @@ export const OPERATIONS = ["read", "write"];
 
 /** Repeatable filter flags accepted by each source's `stats` command. */
 export const FILTERS = {
-    session: ["operation", "kind", "command", "path", "url", "decisionSource"],
+    session: ["operation", "kind", "command", "path", "url"],
     vscode: ["tool", "model", "agent"],
-};
-
-/** CLI flag names for filters whose query key differs from the flag. */
-const FILTER_FLAGS = {
-    decisionSource: "decision-source",
 };
 
 /** Filters that the CLI interprets as regular expressions. */
@@ -67,6 +62,93 @@ function checkString(name, value) {
     return trimmed;
 }
 
+/** Letters Go's regexp package accepts after a backslash. */
+const GO_ESCAPE_LETTERS = new Set("afnrtvxdDsSwWbBAzpPQ");
+
+/**
+ * Best-effort check that `pattern` compiles with Go's RE2-based regexp
+ * package, which the CLI uses. Perl constructs RE2 rejects (lookaround,
+ * atomic groups, backreferences, unknown letter escapes) are reported
+ * explicitly; the remaining syntax is checked with the JavaScript engine after
+ * translating Go-only syntax (`(?P<name>`, inline flags, `\Q...\E`) into an
+ * equivalent JavaScript form. The CLI still reports anything this misses.
+ *
+ * @param {string} pattern
+ * @returns {string|null} A description of the problem, or null when valid.
+ */
+export function checkGoRegexp(pattern) {
+    let js = "";
+    let inClass = false;
+    for (let i = 0; i < pattern.length; i += 1) {
+        const c = pattern[i];
+        if (c === "\\") {
+            const next = pattern[i + 1];
+            if (next === undefined) return "trailing backslash";
+            if (next === "Q") {
+                const end = pattern.indexOf("\\E", i + 2);
+                const literal = end === -1 ? pattern.slice(i + 2) : pattern.slice(i + 2, end);
+                js += literal.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+                i = end === -1 ? pattern.length : end + 1;
+                continue;
+            }
+            if (/[A-Za-z]/.test(next) && !GO_ESCAPE_LETTERS.has(next)) return `unsupported escape \\${next}`;
+            // A non-zero digit is octal only when followed by another octal digit.
+            if (/[89]/.test(next) || (/[1-7]/.test(next) && !/[0-7]/.test(pattern[i + 2] ?? ""))) {
+                return "backreferences are not supported";
+            }
+            js += c + next;
+            i += 1;
+            continue;
+        }
+        if (inClass) {
+            if (c === "[" && pattern[i + 1] === ":") {
+                const end = pattern.indexOf(":]", i + 2);
+                if (end !== -1) {
+                    js += pattern.slice(i, end + 2);
+                    i = end + 1;
+                    continue;
+                }
+            }
+            if (c === "]") inClass = false;
+            js += c;
+            continue;
+        }
+        if (c === "[") {
+            inClass = true;
+            js += c;
+            // A leading "]" (after an optional "^") is a literal.
+            if (pattern[i + 1] === "^") js += pattern[++i];
+            if (pattern[i + 1] === "]") js += `\\${pattern[++i]}`;
+            continue;
+        }
+        if (c === "(" && pattern[i + 1] === "?") {
+            const rest = pattern.slice(i + 2);
+            if (/^(=|!|<=|<!)/.test(rest)) return "lookaround assertions are not supported";
+            if (rest.startsWith(">")) return "atomic groups are not supported";
+            if (rest.startsWith("P=")) return "backreferences are not supported";
+            if (rest.startsWith("P<")) {
+                js += "(?<";
+                i += 3;
+                continue;
+            }
+            const flags = /^([imsU]*(?:-[imsU]*)?)([:)])/.exec(rest);
+            if (flags && flags[1]) {
+                // JavaScript has no inline flags; the group itself is what matters.
+                if (flags[2] === ":") js += "(?:";
+                i += 1 + flags[0].length;
+                continue;
+            }
+        }
+        js += c;
+    }
+    try {
+        new RegExp(js);
+    } catch {
+        return "invalid syntax";
+    }
+    return null;
+}
+
 function checkFilterValues(source, name, values) {
     const label = `filters.${source}.${name}`;
     if (values === undefined || values === null) return [];
@@ -80,11 +162,8 @@ function checkFilterValues(source, name, values) {
             throw new QueryError(`${label} must be one of ${OPERATIONS.join(", ")}`);
         }
         if (REGEX_FILTERS.has(`${source}.${name}`)) {
-            try {
-                new RegExp(value);
-            } catch {
-                throw new QueryError(`${label} "${value}" is not a valid regular expression`);
-            }
+            const problem = checkGoRegexp(value);
+            if (problem) throw new QueryError(`${label} "${value}" is not a valid regular expression: ${problem}`);
         }
         if (!out.includes(value)) out.push(value);
     }
@@ -191,8 +270,7 @@ export function buildArgv(query, source = query.source) {
     if (query.since) argv.push(`--since=${query.since}`);
     if (query.until) argv.push(`--until=${query.until}`);
     for (const name of FILTERS[source]) {
-        const flag = FILTER_FLAGS[name] ?? name;
-        for (const value of query.filters[source][name]) argv.push(`--${flag}=${value}`);
+        for (const value of query.filters[source][name]) argv.push(`--${name}=${value}`);
     }
     argv.push(`--top=${query.top}`, "--format", "json");
     return argv;
