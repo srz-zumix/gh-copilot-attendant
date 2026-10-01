@@ -32,24 +32,33 @@ session history recorded under `~/.copilot/session-state` (or `$COPILOT_HOME/ses
 #### session stats
 
 ```sh
-gh copilot-attendant session stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--operation <read|write>]... [--kind <kind>]... [--command <identifier>]... [--path <pattern>]... [--url <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
+gh copilot-attendant session stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--operation <read|write>]... [--kind <kind>]... [--decision-source <source>]... [--command <identifier>]... [--path <pattern>]... [--url <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
 ```
 
 Scans the local Copilot CLI session history and reports how often each tool, command, file
-path, and URL was requested, broken down by whether it was approved or denied. `--all`,
+path, and URL was requested, broken down by whether it was approved or denied, as well as
+by the CLI's own `decisionSource` for that outcome (e.g. `human_response`; `unknown` when
+no decision source was recorded, including sessions from older CLI versions and unresolved
+requests without a recorded outcome). It also reports each session's usage totals
+(premium requests, AIU, and token counts) recorded by its `session.shutdown` event, summed
+overall and broken down by working directory; usage is counted independently of the
+permission-request filters below, since it is not recorded per permission request. `--all`,
 `--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional; when none are given,
 only sessions whose recorded working directory is inside the current git worktree are
 counted. `--session` restricts to a single session ID. `--since` and `--until` accept
 RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as `7d`/`24h`/`30m`, and
-default to no bound. `--period` is shorthand for `--since` using a coarser window such as
-`7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `--operation` restricts to
-non-mutating (`read`) or mutating (`write`) requests. `--kind` restricts to an exact tool
-kind (e.g. `shell`, `read`, `write`); `--command` restricts to requests that include an
+default to no bound (usage totals are bound by each session's `session.shutdown` event time
+instead of individual request times). `--period` is shorthand for `--since` using a coarser
+window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `--operation`
+restricts to non-mutating (`read`) or mutating (`write`) requests. `--kind` restricts to an
+exact tool kind (e.g. `shell`, `read`, `write`); `--decision-source` restricts to permission
+outcomes with an exact decision source (e.g. `human_response`, `unattended_fallback`, or `unknown`
+when no decision source was recorded, including older CLI versions and unresolved requests); `--command` restricts to requests that include an
 exact command identifier; `--path` and `--url` restrict to requests with a recorded path or
 URL matching the given regular expression (a plain substring is also a valid, unanchored
-regular expression). `--operation`, `--kind`, `--command`, `--path`, and `--url` may each be
-repeated to match any of multiple values. `--top` keeps only the top N entries per
-statistic (default `10`; `0` keeps every entry).
+regular expression). `--operation`, `--kind`, `--decision-source`, `--command`, `--path`, and
+`--url` may each be repeated to match any of multiple values. `--top` keeps only the top N
+entries per statistic (default `10`; `0` keeps every entry).
 `--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
 `--format json`, results are printed as tables.
 

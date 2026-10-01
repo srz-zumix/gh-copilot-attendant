@@ -12,8 +12,9 @@ This is a minimal skill bundle for `gh-copilot-attendant`.
 
 ### session stats
 
-Reports tool, path, and URL permission statistics from local GitHub Copilot CLI session
-history. See the [README](../../README.md#session-stats) for the full flag reference.
+Reports tool, path, and URL permission statistics, plus per-session usage totals (premium
+requests, AIU, token counts) from local GitHub Copilot CLI session history. See the
+[README](../../README.md#session-stats) for the full flag reference.
 
 ### vscode stats
 
