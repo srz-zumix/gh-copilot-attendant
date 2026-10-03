@@ -166,3 +166,70 @@ test("session summaries include usage totals only when the CLI reports them", ()
     assert.equal(summary.byCWDUsage[0].sessions, 2);
     assert.equal(summary.byCWDUsage[0].aiu, 1.23);
 });
+
+test("vscode workspace summaries include usage only when the CLI reports it", () => {
+    const legacy = summarize("vscode", { ByWorkspace: [{ Key: "/repo", ToolCalls: 3, LLMRequests: 2, Turns: 1 }] });
+    assert.deepEqual(legacy.byWorkspace[0], { key: "/repo", toolCalls: 3, llmRequests: 2, turns: 1 });
+
+    const data = {
+        ByWorkspace: [{ Key: "/repo", Sessions: 2, ToolCalls: 3, LLMRequests: 2, Turns: 1, InputTokens: 300, OutputTokens: 60, CachedTokens: 15, UsageAIU: 3.14159 }],
+    };
+    assert.deepEqual(summarize("vscode", data).byWorkspace[0], {
+        key: "/repo",
+        sessions: 2,
+        toolCalls: 3,
+        llmRequests: 2,
+        turns: 1,
+        inputTokens: 300,
+        outputTokens: 60,
+        cachedTokens: 15,
+        usageAIU: 3.14,
+    });
+});
+
+test("vscode model summaries include unit costs", () => {
+    const data = { ByModel: [{ Key: "m", Requests: 4, InputTokens: 900000, OutputTokens: 100000, CachedTokens: 0, UsageAIU: 2 }, { Key: "z", Requests: 0, InputTokens: 0, OutputTokens: 0, UsageAIU: 0 }] };
+    const [m, z] = summarize("vscode", data).byModel;
+    assert.equal(m.aiuPerRequest, 0.5);
+    assert.equal(m.aiuPer1MTokens, 2);
+    assert.equal(z.aiuPerRequest, null);
+    assert.equal(z.aiuPer1MTokens, null);
+});
+
+test("CLI model summaries include API-request unit costs and raw cache fields", () => {
+    const model = { Key: "m", Sessions: 3, Requests: 2, PremiumRequests: 0.5, AIU: 1, InputTokens: 10, CacheReadTokens: 80, CacheWriteTokens: 10, OutputTokens: 20, APIDurationMs: 0 };
+    const data = { UsageSessions: 3, Requests: 999, ByModelUsage: [model, { ...model, Key: "second" }] };
+    const summary = summarize("session", data, 1);
+    assert.deepEqual(summary.byModelUsage, [{
+        key: "m",
+        sessions: 3,
+        requests: 2,
+        premiumRequests: 0.5,
+        aiu: 1,
+        inputTokens: 10,
+        cacheReadTokens: 80,
+        cacheWriteTokens: 10,
+        outputTokens: 20,
+        apiDurationMs: 0,
+        aiuPerRequest: 0.5,
+        aiuPer1MTokens: 8333.3333,
+    }]);
+    assert.match(summary.modelUsageNote, /API requests/);
+    assert.equal(summary.requests, 999);
+});
+
+test("CLI model summaries preserve absent, empty and zero usage distinctions", () => {
+    assert.equal(summarize("session", { UsageSessions: 0 }).byModelUsage, undefined);
+    assert.deepEqual(summarize("session", { UsageSessions: 0, ByModelUsage: null }).byModelUsage, []);
+    const entries = [
+        { Key: "zero", Requests: 2, AIU: 0, InputTokens: 10 },
+        { Key: "undefined-ratio", Requests: 0, AIU: 0 },
+        { Key: "x".repeat(500), Requests: 1, AIU: 1 },
+    ];
+    const [zero, missing, capped] = summarize("session", { UsageSessions: 3, ByModelUsage: entries }).byModelUsage;
+    assert.equal(zero.aiuPerRequest, 0);
+    assert.equal(zero.aiuPer1MTokens, 0);
+    assert.equal(missing.aiuPerRequest, null);
+    assert.equal(missing.aiuPer1MTokens, null);
+    assert.ok(capped.key.length <= 201);
+});

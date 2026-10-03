@@ -4,6 +4,8 @@
 // untrusted text, so they are truncated and always handed to the agent as
 // delimited JSON data together with an explicit warning.
 
+import { sessionModelEntry, unitCost } from "../ui/model-view.mjs";
+
 const MAX_KEY = 200;
 
 function cap(value) {
@@ -64,6 +66,32 @@ function usage(data, limit) {
             }),
         },
         byCWDUsage: (data.ByCWDUsage ?? []).slice(0, limit).map((e) => ({ key: cap(e.Key), sessions: e.Sessions, ...usageTotals(e) })),
+        ...(data.ByModelUsage !== undefined
+            ? {
+                  modelUsageNote: "Recorded modelMetrics only; requests are API requests, session counts may overlap across models, and only listed models are included",
+                  byModelUsage: (data.ByModelUsage ?? []).slice(0, limit).map((e) => ({
+                      key: cap(e.Key),
+                      sessions: e.Sessions,
+                      requests: e.Requests,
+                      ...usageTotals(e),
+                      ...unitCosts(sessionModelEntry(e)),
+                  })),
+              }
+            : {}),
+    };
+}
+
+function round4(n) {
+    return Math.round(n * 1e4) / 1e4;
+}
+
+// Unit costs let the agent compare models by price per unit of work rather than total AIU.
+function unitCosts(e) {
+    const perRequest = unitCost(e, "request");
+    const perTokens = unitCost(e, "mtok");
+    return {
+        aiuPerRequest: perRequest === null ? null : round4(perRequest),
+        aiuPer1MTokens: perTokens === null ? null : round4(perTokens),
     };
 }
 
@@ -114,14 +142,25 @@ export function summarize(source, data, limit = 10) {
             outputTokens: e.OutputTokens,
             cachedTokens: e.CachedTokens,
             avgTTFTMs: Math.round(e.AvgTTFTMs ?? 0),
-            usageAIU: Math.round((e.UsageAIU ?? 0) * 100) / 100,
+            usageAIU: round2(e.UsageAIU),
+            ...unitCosts(e),
         })),
         byAgent: (data.ByAgent ?? []).slice(0, limit).map((e) => ({ key: cap(e.Key), total: e.Total })),
         byWorkspace: (data.ByWorkspace ?? []).slice(0, limit).map((e) => ({
             key: cap(e.Key),
+            ...(e.Sessions !== undefined ? { sessions: e.Sessions } : {}),
             toolCalls: e.ToolCalls,
             llmRequests: e.LLMRequests,
             turns: e.Turns,
+            // Token and usage totals are only reported by newer CLI builds.
+            ...(e.UsageAIU !== undefined
+                ? {
+                      inputTokens: e.InputTokens,
+                      outputTokens: e.OutputTokens,
+                      cachedTokens: e.CachedTokens,
+                      usageAIU: round2(e.UsageAIU),
+                  }
+                : {}),
         })),
     };
 }

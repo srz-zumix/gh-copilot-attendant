@@ -10,6 +10,7 @@
     --c-output: var(--true-color-purple, #8250df);
     --c-cached: var(--true-color-green, #1a7f37);
     --c-cache-write: var(--true-color-orange, #bc4c00);
+    --c-unit-cost: var(--true-color-orange, #bc4c00);
     --surface: color-mix(in srgb, var(--text-color-default, #1f2328) 4%, var(--background-color-default, #ffffff));
     --track: color-mix(in srgb, var(--text-color-default, #1f2328) 8%, transparent);
     --radius: 6px;
@@ -512,6 +513,33 @@ th {
     color: var(--text-color-muted, #59636e);
 }
 
+.sort-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.sort-header:hover,
+th[aria-sort="ascending"] .sort-header,
+th[aria-sort="descending"] .sort-header {
+    color: var(--text-color-default, #1f2328);
+}
+
+.sort-header:focus-visible {
+    outline: 2px solid var(--color-focus-outline, #0969da);
+    outline-offset: 2px;
+}
+
+.sort-indicator {
+    font-size: 10px;
+}
+
 th:first-child,
 td:first-child {
     text-align: left;
@@ -537,6 +565,51 @@ td.key button:hover {
 
 td .bar {
     min-width: 80px;
+}
+
+/* Panel-local view controls */
+
+.panel-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.panel-controls .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.segmented .hint {
+    margin-right: 4px;
+    font-size: 11px;
+    color: var(--text-color-muted, #59636e);
+}
+
+.segmented button {
+    padding: 1px 8px;
+    border: 1px solid var(--border-color-default, #d1d9e0);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-color-muted, #59636e);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.segmented button[aria-pressed="true"] {
+    background: var(--surface);
+    color: var(--text-color-default, #1f2328);
+    font-weight: var(--font-weight-semibold, 600);
 }
 
 /* Ask agent */

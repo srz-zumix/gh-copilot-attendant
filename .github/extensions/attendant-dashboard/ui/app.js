@@ -3,6 +3,8 @@
 // from the server is inserted with textContent (never innerHTML) because keys
 // come from local logs.
 
+import { MODEL_UNITS, modelColumns, normalizeModelView, promptTokens, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "./model-view.mjs";
+
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const $ = (id) => document.getElementById(id);
 
@@ -15,6 +17,7 @@ const LABELS = {
         command: "Command",
         path: "Path",
         url: "URL",
+        decisionSource: "Decision source",
         tool: "Tool",
         model: "Model",
         agent: "Agent",
@@ -22,7 +25,7 @@ const LABELS = {
 };
 
 /** Filters the CLI matches exactly rather than as regular expressions. */
-const EXACT_FILTERS = new Set(["kind", "command"]);
+const EXACT_FILTERS = new Set(["kind", "command", "decisionSource"]);
 
 let state = null;
 let meta = null;
@@ -396,11 +399,6 @@ function decisionRows(entries, { onPick, pickTitle, display } = {}) {
     );
 }
 
-// Prompt tokens as reported by session.shutdown: uncached input plus cache reads and writes.
-function promptTokens(e) {
-    return (e.InputTokens ?? 0) + (e.CacheReadTokens ?? 0) + (e.CacheWriteTokens ?? 0);
-}
-
 const USAGE_TOKEN_COLORS = [
     ["Cache read", "var(--c-cached)", "CacheReadTokens"],
     ["Cache write", "var(--c-cache-write)", "CacheWriteTokens"],
@@ -473,6 +471,7 @@ function renderSessionUsage(data, cwdPick) {
         h(
             "div",
             { class: "grid" },
+            ...(data.ByModelUsage !== undefined ? modelPanels((data.ByModelUsage ?? []).map(sessionModelEntry), "session") : []),
             share ? panel("Usage share by working directory", "AIU", share, { wide: true }) : null,
             panel(
                 "Usage by working directory",
@@ -511,7 +510,13 @@ function renderSession(data) {
             "div",
             { class: "grid" },
             panel("Results", null, decisionRows(data.ByResult)),
-            data.ByDecisionSource ? panel("Decision sources", null, decisionRows(data.ByDecisionSource)) : null,
+            data.ByDecisionSource
+                ? panel(
+                      "Decision sources",
+                      "click to filter",
+                      decisionRows(data.ByDecisionSource, { onPick: (k) => addFilter("decisionSource", k), pickTitle: "Filter by this decision source" }),
+                  )
+                : null,
             panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly)),
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" })),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" })),
@@ -562,58 +567,239 @@ function toolTable(entries) {
     );
 }
 
-function modelTable(entries) {
-    if (!entries?.length) return h("div", { class: "muted small" }, "No entries.");
-    const max = Math.max(...entries.map((e) => e.InputTokens + e.OutputTokens), 1);
+const MODEL_VIEW_KEYS = {
+    vscode: "attendant-dashboard.modelView",
+    session: "attendant-dashboard.sessionModelView",
+};
+
+// Panel-local view state; persisted per browser profile so the choice survives reloads.
+function loadModelView(source) {
+    try {
+        const saved = JSON.parse(localStorage.getItem(MODEL_VIEW_KEYS[source]) ?? "{}");
+        return normalizeModelView(saved, source);
+    } catch (error) {
+        console.warn("Could not load Models view preferences", error);
+        return normalizeModelView(undefined, source);
+    }
+}
+
+const modelViews = { session: loadModelView("session"), vscode: loadModelView("vscode") };
+
+function setModelView(source, patch) {
+    Object.assign(modelViews[source], patch);
+    try {
+        localStorage.setItem(MODEL_VIEW_KEYS[source], JSON.stringify(modelViews[source]));
+    } catch (error) {
+        console.warn("Could not save Models view preferences; the choice lasts until reload", error);
+    }
+    render();
+}
+
+function unitCostText(value) {
+    if (value === null) return "–";
+    if (value === 0) return "0";
+    // aiu() keeps a single decimal, so anything under 0.05 would render as "0.0".
+    return Math.abs(value) < 0.05 ? value.toPrecision(2) : aiu(value);
+}
+
+function segmented(label, options, value, onChange) {
+    return h(
+        "div",
+        { class: "segmented", role: "group", "aria-label": label },
+        h("span", { class: "hint" }, label),
+        Object.entries(options).map(([key, text]) =>
+            h("button", { type: "button", "aria-pressed": String(key === value), onclick: () => key !== value && onChange(key) }, text),
+        ),
+    );
+}
+
+function modelControls(source) {
+    const view = modelViews[source];
+    return h(
+        "div",
+        { class: "panel-controls" },
+        legend(source === "session" ? USAGE_TOKEN_COLORS.map(([label, color]) => [label, color]) : VSCODE_TOKEN_COLORS),
+        h(
+            "div",
+            { class: "controls" },
+            segmented("Unit cost per", Object.fromEntries(Object.entries(MODEL_UNITS).map(([k, u]) => [k, u.label])), view.unit, (unit) => setModelView(source, { unit })),
+        ),
+    );
+}
+
+function modelHeader(column, source) {
+    const view = modelViews[source];
+    const label = column.id === "unit" ? MODEL_UNITS[view.unit].header : column.label;
+    const selected = view.sort === column.id;
+    const next = toggleModelSort(view, column.id, source);
+    return h(
+        "th",
+        { scope: "col", "aria-sort": selected ? (view.direction === "asc" ? "ascending" : "descending") : "none" },
+        h(
+            "button",
+            {
+                type: "button",
+                class: "sort-header",
+                "data-model-sort": column.id,
+                "aria-label": `${label}: sort ${next.direction === "asc" ? "ascending" : "descending"}`,
+                title: `Sort by ${label} (${next.direction === "asc" ? "ascending" : "descending"})`,
+                onclick: () => {
+                    setModelView(source, next);
+                    document.querySelector(`[data-model-sort="${column.id}"]`)?.focus({ preventScroll: true });
+                },
+            },
+            label,
+            h("span", { class: "sort-indicator", "aria-hidden": "true" }, selected ? (view.direction === "asc" ? "▲" : "▼") : "↕"),
+        ),
+    );
+}
+
+function modelPanels(entries, source) {
+    const share = aiuShare(entries);
+    const session = source === "session";
+    const note = session
+        ? "Only recorded modelMetrics are included; shares cover listed models. A session may use multiple models. Permission filters do not apply."
+        : null;
+    return [
+        share ? panel("Usage share by model", session ? "AIU · listed models" : "AIU", share, { wide: true }) : null,
+        panel("Models", session ? "modelMetrics · API requests" : "click to filter", [
+            note ? h("p", { class: "muted small" }, note) : null,
+            modelControls(source),
+            modelTable(entries, source),
+        ], { wide: true }),
+    ];
+}
+
+function modelTokenSegments(e, source) {
+    if (source !== "session") return vscodeTokenSegments(e);
+    const fields = ["CachedTokens", "CacheWriteTokens", "UncachedInputTokens", "OutputTokens"];
+    return USAGE_TOKEN_COLORS.map(([label, color], index) => [e[fields[index]], color, `${label}: ${big(e[fields[index]])}`]);
+}
+
+function modelTable(entries, source) {
+    if (!entries?.length) return h("div", { class: "muted small" }, source === "session" ? "No recorded modelMetrics for this query." : "No entries.");
+    const view = modelViews[source];
+    const columns = modelColumns(source);
+    const max = Math.max(...entries.map((e) => (e.InputTokens ?? 0) + (e.OutputTokens ?? 0)), 1);
+    const maxUnit = Math.max(...entries.map((e) => unitCost(e, view.unit) ?? 0), Number.MIN_VALUE);
+    const unit = MODEL_UNITS[view.unit];
+    const cell = (column, entry, cost) => {
+        const value = column.value(entry, view.unit);
+        switch (column.id) {
+            case "model":
+                return h("td", { class: "key" }, keyCell(entry.Key, source === "vscode" ? (key) => addFilter("model", exactPattern(key)) : null, "Filter by this model"));
+            case "tokens":
+                return h("td", null, stackedBar(modelTokenSegments(entry, source), max));
+            case "input":
+            case "cached":
+            case "cacheWrite":
+            case "uncached":
+            case "output":
+                return h("td", null, big(value));
+            case "cacheHit":
+                return h("td", null, pct(entry.CachedTokens, entry.InputTokens));
+            case "ttft":
+                return h("td", null, duration(value));
+            case "aiu":
+                return h("td", null, aiu(value));
+            case "premium":
+                return h("td", null, decimal(value));
+            case "unit":
+                return h("td", null, unitCostText(cost));
+            default:
+                return h("td", null, num(value));
+        }
+    };
     return h(
         "table",
         null,
         h(
             "thead",
             null,
-            h("tr", null, ["Model", "Requests", "Tokens", "Input", "Cached", "Output", "Cache hit", "Avg TTFT", "AIU"].map((t) => h("th", null, t))),
+            h(
+                "tr",
+                null,
+                columns.map((column) => modelHeader(column, source)),
+                h("th", { scope: "col", "aria-label": "Unit cost comparison" }),
+            ),
         ),
         h(
             "tbody",
             null,
-            entries.map((e) => {
-                const uncached = Math.max(e.InputTokens - e.CachedTokens, 0);
+            sortModels(entries, view, source).map((e) => {
+                const cost = unitCost(e, view.unit);
                 return h(
                     "tr",
                     null,
-                    h("td", { class: "key" }, keyCell(e.Key, (k) => addFilter("model", exactPattern(k)), "Filter by this model")),
-                    h("td", null, num(e.Requests)),
-                    h(
-                        "td",
-                        null,
-                        stackedBar(
-                            [
-                                [e.CachedTokens, "var(--c-cached)", `Cached input: ${big(e.CachedTokens)}`],
-                                [uncached, "var(--c-input)", `Uncached input: ${big(uncached)}`],
-                                [e.OutputTokens, "var(--c-output)", `Output: ${big(e.OutputTokens)}`],
-                            ],
-                            max,
-                        ),
-                    ),
-                    h("td", null, big(e.InputTokens)),
-                    h("td", null, big(e.CachedTokens)),
-                    h("td", null, big(e.OutputTokens)),
-                    h("td", null, pct(e.CachedTokens, e.InputTokens)),
-                    h("td", null, duration(e.AvgTTFTMs)),
-                    h("td", null, aiu(e.UsageAIU)),
+                    columns.map((column) => cell(column, e, cost)),
+                    h("td", null, stackedBar([[cost ?? 0, "var(--c-unit-cost)", `${unit.header}: ${unitCostText(cost)}`]], maxUnit)),
                 );
             }),
         ),
     );
 }
 
+const VSCODE_TOKEN_COLORS = [
+    ["Cached input", "var(--c-cached)"],
+    ["Uncached input", "var(--c-input)"],
+    ["Output", "var(--c-output)"],
+];
+
+/** Token bar segments for an entry with VS Code style Input/Cached/Output token fields. */
+function vscodeTokenSegments(e) {
+    const uncached = Math.max((e.InputTokens ?? 0) - (e.CachedTokens ?? 0), 0);
+    return [
+        [e.CachedTokens, VSCODE_TOKEN_COLORS[0][1], `Cached input: ${big(e.CachedTokens)}`],
+        [uncached, VSCODE_TOKEN_COLORS[1][1], `Uncached input: ${big(uncached)}`],
+        [e.OutputTokens, VSCODE_TOKEN_COLORS[2][1], `Output: ${big(e.OutputTokens)}`],
+    ];
+}
+
+// Older CLI builds report only activity counts per workspace.
+function hasWorkspaceUsage(entries) {
+    return (entries ?? []).some((e) => e.Sessions !== undefined);
+}
+
 function workspaceTable(entries) {
     if (!entries?.length) return h("div", { class: "muted small" }, "No entries.");
-    const max = Math.max(...entries.map((e) => e.ToolCalls), 1);
+    const pick = (k) => patchQuery({ scope: "cwd", path: k });
+    const keyTd = (e) => h("td", { class: "key" }, keyCell(e.Key, pick, "Show only this workspace", shortPath(e.Key)));
+    if (!hasWorkspaceUsage(entries)) {
+        const max = Math.max(...entries.map((e) => e.ToolCalls), 1);
+        return h(
+            "table",
+            null,
+            h("thead", null, h("tr", null, ["Workspace", "Tool calls", "", "LLM requests", "Turns"].map((t) => h("th", null, t)))),
+            h(
+                "tbody",
+                null,
+                entries.map((e) =>
+                    h(
+                        "tr",
+                        null,
+                        keyTd(e),
+                        h("td", null, num(e.ToolCalls)),
+                        h("td", null, stackedBar([[e.ToolCalls, "var(--c-bar)", `Tool calls: ${num(e.ToolCalls)}`]], max)),
+                        h("td", null, num(e.LLMRequests)),
+                        h("td", null, num(e.Turns)),
+                    ),
+                ),
+            ),
+        );
+    }
+    const max = Math.max(...entries.map((e) => (e.InputTokens ?? 0) + (e.OutputTokens ?? 0)), 1);
     return h(
         "table",
         null,
-        h("thead", null, h("tr", null, ["Workspace", "Tool calls", "", "LLM requests", "Turns"].map((t) => h("th", null, t)))),
+        h(
+            "thead",
+            null,
+            h(
+                "tr",
+                null,
+                ["Workspace", "Sessions", "Turns", "LLM requests", "Tool calls", "AIU", "AIU / turn", "Tokens", "Input", "Cache hit", "Output"].map((t) => h("th", null, t)),
+            ),
+        ),
         h(
             "tbody",
             null,
@@ -621,11 +807,17 @@ function workspaceTable(entries) {
                 h(
                     "tr",
                     null,
-                    h("td", { class: "key" }, keyCell(e.Key, (k) => patchQuery({ scope: "cwd", path: k }), "Show only this workspace", shortPath(e.Key))),
-                    h("td", null, num(e.ToolCalls)),
-                    h("td", null, stackedBar([[e.ToolCalls, "var(--c-bar)", `Tool calls: ${num(e.ToolCalls)}`]], max)),
-                    h("td", null, num(e.LLMRequests)),
+                    keyTd(e),
+                    h("td", null, num(e.Sessions)),
                     h("td", null, num(e.Turns)),
+                    h("td", null, num(e.LLMRequests)),
+                    h("td", null, num(e.ToolCalls)),
+                    h("td", null, aiu(e.UsageAIU)),
+                    h("td", null, e.Turns ? aiu((e.UsageAIU ?? 0) / e.Turns) : "–"),
+                    h("td", null, stackedBar(vscodeTokenSegments(e), max)),
+                    h("td", null, big(e.InputTokens)),
+                    h("td", null, pct(e.CachedTokens, e.InputTokens)),
+                    h("td", null, big(e.OutputTokens)),
                 ),
             ),
         ),
@@ -658,7 +850,9 @@ function renderVscode(data) {
     const tools = data.ByTool ?? [];
     const toolErrors = tools.reduce((n, t) => n + (t.Error ?? 0), 0);
     const toolTotal = tools.reduce((n, t) => n + (t.Total ?? 0), 0);
-    const share = aiuShare(models);
+    const workspaces = data.ByWorkspace ?? [];
+    const wsUsage = hasWorkspaceUsage(workspaces);
+    const wsShare = wsUsage ? shareBar(workspaces, (e) => e.UsageAIU ?? 0, (e) => shortPath(e.Key)) : null;
     const topNote = state.query.top ? `top ${state.query.top}` : null;
     // ByModel is truncated to --top, so model-derived totals may be partial.
     const top = state.results.vscode.argv ? Number(state.results.vscode.argv.find((a) => a.startsWith("--top="))?.slice(6)) : state.query.top;
@@ -679,18 +873,16 @@ function renderVscode(data) {
         h(
             "div",
             { class: "grid" },
-            share ? panel("Usage share by model", "AIU", share, { wide: true }) : null,
-            panel("Models", "click to filter", [
-                legend([
-                    ["Cached input", "var(--c-cached)"],
-                    ["Uncached input", "var(--c-input)"],
-                    ["Output", "var(--c-output)"],
-                ]),
-                modelTable(models),
-            ], { wide: true }),
+            ...modelPanels(models, "vscode"),
+            wsShare ? panel("Usage share by workspace", topNote ? `AIU · ${topNote}` : "AIU", wsShare, { wide: true }) : null,
+            panel(
+                "Workspaces",
+                topNote ? `${topNote} · click to scope` : "click to scope",
+                wsUsage ? [legend(VSCODE_TOKEN_COLORS), workspaceTable(workspaces)] : workspaceTable(workspaces),
+                { wide: wsUsage },
+            ),
             panel("Tools", topNote ? `${topNote} · click to filter` : "click to filter", toolTable(tools), { wide: true }),
             panel("Subagents", "click to filter", simpleRows(data.ByAgent, (e) => e.Total, { onPick: (k) => addFilter("agent", exactPattern(k)), pickTitle: "Filter by this agent" })),
-            panel("Workspaces", "click to scope", workspaceTable(data.ByWorkspace)),
         ),
     ];
 }

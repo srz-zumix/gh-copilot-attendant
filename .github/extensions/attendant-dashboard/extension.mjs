@@ -45,6 +45,10 @@ const QUERY_SCHEMA = {
                         command: stringArray,
                         path: { ...stringArray, description: "Regular expressions" },
                         url: { ...stringArray, description: "Regular expressions" },
+                        decisionSource: {
+                            ...stringArray,
+                            description: "Exact decision sources, e.g. human_response, unattended_fallback, unknown",
+                        },
                     },
                 },
                 vscode: {
@@ -133,7 +137,7 @@ const canvas = createCanvas({
     id: CANVAS_ID,
     displayName: "Copilot attendant dashboard",
     description:
-        "Dashboard of local Copilot CLI permission requests and usage (AIU, tokens) plus VS Code Copilot Chat tool/model/token usage, powered by gh copilot-attendant.",
+        "Dashboard of local Copilot CLI permissions and model usage (AIU, tokens, unit costs) plus VS Code Copilot Chat tool/model usage, powered by gh copilot-attendant.",
     inputSchema: {
         type: "object",
         additionalProperties: false,

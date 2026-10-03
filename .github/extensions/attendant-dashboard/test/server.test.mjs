@@ -53,6 +53,16 @@ test("index.html embeds the token and sets a CSP", async (t) => {
     assert.match(res.headers["content-security-policy"], /script-src 'self'/);
 });
 
+test("the Models view module is served as same-origin JavaScript", async (t) => {
+    const { server } = await setup();
+    t.after(() => server.close());
+    const res = await call(`${server.origin}/model-view.mjs`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers["content-type"], /^text\/javascript/);
+    assert.match(res.text, /export function sortModels/);
+    assert.equal((await call(`${server.origin}/model-view.mjs`, { headers: { Origin: "http://evil.example" } })).status, 403);
+});
+
 test("the token-bearing page is only served at the secret URL", async (t) => {
     const { server } = await setup();
     t.after(() => server.close());
