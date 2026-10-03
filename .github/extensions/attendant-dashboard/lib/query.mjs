@@ -12,8 +12,13 @@ export const OPERATIONS = ["read", "write"];
 
 /** Repeatable filter flags accepted by each source's `stats` command. */
 export const FILTERS = {
-    session: ["operation", "kind", "command", "path", "url"],
+    session: ["operation", "kind", "command", "path", "url", "decisionSource"],
     vscode: ["tool", "model", "agent"],
+};
+
+/** CLI flag names for filters whose query key differs from the flag. */
+const FILTER_FLAGS = {
+    decisionSource: "decision-source",
 };
 
 /** Filters that the CLI interprets as regular expressions. */
@@ -270,7 +275,8 @@ export function buildArgv(query, source = query.source) {
     if (query.since) argv.push(`--since=${query.since}`);
     if (query.until) argv.push(`--until=${query.until}`);
     for (const name of FILTERS[source]) {
-        for (const value of query.filters[source][name]) argv.push(`--${name}=${value}`);
+        const flag = FILTER_FLAGS[name] ?? name;
+        for (const value of query.filters[source][name]) argv.push(`--${flag}=${value}`);
     }
     argv.push(`--top=${query.top}`, "--format", "json");
     return argv;

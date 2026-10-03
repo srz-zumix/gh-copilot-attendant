@@ -31,17 +31,17 @@ input (all fields are optional):
 
 ### Query
 
-| Field     | Type      | Default    | CLI flag                                                                                       |
-| --------- | --------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| `filters` | `object`  | none       | `session`: `operation`, `kind`, `command`, `path`, `url`; `vscode`: `tool`, `model`, `agent`   |
-| `path`    | `string`  | empty      | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree`                         |
-| `period`  | `string`  | `30d`      | `--period` (mutually exclusive with `since`)                                                   |
-| `scope`   | `string`  | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd`                                   |
-| `session` | `string`  | empty      | `--session`                                                                                    |
-| `since`   | `string`  | empty      | `--since`                                                                                      |
-| `source`  | `string`  | `session`  | `session stats` or `vscode stats`                                                              |
-| `top`     | `integer` | `10`       | `--top` (`0` keeps every entry)                                                                |
-| `until`   | `string`  | empty      | `--until`                                                                                      |
+| Field     | Type      | Default    | CLI flag                                                                                                                             |
+| --------- | --------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `filters` | `object`  | none       | `session`: `operation`, `kind`, `command`, `path`, `url`, `decisionSource` (`--decision-source`); `vscode`: `tool`, `model`, `agent` |
+| `path`    | `string`  | empty      | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree`                                                               |
+| `period`  | `string`  | `30d`      | `--period` (mutually exclusive with `since`)                                                                                         |
+| `scope`   | `string`  | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd`                                                                         |
+| `session` | `string`  | empty      | `--session`                                                                                                                          |
+| `since`   | `string`  | empty      | `--since`                                                                                                                            |
+| `source`  | `string`  | `session`  | `session stats` or `vscode stats`                                                                                                    |
+| `top`     | `integer` | `10`       | `--top` (`0` keeps every entry)                                                                                                      |
+| `until`   | `string`  | empty      | `--until`                                                                                                                            |
 
 The `path` and `url` session filters and all `vscode` filters are regular expressions in
 Go's RE2 syntax. Constructs RE2 does not support, such as lookaround and backreferences, are
@@ -54,16 +54,33 @@ rejected before the command runs.
   the query.
 - **Query bar and filters** — scope, time window, session ID, top N, and the source-specific
   repeatable filters. Filter values appear as removable chips.
+- **Usage panel order** — both tabs show the model AIU share, Models table, directory/workspace
+  AIU share, then the directory/workspace table, when the corresponding data is available.
 - **Copilot CLI usage** — when the CLI reports it, AIU, premium requests, prompt/output tokens,
   cache hit rate, and API time from each session's `session.shutdown` event, with an AIU share
   bar and a per-working-directory table. Permission filters do not apply to usage totals.
+- **Copilot CLI models** — when `ByModelUsage` is available, an AIU share bar and a sortable
+  Models table with sessions, API requests, premium requests, AIU, token breakdown, cache hit
+  rate, and AIU per API request or per 1M tokens. Prompt tokens include uncached input,
+  cache reads, and cache writes; output tokens are also included in the per-1M-token unit.
+  Only recorded `modelMetrics` are counted, so older sessions may contribute to overall
+  usage without a model breakdown. Shares cover listed models, not all session usage;
+  a session using multiple models counts under each model. Model names are not filters:
+  the CLI does not support `session stats --model`.
 - **Copilot CLI permissions** — sessions, permission requests, and approved/denied/unresolved totals, with
   stacked bars per result, decision source (when the CLI reports it), read-only/read-write,
-  tool kind, command, path, URL, and working directory. Click a tool kind, command, path, or URL
-  entry to add it as a filter, or a working directory to scope to it.
+  tool kind, command, path, URL, and working directory. Click a decision source, tool kind,
+  command, path, or URL entry to add it as a filter, or a working directory to scope to it.
 - **VS Code** — sessions, turns, LLM requests, tool calls, token and AIU totals, a usage share
-  bar per model, model token breakdown (cached / uncached input / output), tool calls with
-  error rates and durations, subagents, and workspaces. Click an entry to filter or scope.
+  bar per model, model token breakdown (cached / uncached input / output) with a unit-cost
+  column (AIU per request or per 1M tokens), tool calls with error rates and durations,
+  subagents, and workspaces. When the CLI reports per-workspace
+  usage, workspaces also get an AIU share bar and a table of sessions, AIU (total and per
+  turn), and token breakdown. Click an entry to filter or scope.
+- **Model comparison** — in either tab, click any Models column heading to sort and click
+  again to reverse the order. Numeric columns start descending, model names ascending;
+  undefined ratios stay last. Sorting applies to listed models only (set Top to 0 to
+  include all models). Unit and sort preferences are independent for each tab.
 - **Ask agent** — preset prompts (summarize, suggest allow rules, tool health, token cost) and a
   free-text box; the current tab's data is sent to the agent as delimited, untrusted JSON.
   Asking is only available once the current tab has a successful result for the current query.

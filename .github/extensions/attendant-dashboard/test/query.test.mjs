@@ -30,13 +30,13 @@ test("filters are emitted only for their own source", () => {
     assert.ok(!buildArgv(q, "vscode").some((a) => a.startsWith("--kind")));
 });
 
-test("decisionSource is not a filter the CLI supports", () => {
-    assert.throws(() => normalizeQuery({ filters: { session: { decisionSource: ["unknown"] } } }), /unknown session filter/);
-    // Queries persisted by older builds must still load.
-    const q = normalizeQuery({}, { filters: { session: { kind: ["shell"], decisionSource: ["unknown"] } } });
-    assert.deepEqual(q.filters.session.kind, ["shell"]);
-    assert.ok(!("decisionSource" in q.filters.session));
-    assert.ok(!buildArgv(q, "session").some((a) => a.startsWith("--decision")));
+test("decisionSource maps to --decision-source", () => {
+    const q = normalizeQuery({ filters: { session: { decisionSource: ["unattended_fallback", "unknown"] } } });
+    const argv = buildArgv(q, "session");
+    assert.ok(argv.includes("--decision-source=unattended_fallback"));
+    assert.ok(argv.includes("--decision-source=unknown"));
+    assert.ok(!argv.some((a) => a.startsWith("--decisionSource")));
+    assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.decisionSource, []);
 });
 
 test("regex filters are checked against Go's RE2 syntax", () => {

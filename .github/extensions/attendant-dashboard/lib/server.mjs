@@ -25,6 +25,7 @@ const MAX_ASK = 8 * 1024;
 const PAGE = ["index.html", "text/html; charset=utf-8"];
 const STATIC = {
     "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+    "/model-view.mjs": ["model-view.mjs", "text/javascript; charset=utf-8"],
     "/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
 
