@@ -35,7 +35,10 @@ func NewStatsCmd() *cobra.Command {
 		Long: `Scan the GitHub Copilot CLI's local session history and report how often each
 tool, command, file path, and URL was requested, and whether it was approved or denied. It
 also reports each session's usage totals (premium requests, AIU, and token counts) from its
-"session.shutdown" event, when recorded.
+"session.shutdown" event, when recorded, broken down by working directory and model.
+Model usage includes model names, request counts, premium requests, AIU, and token counts
+from "modelMetrics" when recorded; older sessions without model metrics have no model
+breakdown. Model request counts are API requests, not permission requests.
 
 By default only sessions whose recorded working directory is inside the current git
 worktree are counted. Use --worktree to scope to a different worktree, --cwd to match a

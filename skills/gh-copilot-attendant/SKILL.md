@@ -18,7 +18,11 @@ Manages the bundled Copilot CLI canvas extension (`attendant-dashboard`). See th
 ### session stats
 
 Reports tool, path, and URL permission statistics, plus per-session usage totals (premium
-requests, AIU, token counts) from local GitHub Copilot CLI session history. See the
+requests, AIU, token counts) from local GitHub Copilot CLI session history. Usage is broken
+down by working directory and, when `modelMetrics` is recorded, by model, including API
+request counts. Model request counts are separate from permission requests. The model
+breakdown appears as `MODEL_USAGE` in tables and `ByModelUsage` in JSON; sessions without
+model metrics have no model breakdown. See the
 [README](../../README.md#session-stats) for the full flag reference.
 
 ### vscode stats

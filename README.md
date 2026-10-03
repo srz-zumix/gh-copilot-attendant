@@ -99,7 +99,12 @@ no decision source was recorded, including sessions from older CLI versions and 
 requests without a recorded outcome). It also reports each session's usage totals
 (premium requests, AIU, and token counts) recorded by its `session.shutdown` event, summed
 overall and broken down by working directory; usage is counted independently of the
-permission-request filters below, since it is not recorded per permission request. `--all`,
+permission-request filters below, since it is not recorded per permission request.
+When `modelMetrics` is recorded, the `MODEL_USAGE` table also reports model names, API
+request counts (not permission requests), premium requests, AIU, and token counts per
+model. JSON output includes this breakdown in `ByModelUsage`. Sessions without model
+metrics contribute to the overall totals but have no model breakdown. Model usage follows
+the same session scope, time bounds, and `--top` limit as working-directory usage. `--all`,
 `--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional; when none are given,
 only sessions whose recorded working directory is inside the current git worktree are
 counted. `--session` restricts to a single session ID. `--since` and `--until` accept
