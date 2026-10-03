@@ -1,4 +1,7 @@
+import { normalizeTableView, sortTableEntries, toggleTableSort } from "./table-view.mjs";
+
 export const MODEL_UNITS = {
+    session: { label: "Session", header: "AIU / session", per: (e) => e.Sessions ?? 0, scale: 1 },
     request: { label: "Request", header: "AIU / request", per: (e) => e.Requests ?? 0, scale: 1 },
     mtok: { label: "1M tokens", header: "AIU / 1M tokens", per: (e) => (e.InputTokens ?? 0) + (e.OutputTokens ?? 0), scale: 1e6 },
 };
@@ -18,8 +21,8 @@ export function sessionModelEntry(e) {
     };
 }
 
-export function unitCost(e, unit) {
-    const { per, scale } = MODEL_UNITS[unit];
+export function unitCost(e, unit, units = MODEL_UNITS) {
+    const { per, scale } = units[unit];
     const denominator = per(e);
     return denominator > 0 ? ((e.UsageAIU ?? 0) / denominator) * scale : null;
 }
@@ -40,7 +43,7 @@ export const MODEL_COLUMNS = [
 const sharedColumns = Object.fromEntries(MODEL_COLUMNS.map((column) => [column.id, column]));
 const sessionColumns = [
     sharedColumns.model,
-    { id: "sessions", label: "Sessions", value: (e) => e.Sessions ?? 0 },
+    { id: "sessions", label: "Sessions", value: (e) => e.Sessions ?? null },
     { ...sharedColumns.requests, label: "API requests" },
     { id: "premium", label: "Premium req.", value: (e) => e.PremiumRequests ?? 0 },
     sharedColumns.tokens,
@@ -59,32 +62,18 @@ export function modelColumns(source = "vscode") {
 }
 
 export function normalizeModelView(saved, source = "vscode") {
-    const view = saved !== null && typeof saved === "object" ? saved : {};
-    return {
-        unit: Object.hasOwn(MODEL_UNITS, view.unit) ? view.unit : "request",
-        sort: modelColumns(source).some((column) => column.id === view.sort) ? view.sort : source === "session" ? "aiu" : "requests",
-        direction: view.direction === "asc" ? "asc" : "desc",
-    };
+    return normalizeTableView(saved, {
+        units: MODEL_UNITS,
+        columns: modelColumns(source),
+        defaultUnit: "request",
+        defaultSort: source === "session" ? "aiu" : "requests",
+    });
 }
 
 export function toggleModelSort(view, columnId, source = "vscode") {
-    const column = modelColumns(source).find((entry) => entry.id === columnId);
-    return {
-        sort: column.id,
-        direction: view.sort === column.id ? (view.direction === "asc" ? "desc" : "asc") : column.direction ?? "desc",
-    };
+    return toggleTableSort(view, columnId, modelColumns(source));
 }
 
 export function sortModels(entries, view, source = "vscode") {
-    const column = modelColumns(source).find((entry) => entry.id === view.sort);
-    const direction = view.direction === "asc" ? 1 : -1;
-    return [...entries].sort((a, b) => {
-        const left = column.value(a, view.unit);
-        const right = column.value(b, view.unit);
-        // Undefined ratios stay last in either direction, rather than looking like zero cost.
-        if (left === null && right !== null) return 1;
-        if (right === null && left !== null) return -1;
-        const comparison = left === null ? 0 : typeof left === "string" ? left.localeCompare(right) : left - right;
-        return comparison * direction || String(a.Key).localeCompare(String(b.Key));
-    });
+    return sortTableEntries(entries, view, modelColumns(source));
 }
