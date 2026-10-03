@@ -598,7 +598,8 @@ function setModelView(source, patch) {
 function unitCostText(value) {
     if (value === null) return "–";
     if (value === 0) return "0";
-    return value < 0.01 ? value.toPrecision(2) : aiu(value);
+    // aiu() keeps a single decimal, so anything under 0.05 would render as "0.0".
+    return Math.abs(value) < 0.05 ? value.toPrecision(2) : aiu(value);
 }
 
 function segmented(label, options, value, onChange) {
