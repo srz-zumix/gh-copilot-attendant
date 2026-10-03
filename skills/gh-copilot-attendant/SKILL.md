@@ -38,11 +38,26 @@ In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
 `session stats` and `vscode stats` results. See its
 [README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.
 
-Both tabs have a Models table comparing AIU per API request or per 1M tokens.
+Both tabs have a Models table comparing AIU per session, per API request (default),
+or per 1M tokens. Session units use each model's recorded `Sessions` count, never
+the overall session count. Missing counts or zero denominators show a dash;
+missing counts also display an explanation. Current VS Code statistics do not
+report model session counts.
 Usage panels follow the same order: model AIU share, Models table,
-directory/workspace AIU share, then the directory/workspace table.
+workspace AIU share, then the Workspaces table.
 Click any column heading to sort the listed models, and click again to reverse
 the order. Set Top to 0 to include all models in the comparison.
+
+Both Workspaces tables compare AIU per session, per API request, or per 1M tokens
+(default: session), with comparison bars and clickable metric headings. The default
+sort is AIU descending; missing metrics and zero denominators show a dash and sort
+last. Set Top to 0 to include all workspaces. Preferences are independent per tab
+and per table.
+
+CLI workspace request counts use `ByCWDUsage.Requests`, never permission or premium
+requests. VS Code workspace sessions use `ByWorkspace.Sessions`, and API request
+counts use `ByWorkspace.LLMRequests`. Older builds may lack these fields; do not
+infer them from tool calls or turns. Workspace token accounting matches Models.
 
 CLI models require `ByModelUsage` from recorded `modelMetrics`; older sessions may
 have usage totals without a model breakdown. CLI prompt tokens include uncached

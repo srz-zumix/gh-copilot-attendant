@@ -54,14 +54,14 @@ rejected before the command runs.
   the query.
 - **Query bar and filters** — scope, time window, session ID, top N, and the source-specific
   repeatable filters. Filter values appear as removable chips.
-- **Usage panel order** — both tabs show the model AIU share, Models table, directory/workspace
-  AIU share, then the directory/workspace table, when the corresponding data is available.
+- **Usage panel order** — both tabs show the model AIU share, Models table, workspace
+  AIU share, then the Workspaces table, when the corresponding data is available.
 - **Copilot CLI usage** — when the CLI reports it, AIU, premium requests, prompt/output tokens,
   cache hit rate, and API time from each session's `session.shutdown` event, with an AIU share
-  bar and a per-working-directory table. Permission filters do not apply to usage totals.
+  bar and a Workspaces table. Permission filters do not apply to usage totals.
 - **Copilot CLI models** — when `ByModelUsage` is available, an AIU share bar and a sortable
   Models table with sessions, API requests, premium requests, AIU, token breakdown, cache hit
-  rate, and AIU per API request or per 1M tokens. Prompt tokens include uncached input,
+  rate, and AIU per session, per API request, or per 1M tokens. Prompt tokens include uncached input,
   cache reads, and cache writes; output tokens are also included in the per-1M-token unit.
   Only recorded `modelMetrics` are counted, so older sessions may contribute to overall
   usage without a model breakdown. Shares cover listed models, not all session usage;
@@ -73,7 +73,7 @@ rejected before the command runs.
   command, path, or URL entry to add it as a filter, or a working directory to scope to it.
 - **VS Code** — sessions, turns, LLM requests, tool calls, token and AIU totals, a usage share
   bar per model, model token breakdown (cached / uncached input / output) with a unit-cost
-  column (AIU per request or per 1M tokens), tool calls with error rates and durations,
+  column (AIU per session, per request, or per 1M tokens), tool calls with error rates and durations,
   subagents, and workspaces. When the CLI reports per-workspace
   usage, workspaces also get an AIU share bar and a table of sessions, AIU (total and per
   turn), and token breakdown. Click an entry to filter or scope.
@@ -81,6 +81,20 @@ rejected before the command runs.
   again to reverse the order. Numeric columns start descending, model names ascending;
   undefined ratios stay last. Sorting applies to listed models only (set Top to 0 to
   include all models). Unit and sort preferences are independent for each tab.
+  Both tabs offer Session, Request (default), and 1M tokens as unit-cost denominators.
+  AIU per session uses each model's recorded `Sessions` count, not the overall session
+  count. Missing session counts or zero denominators show a dash; missing counts also
+  display an explanation. Current VS Code statistics do not report model session counts.
+- **Workspace comparison** — both tabs use the Workspaces title and compare AIU per session,
+  per API request, or per 1M tokens (default: session), with the same unit controls and
+  comparison bars as Models. CLI request counts come from `ByCWDUsage.Requests`, not
+  permission requests or premium requests; VS Code uses `ByWorkspace.LLMRequests` and
+  `ByWorkspace.Sessions`. Token units use prompt plus output, with the same cache accounting
+  as Models. Missing counts and zero denominators show a dash, not zero cost.
+  Click any metric column heading to sort and click again to reverse; the default is AIU
+  descending. Unknown values stay last. Sorting covers listed workspaces only (set Top to 0
+  to include all). Each tab's Workspaces preferences are independent of Models.
+  Older CLI builds without workspace usage retain the VS Code activity-only table.
 - **Ask agent** — preset prompts (summarize, suggest allow rules, tool health, token cost) and a
   free-text box; the current tab's data is sent to the agent as delimited, untrusted JSON.
   Asking is only available once the current tab has a successful result for the current query.

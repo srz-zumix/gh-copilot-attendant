@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MODEL_COLUMNS, modelColumns, normalizeModelView, promptTokens, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "../ui/model-view.mjs";
+import { MODEL_COLUMNS, MODEL_UNITS, modelColumns, normalizeModelView, promptTokens, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "../ui/model-view.mjs";
 
 const models = [
     { Key: "Zeta", Requests: 2, InputTokens: 200, CachedTokens: 100, OutputTokens: 10, AvgTTFTMs: 10, UsageAIU: 10 },
@@ -35,6 +35,25 @@ test("unit cost sorting follows the selected denominator", () => {
     assert.deepEqual(names(sortModels(models, { unit: "mtok", sort: "unit", direction: "desc" })), ["Alpha", "Zeta"]);
 });
 
+test("model session unit costs use recorded per-model counts in both sources", () => {
+    assert.deepEqual(Object.keys(MODEL_UNITS), ["session", "request", "mtok"]);
+    assert.equal(MODEL_UNITS.session.header, "AIU / session");
+    for (const source of ["session", "vscode"]) {
+        const entries = [
+            { Key: "Zeta", Sessions: 2, Requests: 100, AIU: 10, UsageAIU: 10 },
+            { Key: "Alpha", Sessions: 10, Requests: 1, AIU: 20, UsageAIU: 20 },
+            { Key: "zero", Sessions: 1, AIU: 0, UsageAIU: 0 },
+            { Key: "missing", Requests: 100, AIU: 5, UsageAIU: 5 },
+            { Key: "empty", Sessions: 0, AIU: 5, UsageAIU: 5 },
+        ].map((entry) => source === "session" ? sessionModelEntry(entry) : entry);
+        assert.deepEqual(entries.map((entry) => unitCost(entry, "session")), [5, 2, 0, null, null]);
+        const view = { unit: "session", sort: "unit", direction: "asc" };
+        assert.deepEqual(names(sortModels(entries, view, source)), ["zero", "Alpha", "Zeta", "empty", "missing"]);
+        assert.deepEqual(names(sortModels(entries, { ...view, direction: "desc" }, source)), ["Zeta", "Alpha", "zero", "empty", "missing"]);
+        assert.deepEqual(normalizeModelView(JSON.parse(JSON.stringify(view)), source), view);
+    }
+});
+
 test("undefined ratios stay last in both directions, and zero AIU remains a valid value", () => {
     const entries = [
         { Key: "missing", Requests: 0, InputTokens: 0, UsageAIU: 5 },
@@ -45,9 +64,9 @@ test("undefined ratios stay last in both directions, and zero AIU remains a vali
         assert.deepEqual(names(sortModels(entries, { unit: "request", sort, direction: "asc" })), ["zero", "paid", "missing"]);
         assert.deepEqual(names(sortModels(entries, { unit: "request", sort, direction: "desc" })), ["paid", "zero", "missing"]);
     }
-    for (const unit of ["request", "mtok"]) {
+    for (const unit of Object.keys(MODEL_UNITS)) {
         assert.equal(unitCost(entries[0], unit), null);
-        assert.equal(unitCost(entries[2], unit), 0);
+        assert.equal(unitCost({ ...entries[2], Sessions: 1 }, unit), 0);
     }
 });
 

@@ -184,19 +184,44 @@ test("vscode workspace summaries include usage only when the CLI reports it", ()
         outputTokens: 60,
         cachedTokens: 15,
         usageAIU: 3.14,
+        aiuPerSession: 1.5708,
+        aiuPerRequest: 1.5708,
+        aiuPer1MTokens: 8726.6389,
     });
 });
 
-test("vscode model summaries include unit costs", () => {
-    const data = { ByModel: [{ Key: "m", Requests: 4, InputTokens: 900000, OutputTokens: 100000, CachedTokens: 0, UsageAIU: 2 }, { Key: "z", Requests: 0, InputTokens: 0, OutputTokens: 0, UsageAIU: 0 }] };
-    const [m, z] = summarize("vscode", data).byModel;
-    assert.equal(m.aiuPerRequest, 0.5);
-    assert.equal(m.aiuPer1MTokens, 2);
-    assert.equal(z.aiuPerRequest, null);
-    assert.equal(z.aiuPer1MTokens, null);
+test("workspace summaries use recorded sessions and API requests for unit costs", () => {
+    const cli = { Key: "/repo", Sessions: 4, Requests: 2, PremiumRequests: 999, AIU: 2, InputTokens: 20, CacheReadTokens: 70, CacheWriteTokens: 10, OutputTokens: 100 };
+    const summary = summarize("session", { UsageSessions: 4, Requests: 9999, ByCWDUsage: [cli] }).byCWDUsage[0];
+    assert.equal(summary.requests, 2);
+    assert.equal(summary.aiuPerSession, 0.5);
+    assert.equal(summary.aiuPerRequest, 1);
+    assert.equal(summary.aiuPer1MTokens, 10000);
+    const legacy = summarize("session", { UsageSessions: 4, ByCWDUsage: [{ ...cli, Requests: undefined }] }).byCWDUsage[0];
+    assert.equal(legacy.requests, undefined);
+    assert.equal(legacy.aiuPerRequest, null);
+    const vscode = summarize("vscode", { ByWorkspace: [{ Key: "/repo", Sessions: 4, LLMRequests: 2, InputTokens: 100, OutputTokens: 100, CachedTokens: 70, UsageAIU: 2 }] }).byWorkspace[0];
+    assert.equal(vscode.aiuPerSession, 0.5);
+    assert.equal(vscode.aiuPerRequest, 1);
+    assert.equal(vscode.aiuPer1MTokens, 10000);
 });
 
-test("CLI model summaries include API-request unit costs and raw cache fields", () => {
+test("vscode model summaries include unit costs", () => {
+    const data = { ByModel: [{ Key: "m", Sessions: 4, Requests: 4, InputTokens: 900000, OutputTokens: 100000, CachedTokens: 0, UsageAIU: 2 }, { Key: "z", Sessions: 0, Requests: 0, InputTokens: 0, OutputTokens: 0, UsageAIU: 0 }] };
+    const [m, z] = summarize("vscode", data).byModel;
+    assert.equal(m.sessions, 4);
+    assert.equal(m.aiuPerSession, 0.5);
+    assert.equal(m.aiuPerRequest, 0.5);
+    assert.equal(m.aiuPer1MTokens, 2);
+    assert.equal(z.aiuPerSession, null);
+    assert.equal(z.aiuPerRequest, null);
+    assert.equal(z.aiuPer1MTokens, null);
+    const legacy = summarize("vscode", { Sessions: 100, ByModel: [{ Key: "legacy", Requests: 4, UsageAIU: 2 }] }).byModel[0];
+    assert.equal(legacy.sessions, undefined);
+    assert.equal(legacy.aiuPerSession, null);
+});
+
+test("CLI model summaries include session and API-request unit costs and raw cache fields", () => {
     const model = { Key: "m", Sessions: 3, Requests: 2, PremiumRequests: 0.5, AIU: 1, InputTokens: 10, CacheReadTokens: 80, CacheWriteTokens: 10, OutputTokens: 20, APIDurationMs: 0 };
     const data = { UsageSessions: 3, Requests: 999, ByModelUsage: [model, { ...model, Key: "second" }] };
     const summary = summarize("session", data, 1);
@@ -211,6 +236,7 @@ test("CLI model summaries include API-request unit costs and raw cache fields", 
         cacheWriteTokens: 10,
         outputTokens: 20,
         apiDurationMs: 0,
+        aiuPerSession: 0.3333,
         aiuPerRequest: 0.5,
         aiuPer1MTokens: 8333.3333,
     }]);
@@ -231,5 +257,7 @@ test("CLI model summaries preserve absent, empty and zero usage distinctions", (
     assert.equal(zero.aiuPer1MTokens, 0);
     assert.equal(missing.aiuPerRequest, null);
     assert.equal(missing.aiuPer1MTokens, null);
+    assert.equal(zero.aiuPerSession, null);
+    assert.equal(missing.aiuPerSession, null);
     assert.ok(capped.key.length <= 201);
 });
