@@ -43,7 +43,7 @@ export const MODEL_COLUMNS = [
 const sharedColumns = Object.fromEntries(MODEL_COLUMNS.map((column) => [column.id, column]));
 const sessionColumns = [
     sharedColumns.model,
-    { id: "sessions", label: "Sessions", value: (e) => e.Sessions ?? 0 },
+    { id: "sessions", label: "Sessions", value: (e) => e.Sessions ?? null },
     { ...sharedColumns.requests, label: "API requests" },
     { id: "premium", label: "Premium req.", value: (e) => e.PremiumRequests ?? 0 },
     sharedColumns.tokens,
