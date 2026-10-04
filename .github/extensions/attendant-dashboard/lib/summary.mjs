@@ -5,6 +5,7 @@
 // delimited JSON data together with an explicit warning.
 
 import { sessionModelEntry, unitCost } from "../ui/model-view.mjs";
+import { workspaceEntry, workspaceUnitCost } from "../ui/workspace-view.mjs";
 
 const MAX_KEY = 200;
 
@@ -65,7 +66,13 @@ function usage(data, limit) {
                 APIDurationMs: data.UsageAPIDurationMs,
             }),
         },
-        byCWDUsage: (data.ByCWDUsage ?? []).slice(0, limit).map((e) => ({ key: cap(e.Key), sessions: e.Sessions, ...usageTotals(e) })),
+        byCWDUsage: (data.ByCWDUsage ?? []).slice(0, limit).map((e) => ({
+            key: cap(e.Key),
+            sessions: e.Sessions,
+            ...(e.Requests !== undefined ? { requests: e.Requests } : {}),
+            ...usageTotals(e),
+            ...workspaceUnitCosts(e, "session"),
+        })),
         ...(data.ByModelUsage !== undefined
             ? {
                   modelUsageNote: "Recorded modelMetrics only; requests are API requests, session counts may overlap across models, and only listed models are included",
@@ -87,11 +94,26 @@ function round4(n) {
 
 // Unit costs let the agent compare models by price per unit of work rather than total AIU.
 function unitCosts(e) {
+    const perSession = unitCost(e, "session");
     const perRequest = unitCost(e, "request");
     const perTokens = unitCost(e, "mtok");
     return {
+        aiuPerSession: perSession === null ? null : round4(perSession),
         aiuPerRequest: perRequest === null ? null : round4(perRequest),
         aiuPer1MTokens: perTokens === null ? null : round4(perTokens),
+    };
+}
+
+function workspaceUnitCosts(raw, source) {
+    const entry = workspaceEntry(raw, source);
+    const rounded = (unit) => {
+        const value = workspaceUnitCost(entry, unit);
+        return value === null ? null : round4(value);
+    };
+    return {
+        aiuPerSession: rounded("session"),
+        aiuPerRequest: rounded("request"),
+        aiuPer1MTokens: rounded("mtok"),
     };
 }
 
@@ -137,6 +159,7 @@ export function summarize(source, data, limit = 10) {
         })),
         byModel: (data.ByModel ?? []).slice(0, limit).map((e) => ({
             key: cap(e.Key),
+            ...(e.Sessions !== undefined ? { sessions: e.Sessions } : {}),
             requests: e.Requests,
             inputTokens: e.InputTokens,
             outputTokens: e.OutputTokens,
@@ -159,6 +182,7 @@ export function summarize(source, data, limit = 10) {
                       outputTokens: e.OutputTokens,
                       cachedTokens: e.CachedTokens,
                       usageAIU: round2(e.UsageAIU),
+                      ...workspaceUnitCosts(e, "vscode"),
                   }
                 : {}),
         })),
