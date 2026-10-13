@@ -144,7 +144,8 @@ export class Dashboard {
         }
         if (!force && this.results[source].status === "loading" && this.pending[source]) {
             const loading = this.results[source].loadingArgv?.join("\0");
-            if (loading === this.fetchArgv(source).join("\0")) return this.refreshing(source);
+            const sameRunner = this.results[source].loadingRunnerMode === this.runnerMode;
+            if (sameRunner && loading === this.fetchArgv(source).join("\0")) return this.refreshing(source);
         }
         return this.refresh(source);
     }
@@ -184,6 +185,7 @@ export class Dashboard {
             status: "loading",
             error: null,
             loadingArgv: argv,
+            loadingRunnerMode: runnerMode,
             startedAt: new Date().toISOString(),
         };
         this.emit();
