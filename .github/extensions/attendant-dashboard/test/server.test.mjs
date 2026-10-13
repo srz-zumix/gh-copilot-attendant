@@ -4,6 +4,7 @@ import { request } from "node:http";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { normalizeQuery } from "../lib/query.mjs";
 import { startServer } from "../lib/server.mjs";
+import { vscodeDataset } from "./fixtures/vscode.mjs";
 
 function call(url, { method = "GET", headers = {}, body } = {}) {
     return new Promise((resolve, reject) => {
@@ -27,17 +28,17 @@ function call(url, { method = "GET", headers = {}, body } = {}) {
     });
 }
 
-async function setup() {
+async function setup(runStats = async () => ({ data: { Sessions: 1, Requests: 2 }, warnings: [], durationMs: 1 })) {
     const asked = [];
     const dashboard = new Dashboard({
         query: normalizeQuery(),
         cwd: "/repo",
         deps: {
             resolveRunner: async () => ({ cmd: "fake", prefix: [], label: "fake" }),
-            runStats: async () => ({ data: { Sessions: 1, Requests: 2 }, warnings: [], durationMs: 1 }),
+            runStats,
         },
     });
-    const server = await startServer({ dashboard, ask: async (a) => asked.push(a) });
+    const server = await startServer({ dashboard, ask: async (a) => asked.push({ ...a, summary: dashboard.summary(a.source) }) });
     const auth = { "X-Dashboard-Token": server.token };
     const json = { ...auth, "Content-Type": "application/json" };
     return { dashboard, server, asked, auth, json };
@@ -56,7 +57,7 @@ test("index.html embeds the token and sets a CSP", async (t) => {
 test("table view modules are served as same-origin JavaScript", async (t) => {
     const { server } = await setup();
     t.after(() => server.close());
-    for (const [file, exported] of [["model-view.mjs", "sortModels"], ["workspace-view.mjs", "sortWorkspaces"], ["table-view.mjs", "sortTableEntries"]]) {
+    for (const [file, exported] of [["model-view.mjs", "sortModels"], ["workspace-view.mjs", "sortWorkspaces"], ["table-view.mjs", "sortTableEntries"], ["filter-view.mjs", "panelClearPatch"]]) {
         const res = await call(`${server.origin}/${file}`);
         assert.equal(res.status, 200);
         assert.match(res.headers["content-type"], /^text\/javascript/);
@@ -141,4 +142,36 @@ test("ask requires a fresh, successful result and forwards presets", async (t) =
     assert.equal(dashboard.results.session.status, "error");
     assert.equal((await call(url, { method: "POST", headers: json, body: JSON.stringify({ text: "hi" }) })).status, 409);
     assert.equal(asked.length, 1);
+});
+
+test("HTTP Agent changes use cached data for state and Ask agent without launching gh", async (t) => {
+    let calls = 0;
+    const { server, json, dashboard, asked, auth } = await setup(async () => {
+        calls++;
+        return { data: vscodeDataset(), warnings: [], durationMs: 10 };
+    });
+    t.after(() => server.close());
+    await dashboard.setQuery({ source: "vscode" });
+    const ranAt = dashboard.results.vscode.ranAt;
+    const response = await call(`${server.origin}/api/query`, {
+        method: "POST", headers: json,
+        body: JSON.stringify({ query: { top: 1, filters: { vscode: { agent: ["^Explore$"] } } } }),
+    });
+    assert.equal(response.status, 200);
+    const projected = response.json.results.vscode;
+    assert.equal(projected.data.LLMRequests, 4);
+    assert.equal(projected.data.ByModel.length, 1);
+    assert.equal(projected.data.LogDetails, undefined);
+    assert.equal(projected.ranAt, ranAt);
+    assert.equal(projected.fresh, true);
+    assert.equal(projected.localFiltering, true);
+    const state = await call(`${server.origin}/api/state`, { headers: auth });
+    assert.deepEqual(state.json.results.vscode.data, projected.data);
+    const ask = await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ preset: "summarize" }),
+    });
+    assert.equal(ask.status, 200);
+    assert.equal(asked[0].summary.summary.llmRequests, 4);
+    assert.equal(asked[0].summary.ranAt, ranAt);
+    assert.equal(calls, 1);
 });

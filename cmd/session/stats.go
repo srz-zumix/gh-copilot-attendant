@@ -31,14 +31,23 @@ func NewStatsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Report tool, path, URL permission, and usage statistics from local Copilot CLI session history",
+		Short: "Report permission, usage, and user-question statistics from local Copilot CLI history",
 		Long: `Scan the GitHub Copilot CLI's local session history and report how often each
 tool, command, file path, and URL was requested, and whether it was approved or denied. It
-also reports each session's usage totals (premium requests, AIU, and token counts) from its
-"session.shutdown" event, when recorded, broken down by working directory and model.
-Model usage includes model names, request counts, premium requests, AIU, and token counts
-from "modelMetrics" when recorded; older sessions without model metrics have no model
-breakdown. Model request counts are API requests, not permission requests.
+also reports recorded usage (premium requests, AIU, and token counts), including unfinished
+sessions, by working directory, model, and main/subagent/unknown role.
+Request-level "session.usage_record" events and cumulative "session.usage_checkpoint"
+and "session.shutdown" snapshots are combined without double counting. Model breakdowns
+use request records or "modelMetrics"; checkpoint-only usage may have no model or token
+breakdown. Unattributed usage is reported as unknown, never inferred from model names.
+Model request counts are API requests, not permission requests.
+
+Recorded ask_user starts and completions also report questions, answered, cancelled,
+failed, unresolved, and unknown outcomes, plus total, average, and maximum answer wait.
+Only answered questions with valid paired timestamps contribute to wait metrics.
+These intervals include tool/UI/transport overhead, not only user thinking time.
+Time bounds select questions by their start time; completions after --until still resolve
+selected questions. Permission filters and --top do not affect question statistics.
 
 By default only sessions whose recorded working directory is inside the current git
 worktree are counted. Use --worktree to scope to a different worktree, --cwd to match a
@@ -55,7 +64,9 @@ outcomes whose recorded decision source matches exactly (e.g. human_response,
 unattended_fallback, or unknown when no decision source was recorded, including older CLI
 versions and unresolved requests without a recorded outcome). Each of these
 flags may be repeated to match any of multiple values. --since, --until, and --period also
-bound which sessions' usage totals are counted, by their "session.shutdown" event's time;
+bound which sessions' lifetime usage totals are counted, by their latest recorded usage
+update time (not individual API request times). The role breakdown is never truncated by
+--top. Missing breakdowns are marked as incomplete;
 --operation, --kind, --decision-source, --command, --path, and --url do not affect usage
 totals, since usage is not recorded per permission request.`,
 		Args: cobra.NoArgs,

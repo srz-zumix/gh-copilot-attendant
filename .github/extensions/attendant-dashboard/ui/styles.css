@@ -378,6 +378,10 @@ textarea {
     gap: 12px;
 }
 
+.grid + .grid {
+    margin-top: 12px;
+}
+
 .section-head {
     display: flex;
     align-items: baseline;
@@ -414,9 +418,18 @@ textarea {
 
 .panel header {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
+}
+
+.panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-left: auto;
 }
 
 .panel header .hint {

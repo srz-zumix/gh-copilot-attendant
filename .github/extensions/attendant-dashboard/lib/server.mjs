@@ -28,6 +28,7 @@ const STATIC = {
     "/model-view.mjs": ["model-view.mjs", "text/javascript; charset=utf-8"],
     "/table-view.mjs": ["table-view.mjs", "text/javascript; charset=utf-8"],
     "/workspace-view.mjs": ["workspace-view.mjs", "text/javascript; charset=utf-8"],
+    "/filter-view.mjs": ["filter-view.mjs", "text/javascript; charset=utf-8"],
     "/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
 

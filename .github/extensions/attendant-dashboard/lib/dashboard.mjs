@@ -4,6 +4,7 @@
 import { buildArgv, normalizeQuery, SOURCES } from "./query.mjs";
 import { resolveRunner, runStats, RUNNERS } from "./runner.mjs";
 import { summarize } from "./summary.mjs";
+import { projectVscode, vscodeFetchArgv } from "./vscode-data.mjs";
 
 function idleResult() {
     return { status: "idle", data: null, argv: null, ranAt: null, durationMs: null, warnings: [], error: null };
@@ -35,6 +36,7 @@ export class Dashboard {
         this.pending = {};
         this.listeners = new Set();
         this.closed = false;
+        this.vscodeCache = null;
     }
 
     subscribe(listener) {
@@ -56,7 +58,26 @@ export class Dashboard {
     /** Whether the stored result was produced by the current query. */
     isFresh(source) {
         const result = this.results[source];
-        return Boolean(result.argv) && result.argv.join("\0") === buildArgv(this.query, source).join("\0");
+        return Boolean(result.argv) && result.argv.join("\0") === buildArgv(this.query, source).join("\0") &&
+            (source !== "vscode" || this.hasVscodeCache());
+    }
+
+    hasVscodeCache() {
+        return this.vscodeCache?.runnerMode === this.runnerMode &&
+            this.vscodeCache.argv.join("\0") === vscodeFetchArgv(this.query).join("\0");
+    }
+
+    projectCachedVscode() {
+        if (!this.hasVscodeCache()) return;
+        const cache = this.vscodeCache;
+        this.results.vscode = {
+            ...this.results.vscode,
+            data: projectVscode(cache.data, this.query),
+            argv: buildArgv(this.query, "vscode"),
+            fetchArgv: cache.argv,
+            localFiltering: true,
+            ranAt: cache.ranAt, durationMs: cache.durationMs, warnings: cache.warnings,
+        };
     }
 
     snapshot() {
@@ -108,6 +129,7 @@ export class Dashboard {
     /** Validates and stores a query patch synchronously; throws QueryError. */
     applyQuery(patch) {
         this.query = normalizeQuery(patch, this.query);
+        this.projectCachedVscode();
         this.persist(this.query);
         this.emit();
         return this.query;
@@ -117,11 +139,19 @@ export class Dashboard {
     async ensureFresh({ force = false } = {}) {
         const source = this.query.source;
         if (!force && this.isFresh(source) && this.results[source].status === "ok") return this.results[source];
+        if (!force && source === "vscode" && this.hasVscodeCache() && this.results[source].status === "error") {
+            return this.results[source];
+        }
         if (!force && this.results[source].status === "loading" && this.pending[source]) {
             const loading = this.results[source].loadingArgv?.join("\0");
-            if (loading === buildArgv(this.query, source).join("\0")) return this.refreshing(source);
+            const sameRunner = this.results[source].loadingRunnerMode === this.runnerMode;
+            if (sameRunner && loading === this.fetchArgv(source).join("\0")) return this.refreshing(source);
         }
         return this.refresh(source);
+    }
+
+    fetchArgv(source) {
+        return source === "vscode" ? vscodeFetchArgv(this.query) : buildArgv(this.query, source);
     }
 
     async refreshing(source) {
@@ -146,13 +176,16 @@ export class Dashboard {
         this.aborters[source]?.abort();
         const controller = new AbortController();
         this.aborters[source] = controller;
-        const argv = buildArgv(this.query, source);
+        const query = this.query;
+        const runnerMode = this.runnerMode;
+        const argv = this.fetchArgv(source);
         const previous = this.results[source];
         this.results[source] = {
             ...previous,
             status: "loading",
             error: null,
             loadingArgv: argv,
+            loadingRunnerMode: runnerMode,
             startedAt: new Date().toISOString(),
         };
         this.emit();
@@ -166,11 +199,22 @@ export class Dashboard {
                     signal: controller.signal,
                 });
                 if (generation !== this.generation[source] || this.closed) return;
+                const ranAt = new Date().toISOString();
+                let projected = data;
+                let equivalentArgv = argv;
+                if (source === "vscode") {
+                    projectVscode(data, { ...query, filters: { ...query.filters, vscode: { ...query.filters.vscode, agent: [] } } });
+                    const current = argv.join("\0") === this.fetchArgv(source).join("\0") ? this.query : query;
+                    projected = projectVscode(data, current);
+                    equivalentArgv = buildArgv(current, source);
+                    this.vscodeCache = { data, argv, ranAt, durationMs, warnings, runnerMode };
+                }
                 this.results[source] = {
                     status: "ok",
-                    data,
-                    argv,
-                    ranAt: new Date().toISOString(),
+                    data: projected,
+                    argv: equivalentArgv,
+                    ...(source === "vscode" ? { fetchArgv: argv, localFiltering: true } : {}),
+                    ranAt,
                     durationMs,
                     warnings,
                     error: null,
@@ -179,10 +223,9 @@ export class Dashboard {
                 if (generation !== this.generation[source] || this.closed || error.aborted) return;
                 this.log(`attendant-dashboard: ${source} stats failed: ${error.message}`, "warning");
                 this.results[source] = {
-                    ...previous,
+                    ...this.results[source],
                     status: "error",
                     error: error.message,
-                    argv: previous.argv,
                 };
             } finally {
                 if (generation === this.generation[source]) {
@@ -205,6 +248,7 @@ export class Dashboard {
             fresh: this.isFresh(source),
             error: result.error,
             command: result.argv ? `gh copilot-attendant ${result.argv.join(" ")}` : null,
+            ...(result.fetchArgv ? { fetchCommand: `gh copilot-attendant ${result.fetchArgv.join(" ")}`, localFiltering: true } : {}),
             ranAt: result.ranAt,
             durationMs: result.durationMs,
             warningCount: result.warnings?.length ?? 0,

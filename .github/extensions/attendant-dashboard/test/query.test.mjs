@@ -23,10 +23,13 @@ test("values are passed as single --flag=value arguments", () => {
 });
 
 test("filters are emitted only for their own source", () => {
-    const q = normalizeQuery({ filters: { session: { kind: ["shell"] }, vscode: { tool: ["read_file"] } } });
+    const q = normalizeQuery({ filters: { session: { kind: ["shell"] }, vscode: { tool: ["read_file"], agent: ["^Explore$", "^executionSubagent$"] } } });
     assert.ok(buildArgv(q, "session").includes("--kind=shell"));
     assert.ok(!buildArgv(q, "session").some((a) => a.startsWith("--tool")));
+    assert.ok(!buildArgv(q, "session").some((a) => a.startsWith("--agent")));
     assert.ok(buildArgv(q, "vscode").includes("--tool=read_file"));
+    assert.ok(buildArgv(q, "vscode").includes("--agent=^Explore$"));
+    assert.ok(buildArgv(q, "vscode").includes("--agent=^executionSubagent$"));
     assert.ok(!buildArgv(q, "vscode").some((a) => a.startsWith("--kind")));
 });
 

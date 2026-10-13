@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "vendor:canvas": "node scripts/vendor-canvas.mjs"
+  },
+  "devDependencies": {
+    "re2js": "2.8.6"
+  }
+}
