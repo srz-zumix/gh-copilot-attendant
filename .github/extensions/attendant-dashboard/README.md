@@ -46,6 +46,8 @@ input (all fields are optional):
 The `path` and `url` session filters and all `vscode` filters are regular expressions in
 Go's RE2 syntax. Constructs RE2 does not support, such as lookaround and backreferences, are
 rejected before the command runs.
+VS Code Agent filters are evaluated locally with the bundled RE2JS matcher. No npm install
+is required to run the canvas.
 
 ## Dashboard
 
@@ -54,27 +56,79 @@ rejected before the command runs.
   the query.
 - **Query bar and filters** — scope, time window, session ID, top N, and the source-specific
   repeatable filters. Filter values appear as removable chips.
+  VS Code Agent and Top changes are applied to the cached dataset without executing gh.
+  Initial loading, explicit Refresh, and scope/time/session/tool/model changes fetch new
+  untruncated log details using `--include-log-stats`. Top is applied after local filtering.
+  The last data-fetch time is retained while local filters change; Refresh reads new logs.
+  An unsupported CLI reports an error rather than falling back to per-click commands.
+  Display, `get_data`, `get_summary`, and Ask agent share the same projected results.
+  The footer shows an equivalent CLI command; its tooltip and summary `fetchCommand`
+  identify the actual data-fetch command.
+- **Panel Clear** — filterable panel headers clear only their corresponding filter group:
+  VS Code Models (including model shares), Tools, and Subagents; CLI Decision sources,
+  Read-only vs read-write, Tool kinds, Commands, Paths, and URLs. Workspaces, workspace
+  shares, and Working directories clear directory scope to all workspaces. Other
+  filters, period/time bounds, session, Top, and display preferences remain unchanged.
+  Clear is disabled without an active matching condition, including panels with no rows.
+  CLI model and role usage panels do not have Clear buttons because those axes are not filters.
 - **Usage panel order** — both tabs show the model AIU share, Models table, workspace
-  AIU share, then the Workspaces table, when the corresponding data is available.
-- **Copilot CLI usage** — when the CLI reports it, AIU, premium requests, prompt/output tokens,
-  cache hit rate, and API time from each session's `session.shutdown` event, with an AIU share
-  bar and a Workspaces table. Permission filters do not apply to usage totals.
+  AIU share, then the Workspaces table, followed by User questions, when the corresponding
+  data is available. On CLI, Agent usage follows User questions, then the Permissions
+  summary uses the same bordered panel style as the other panels.
+- **Copilot CLI usage** — AIU, premium requests, prompt/output tokens, cache hit rate,
+  API requests, and API time, including unfinished sessions. Request usage records and
+  cumulative checkpoints/shutdown snapshots are combined without double counting.
+  Refresh reads the latest recorded totals; logs are not continuously polled.
+  Incomplete model/request/token breakdowns are noted explicitly. Permission filters
+  do not apply to usage totals. Time bounds select lifetime totals by latest usage update.
+- **Copilot CLI agent usage** — an Agent usage table separates main, subagent, and unknown
+  requests, premium requests, AIU, and tokens using recorded request metadata, not model
+  names. Unknown includes older/unattributed snapshot usage. In incomplete breakdowns,
+  request/token subtotals are marked with `≥`; `–` means unavailable, not zero usage.
+- **Copilot CLI user questions** — the User questions panel reports `ask_user` counts
+  and answered/cancelled/failed/unresolved/unknown outcomes. Total, average, and maximum
+  answer wait use only answered pairs with valid timestamps; missing timing is noted.
+  Without timed answers, average/maximum show a dash. Time bounds select question
+  starts; completions after the upper bound still resolve them. Directory/session scope
+  applies, but permission filters and Top do not. Elapsed tool time includes UI/transport
+  overhead and sums overlapping intervals, not unique wall-clock idle time.
+  Question and answer text is not exported. Older CLI payloads without `AskUser` omit
+  this panel. Display, summaries, and Ask agent receive the same question metrics.
 - **Copilot CLI models** — when `ByModelUsage` is available, an AIU share bar and a sortable
   Models table with sessions, API requests, premium requests, AIU, token breakdown, cache hit
   rate, and AIU per session, per API request, or per 1M tokens. Prompt tokens include uncached input,
   cache reads, and cache writes; output tokens are also included in the per-1M-token unit.
-  Only recorded `modelMetrics` are counted, so older sessions may contribute to overall
-  usage without a model breakdown. Shares cover listed models, not all session usage;
+  Recorded `modelMetrics` and request usage are counted; checkpoints may contribute to
+  overall usage without a model breakdown. Shares cover listed models, not all session usage;
   a session using multiple models counts under each model. Model names are not filters:
   the CLI does not support `session stats --model`.
 - **Copilot CLI permissions** — sessions, permission requests, and approved/denied/unresolved totals, with
   stacked bars per result, decision source (when the CLI reports it), read-only/read-write,
   tool kind, command, path, URL, and working directory. Click a decision source, tool kind,
   command, path, or URL entry to add it as a filter, or a working directory to scope to it.
+- **VS Code user questions** — the User questions panel reports completed
+  `vscode_askQuestions` calls (`UserQuestions` in JSON) and answered/skipped/cancelled/
+  failed/unknown outcomes. Each multi-question batch shares one interval and counts once;
+  partially skipped batches with an answer count as answered. Valid answered tool
+  durations contribute to total/average/maximum wait, including UI/transport overhead.
+  Missing duration is noted, and average/maximum are unavailable without timed answers.
+  In-flight questions cannot be reconstructed from these completed-call logs.
+  Directory/session/agent/tool filters and call start-time bounds apply; model filters
+  and Top do not. Agent changes project per-log question metrics locally without gh,
+  deduplicating shared logs and counting each parent chat once. Display, summaries,
+  and Ask agent agree. Older datasets without question metrics omit the panel.
 - **VS Code** — sessions, turns, LLM requests, tool calls, token and AIU totals, a usage share
   bar per model, model token breakdown (cached / uncached input / output) with a unit-cost
   column (AIU per session, per request, or per 1M tokens), tool calls with error rates and durations,
-  subagents, and workspaces. When the CLI reports per-workspace
+  subagents, and workspaces. Referenced subagent logs contribute their model usage and
+  activity to the parent workspace; sessions count parent chats, not child logs.
+  Clicking a Subagents entry scopes models, AIU, tokens, tool calls, turns, and workspace
+  totals to that subagent's own logs. Main-agent and differently named descendant usage
+  is excluded; multiple Agent filters match any selected name. Removing the Agent filter
+  restores the unfiltered agent scope, while other filters remain in effect. Tool and
+  model filters apply independently inside the selected scope. Missing child logs produce
+  warnings without dropping recorded matching invocations.
+  When the CLI reports per-workspace
   usage, workspaces also get an AIU share bar and a table of sessions, AIU (total and per
   turn), and token breakdown. Click an entry to filter or scope.
 - **Model comparison** — in either tab, click any Models column heading to sort and click
@@ -105,9 +159,9 @@ rejected before the command runs.
 
 | Action        | Description                                                                         |
 | ------------- | ----------------------------------------------------------------------------------- |
-| `get_data`    | Return the full JSON result last loaded for a source.                               |
+| `get_data`    | Return the full JSON result projected for the current filters, without raw log details. |
 | `get_summary` | Return a compact summary of the current result without re-running it.               |
-| `refresh`     | Optionally patch the query, re-run the active source, and return a compact summary. |
+| `refresh`     | Optionally patch the query and return a summary. Default `force: true` fetches; `force: false` reuses matching data and locally projects VS Code Agent/Top changes. |
 | `reset_query` | Reset the query to its defaults and refresh.                                        |
 
 ## Storage
@@ -116,7 +170,8 @@ The last query is saved per working directory and profile in
 `$COPILOT_HOME/extension-data/attendant-dashboard/queries.json` (`$COPILOT_HOME` defaults
 to `~/.copilot`). It is kept outside the installed extension directory so that
 `gh copilot-attendant copilot extension update` and `uninstall` do not discard it. Results are
-not persisted; they are re-computed from the local logs.
+not persisted; VS Code details stay in memory until a data refresh or extension restart.
+The normalized dataset contains no raw events, tool inputs, or conversation content.
 
 ## Runner resolution
 
@@ -148,4 +203,12 @@ handed to the canvas; `/` and `/index.html` return 404. Commands are spawned wit
 
 ```sh
 node --test .github/extensions/attendant-dashboard/test/*.test.mjs
+```
+
+To regenerate the standalone matcher and its license from the pinned dependency, run
+these commands from the repository root:
+
+```sh
+npm ci
+npm run vendor:canvas
 ```

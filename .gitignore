@@ -36,3 +36,6 @@ go.work.sum
 
 # go.work paths
 go-gh-extension
+
+# Canvas dependency build inputs
+/node_modules/

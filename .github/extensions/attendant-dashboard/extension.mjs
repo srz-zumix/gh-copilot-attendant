@@ -160,13 +160,13 @@ const canvas = createCanvas({
         {
             name: "refresh",
             description:
-                "Optionally update the query, re-run the stats command for the active source, and return a compact summary.",
+                "Optionally update the query and return a compact summary; force defaults to true. With force false, VS Code Agent/Top changes reuse cached data.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,
                 properties: {
                     query: QUERY_SCHEMA,
-                    force: { type: "boolean", description: "Default true; set false to reuse a result that already matches the query" },
+                    force: { type: "boolean", description: "Default true; false reuses matching results and projects VS Code Agent/Top changes locally" },
                 },
             },
             handler: async (ctx) => {

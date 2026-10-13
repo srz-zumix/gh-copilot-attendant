@@ -49,13 +49,14 @@ function usageTotals(e) {
     };
 }
 
-// Session usage comes from "session.shutdown" events. Older CLI builds omit
-// these fields entirely, so the section is only emitted when present.
+// Older CLI builds omit usage fields, so only emit the section when present.
 function usage(data, limit) {
     if (data.UsageSessions === undefined) return {};
     return {
         usage: {
             sessions: data.UsageSessions,
+            ...(data.UsageRequests !== undefined ? { requests: data.UsageRequests } : {}),
+            ...(data.UsageIncompleteSessions !== undefined ? { incompleteSessions: data.UsageIncompleteSessions } : {}),
             ...usageTotals({
                 PremiumRequests: data.UsagePremiumRequests,
                 AIU: data.UsageAIU,
@@ -75,13 +76,25 @@ function usage(data, limit) {
         })),
         ...(data.ByModelUsage !== undefined
             ? {
-                  modelUsageNote: "Recorded modelMetrics only; requests are API requests, session counts may overlap across models, and only listed models are included",
+                  modelUsageNote: "Recorded modelMetrics and request usage; checkpoints may have totals without a model breakdown. Requests are API requests; session counts may overlap and shares cover listed models only",
                   byModelUsage: (data.ByModelUsage ?? []).slice(0, limit).map((e) => ({
                       key: cap(e.Key),
                       sessions: e.Sessions,
                       requests: e.Requests,
                       ...usageTotals(e),
                       ...unitCosts(sessionModelEntry(e)),
+                  })),
+              }
+            : {}),
+        ...(data.ByRoleUsage !== undefined
+            ? {
+                  roleUsageNote: "Main/subagent attribution comes from request records; unknown includes unattributed snapshot usage. Incomplete sessions have recorded request/token subtotals, not complete counts",
+                  usageTimeBoundsNote: "Lifetime usage totals selected by latest recorded usage update, not individual API request times",
+                  byRoleUsage: (data.ByRoleUsage ?? []).slice(0, 3).map((e) => ({
+                      key: cap(e.Key), sessions: e.Sessions, requests: e.Requests,
+                      premiumRequests: e.PremiumRequests, aiu: round2(e.AIU),
+                      inputTokens: e.InputTokens, cacheReadTokens: e.CacheReadTokens,
+                      cacheWriteTokens: e.CacheWriteTokens, outputTokens: e.OutputTokens,
                   })),
               }
             : {}),
@@ -141,6 +154,18 @@ export function summarize(source, data, limit = 10) {
             byURL: counts(data.ByURL, limit),
             byCWD: counts(data.ByCWD, limit),
             ...usage(data, limit),
+            ...(data.AskUser != null ? {
+                askUser: {
+                    sessions: data.AskUser.Sessions, questions: data.AskUser.Questions,
+                    answered: data.AskUser.Answered, cancelled: data.AskUser.Cancelled,
+                    failed: data.AskUser.Failed, unresolved: data.AskUser.Unresolved,
+                    unknown: data.AskUser.Unknown, timedAnswers: data.AskUser.TimedAnswers,
+                    untimedAnswers: data.AskUser.UntimedAnswers,
+                    totalWaitMs: data.AskUser.TotalWaitMs, avgWaitMs: data.AskUser.AvgWaitMs,
+                    maxWaitMs: data.AskUser.MaxWaitMs,
+                    note: "Question start-time bounds; permission filters and Top do not apply. Answered paired tool intervals include UI/transport overhead; overlapping waits are summed, not unique wall-clock idle time",
+                },
+            } : {}),
         };
     }
     return {
@@ -150,6 +175,18 @@ export function summarize(source, data, limit = 10) {
         turns: data.Turns,
         llmRequests: data.LLMRequests,
         toolCalls: data.ToolCalls,
+        ...(data.UserQuestions != null ? {
+            userQuestions: {
+                sessions: data.UserQuestions.Sessions, calls: data.UserQuestions.Calls,
+                answered: data.UserQuestions.Answered, skipped: data.UserQuestions.Skipped,
+                cancelled: data.UserQuestions.Cancelled, failed: data.UserQuestions.Failed,
+                unknown: data.UserQuestions.Unknown, timedAnswers: data.UserQuestions.TimedAnswers,
+                untimedAnswers: data.UserQuestions.UntimedAnswers,
+                totalWaitMs: data.UserQuestions.TotalWaitMs, avgWaitMs: data.UserQuestions.AvgWaitMs,
+                maxWaitMs: data.UserQuestions.MaxWaitMs,
+                note: "Completed vscode_askQuestions calls only; multi-question batches share one interval. Partially skipped batches with an answer count as answered. In-flight questions are unavailable. Call start-time bounds, directory/session/agent/tool filters apply; model filters and Top do not. Tool duration includes UI/transport overhead; overlapping waits are summed",
+            },
+        } : {}),
         byTool: (data.ByTool ?? []).slice(0, limit).map((e) => ({
             key: cap(e.Key),
             total: e.Total,

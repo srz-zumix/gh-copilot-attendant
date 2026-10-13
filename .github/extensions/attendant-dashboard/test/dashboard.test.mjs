@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { normalizeQuery } from "../lib/query.mjs";
+import { vscodeDataset } from "./fixtures/vscode.mjs";
 
 function deferred() {
     let resolve;
@@ -102,12 +103,90 @@ test("switching source only runs the newly active source", async () => {
     const sources = [];
     const dashboard = makeDashboard(async (runner, argv) => {
         sources.push(argv[0]);
-        return { data: {}, warnings: [], durationMs: 1 };
+        return { data: argv[0] === "vscode" ? vscodeDataset() : {}, warnings: [], durationMs: 1 };
     });
     await dashboard.setQuery({ source: "vscode" });
     await dashboard.setQuery({ source: "session" });
     await dashboard.setQuery({ source: "vscode" });
     assert.deepEqual(sources, ["vscode", "session"]);
+});
+
+test("Agent selection, union, removal, and Top project locally without any new runner calls", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(async (runner, argv) => {
+        calls.push(argv);
+        return { data: vscodeDataset(), warnings: ["missing log"], durationMs: 12 };
+    });
+    await dashboard.setQuery({ source: "vscode" });
+    const ranAt = dashboard.results.vscode.ranAt;
+    assert.ok(calls[0].includes("--include-log-stats"));
+    assert.ok(calls[0].includes("--top=0"));
+    await dashboard.setQuery({ filters: { vscode: { agent: ["^Explore$"] } } });
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 4);
+    assert.equal(dashboard.results.vscode.ranAt, ranAt);
+    assert.equal(dashboard.isFresh("vscode"), true);
+    assert.equal(dashboard.summary().summary.llmRequests, 4);
+    assert.equal(dashboard.summary().summary.byModel[0].requests, 4);
+    assert.equal(dashboard.summary().localFiltering, true);
+    assert.equal(dashboard.results.vscode.data.LogDetails, undefined);
+    await dashboard.setQuery({ filters: { vscode: { agent: ["Explore", "executionSubagent"] } }, top: 1 });
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 5);
+    assert.equal(dashboard.results.vscode.data.ByModel.length, 1);
+    await dashboard.setQuery({ filters: { vscode: { agent: [] } }, top: 0 });
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 7);
+    assert.equal(calls.length, 1);
+    await dashboard.setQuery({ period: "7d" });
+    await dashboard.setQuery({ filters: { vscode: { model: ["a"] } } });
+    await dashboard.ensureFresh({ force: true });
+    assert.equal(calls.length, 4);
+});
+
+test("Agent changes during initial and forced fetching do not restart it and publish the latest projection", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(() => {
+        const d = deferred();
+        calls.push(d);
+        return d.promise;
+    });
+    const first = dashboard.setQuery({ source: "vscode" });
+    await new Promise((r) => setImmediate(r));
+    const filtered = dashboard.setQuery({ filters: { vscode: { agent: ["Explore"] } } });
+    assert.equal(calls.length, 1);
+    calls[0].resolve({ data: vscodeDataset(), warnings: [], durationMs: 2 });
+    await Promise.all([first, filtered]);
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 4);
+    const refresh = dashboard.ensureFresh({ force: true });
+    await new Promise((r) => setImmediate(r));
+    const union = dashboard.setQuery({ filters: { vscode: { agent: ["Explore", "executionSubagent"] } } });
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 5);
+    assert.equal(dashboard.results.vscode.status, "loading");
+    assert.equal(calls.length, 2);
+    calls[1].resolve({ data: vscodeDataset(), warnings: [], durationMs: 3 });
+    await Promise.all([refresh, union]);
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 5);
+    assert.equal(dashboard.results.vscode.status, "ok");
+    assert.equal(dashboard.isFresh("vscode"), true);
+});
+
+test("failed refreshes stay visible while cached filters change; unsupported datasets never succeed", async () => {
+    let calls = 0;
+    const dashboard = makeDashboard(async () => {
+        calls++;
+        if (calls > 1) throw new Error("refresh failed");
+        return { data: vscodeDataset(), warnings: [], durationMs: 1 };
+    });
+    await dashboard.setQuery({ source: "vscode" });
+    await dashboard.ensureFresh({ force: true });
+    await dashboard.setQuery({ filters: { vscode: { agent: ["Explore"] } } });
+    assert.equal(calls, 2);
+    assert.equal(dashboard.results.vscode.status, "error");
+    assert.equal(dashboard.results.vscode.error, "refresh failed");
+    assert.equal(dashboard.results.vscode.data.LLMRequests, 4);
+    const unsupported = makeDashboard(async () => ({ data: {}, warnings: [], durationMs: 1 }));
+    await unsupported.setQuery({ source: "vscode" });
+    assert.equal(unsupported.results.vscode.status, "error");
+    assert.match(unsupported.results.vscode.error, /update gh/);
+    assert.equal(unsupported.vscodeCache, null);
 });
 
 test("runner resolution failures are reported and retried", async () => {
@@ -124,12 +203,62 @@ test("runner resolution failures are reported and retried", async () => {
             runStats: async () => ({ data: {}, warnings: [], durationMs: 1 }),
         },
     });
+
     const failed = await dashboard.refresh();
     assert.equal(failed.status, "error");
     assert.equal(dashboard.snapshot().runner.error, "not installed");
     const ok = await dashboard.refresh();
     assert.equal(ok.status, "ok");
     assert.equal(dashboard.snapshot().runner.label, "fake");
+});
+
+test("VS Code base and runner changes invalidate the cache; superseded and closed runs cannot publish", async () => {
+    const calls = [];
+    const dashboard = makeDashboard((runner, argv, { signal }) => {
+        const d = deferred();
+        calls.push({ d, argv, signal });
+        return d.promise;
+    });
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    const finish = (i) => calls[i].d.resolve({ data: vscodeDataset(), warnings: [], durationMs: 1 });
+    const initial = dashboard.setQuery({ source: "vscode" });
+    await tick();
+    finish(0);
+    await initial;
+
+    const older = dashboard.setQuery({ scope: "all" });
+    await tick();
+    const latest = dashboard.setQuery({ filters: { vscode: { tool: ["read"] } } });
+    await tick();
+    assert.equal(calls.length, 3);
+    assert.equal(calls[1].signal.aborted, true);
+    assert.ok(calls[2].argv.includes("--tool=read"));
+    finish(2);
+    await latest;
+    const latestData = dashboard.results.vscode.data;
+    finish(1);
+    await older;
+    assert.equal(dashboard.results.vscode.data, latestData);
+    assert.equal(dashboard.isFresh("vscode"), true);
+
+    dashboard.setRunnerMode("source");
+    assert.equal(dashboard.isFresh("vscode"), false);
+    const changedRunner = dashboard.ensureFresh();
+    await tick();
+    assert.equal(calls.length, 4);
+    finish(3);
+    await changedRunner;
+    assert.equal(dashboard.vscodeCache.runnerMode, "source");
+    assert.equal(dashboard.isFresh("vscode"), true);
+
+    const previous = dashboard.results.vscode.data;
+    const closing = dashboard.ensureFresh({ force: true });
+    await tick();
+    dashboard.close();
+    assert.equal(calls[4].signal.aborted, true);
+    finish(4);
+    await closing;
+    assert.equal(dashboard.results.vscode.data, previous);
 });
 
 test("close aborts in-flight runs and suppresses their results", async () => {

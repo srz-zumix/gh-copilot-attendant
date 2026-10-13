@@ -5,6 +5,7 @@
 
 import { MODEL_UNITS, modelColumns, normalizeModelView, promptTokens, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "./model-view.mjs";
 import { WORKSPACE_UNITS, hasWorkspaceUsage, normalizeWorkspaceView, sortWorkspaces, toggleWorkspaceSort, workspaceColumns, workspaceEntry, workspaceUnitCost } from "./workspace-view.mjs";
+import { panelClearPatch } from "./filter-view.mjs";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -223,10 +224,12 @@ function render() {
             ? source === "session"
                 ? renderSession(result.data)
                 : renderVscode(result.data)
-            : [h("div", { class: "empty" }, result.status === "loading" ? "Running gh copilot-attendant…" : "No data yet.")]),
+            : [h("div", { class: "empty" }, result.status === "loading" ? "Running gh copilot-attendant…" : "No data yet.")]).filter((node) => node !== null),
     );
     $("refresh").disabled = false;
     $("command").textContent = `gh copilot-attendant ${result.command.map(shellQuote).join(" ")}`;
+    $("command-label").textContent = result.localFiltering ? "Equivalent command" : "Command";
+    $("command").title = result.fetchArgv ? `Data fetch: gh copilot-attendant ${result.fetchArgv.map(shellQuote).join(" ")}` : "";
     renderPresets(source, result);
 }
 
@@ -243,7 +246,8 @@ function renderStatus(result) {
             label.textContent = `Running… ${Math.round((Date.now() - started) / 1000)}s`;
         }, 1000);
     } else if (result.ranAt) {
-        parts.push(`Updated ${new Date(result.ranAt).toLocaleTimeString()} · ${duration(result.durationMs)}`);
+        parts.push(`${result.localFiltering ? "Data fetched" : "Updated"} ${new Date(result.ranAt).toLocaleTimeString()} · ${duration(result.durationMs)}`);
+        if (result.localFiltering) parts.push(" · cached data / local filters");
         if (!result.fresh) parts.push(" · ", h("span", { class: "stale" }, "query changed — refresh to update"));
     }
     const runner = state.runner;
@@ -359,11 +363,22 @@ function keyCell(key, onPick, pickTitle, display = key) {
     return h("button", { type: "button", class: "key", title: `${key}\n${pickTitle}`, onclick: () => onPick(key) }, text);
 }
 
-function panel(title, hint, body, { wide = false } = {}) {
+function panel(title, hint, body, { wide = false, filter } = {}) {
+    const patch = filter ? panelClearPatch(state.query, activeSource(), filter) : null;
     return h(
         "section",
         { class: `panel${wide ? " wide" : ""}` },
-        h("header", null, h("h2", null, title), hint ? h("span", { class: "hint" }, hint) : null),
+        h("header", null,
+            h("h2", null, title),
+            h("div", { class: "panel-actions" },
+                hint ? h("span", { class: "hint" }, hint) : null,
+                filter ? h("button", {
+                    type: "button", class: "btn subtle small", disabled: !patch,
+                    "data-clear-filter": filter,
+                    "aria-label": `Clear ${title} ${filter === "workspace" ? "scope" : "filters"}`,
+                    title: filter === "workspace" ? "Show all workspaces; keep other filters" : `Clear ${LABELS.filters[filter]} filters only`,
+                    onclick: () => { if (patch) patchQuery(patch); },
+                }, "Clear") : null)),
         body,
     );
 }
@@ -420,15 +435,25 @@ function renderSessionUsage(data) {
     const prompt = promptTokens({ InputTokens: data.UsageInputTokens, CacheReadTokens: data.UsageCacheReadTokens, CacheWriteTokens: data.UsageCacheWriteTokens });
     const perSession = (value, format) => (sessions ? `${format(value / sessions)} / session` : null);
     const filtered = Object.values(state.query.filters.session ?? {}).some((values) => values.length);
-    const hints = ["from session.shutdown events", filtered ? "permission filters do not apply" : null].filter(Boolean).join(" · ");
+    const hints = [
+        data.ByRoleUsage !== undefined ? "latest recorded usage · includes unfinished sessions" : "from session.shutdown events",
+        filtered ? "permission filters do not apply" : null,
+    ].filter(Boolean).join(" · ");
 
     return [
         sectionHead("Usage", hints),
+        data.ByRoleUsage !== undefined
+            ? h("p", { class: "muted small" }, "Time filters select sessions by their latest recorded usage update. Totals cover those sessions' lifetime usage, not only requests made within the selected period.")
+            : null,
+        data.UsageIncompleteSessions > 0
+            ? h("p", { class: "muted small" }, `${num(data.UsageIncompleteSessions)} sessions have incomplete model, request, or token breakdowns. Checkpoint totals are included; missing details are not inferred. Request and token counts are recorded subtotals.`)
+            : null,
         h(
             "div",
             { class: "cards" },
             card("Sessions with usage", num(sessions)),
             card("Usage (AIU)", aiu(total), perSession(total, aiu)),
+            data.UsageRequests !== undefined ? card("Recorded API requests", num(data.UsageRequests)) : null,
             card("Premium requests", decimal(premium), premium ? `${aiu(total / premium)} AIU / request` : null),
             card("Prompt tokens", big(prompt), `${pct(data.UsageCacheReadTokens, prompt)} cache hit`),
             card("Output tokens", big(data.UsageOutputTokens), perSession(data.UsageOutputTokens ?? 0, big)),
@@ -439,8 +464,36 @@ function renderSessionUsage(data) {
             { class: "grid" },
             ...(data.ByModelUsage !== undefined ? modelPanels((data.ByModelUsage ?? []).map(sessionModelEntry), "session") : []),
             ...workspacePanels(data.ByCWDUsage ?? [], "session"),
+            data.AskUser != null ? askUserPanel(data.AskUser) : null,
+            data.ByRoleUsage !== undefined ? agentUsagePanel(data) : null,
         ),
     ];
+}
+
+function agentUsagePanel(data) {
+    const labels = { main: "Main agent", subagent: "Subagents", unknown: "Unknown" };
+    const entries = (data.ByRoleUsage ?? []).map(sessionModelEntry);
+    const subtotal = (entry, value, format) => {
+        if (entry.Key !== "unknown" || !data.UsageIncompleteSessions) return format(value);
+        return value > 0 ? `≥ ${format(value)}` : "–";
+    };
+    return panel("Agent usage", "main / subagent / unknown", [
+        h("p", { class: "muted small" }, "Attribution uses recorded request metadata, not model names. Unknown includes usage that cannot be attributed. For incomplete breakdowns, ≥ marks a recorded subtotal and – means unavailable."),
+        entries.length
+            ? h("table", null,
+                  h("thead", null, h("tr", null,
+                      ["Role", "API requests", "Premium req.", "AIU", "Prompt", "Cache read", "Cache write", "Output"].map((label) => h("th", { scope: "col" }, label)))),
+                  h("tbody", null, entries.map((entry) => h("tr", null,
+                      h("td", { class: "key" }, labels[entry.Key] ?? entry.Key),
+                      h("td", null, subtotal(entry, entry.Requests, num)),
+                      h("td", null, decimal(entry.PremiumRequests)),
+                      h("td", null, aiu(entry.UsageAIU)),
+                      h("td", null, subtotal(entry, entry.InputTokens, big)),
+                      h("td", null, subtotal(entry, entry.CachedTokens, big)),
+                      h("td", null, subtotal(entry, entry.CacheWriteTokens, big)),
+                      h("td", null, subtotal(entry, entry.OutputTokens, big))))))
+            : h("div", { class: "muted small" }, "No recorded agent usage."),
+    ], { wide: true });
 }
 
 function renderSession(data) {
@@ -455,36 +508,68 @@ function renderSession(data) {
 
     return [
         ...renderSessionUsage(data),
-        data.UsageSessions !== undefined ? sectionHead("Permissions") : null,
-        h(
-            "div",
-            { class: "cards" },
-            card(data.UsageSessions !== undefined ? "Sessions with requests" : "Sessions", num(data.Sessions)),
-            card("Permission requests", num(requests), data.Sessions ? `${(requests / data.Sessions).toFixed(1)} / session` : null),
-            card("Approved", num(approved), `${pct(approved, covered)}${partial}`),
-            card("Denied", num(totals.Denied), `${pct(totals.Denied, covered)}${partial}`),
-            card("Unresolved", num(totals.Unresolved), `${pct(totals.Unresolved, covered)}${partial}`),
-        ),
-        legend(DECISION_COLORS.map(([label, color]) => [label, color])),
+        data.UsageSessions === undefined && data.AskUser != null
+            ? h("div", { class: "grid" }, askUserPanel(data.AskUser))
+            : null,
         h(
             "div",
             { class: "grid" },
+            panel("Permissions", null, [
+                h(
+                    "div",
+                    { class: "cards" },
+                    card(data.UsageSessions !== undefined ? "Sessions with requests" : "Sessions", num(data.Sessions)),
+                    card("Permission requests", num(requests), data.Sessions ? `${(requests / data.Sessions).toFixed(1)} / session` : null),
+                    card("Approved", num(approved), `${pct(approved, covered)}${partial}`),
+                    card("Denied", num(totals.Denied), `${pct(totals.Denied, covered)}${partial}`),
+                    card("Unresolved", num(totals.Unresolved), `${pct(totals.Unresolved, covered)}${partial}`),
+                ),
+                legend(DECISION_COLORS.map(([label, color]) => [label, color])),
+            ], { wide: true }),
             panel("Results", null, decisionRows(data.ByResult)),
             data.ByDecisionSource
                 ? panel(
                       "Decision sources",
                       "click to filter",
                       decisionRows(data.ByDecisionSource, { onPick: (k) => addFilter("decisionSource", k), pickTitle: "Filter by this decision source" }),
+                      { filter: "decisionSource" },
                   )
                 : null,
-            panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly)),
-            panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" })),
-            panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" })),
-            panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" })),
-            panel("URLs", "click to filter", decisionRows(data.ByURL, { onPick: (k) => addFilter("url", exactPattern(k)), pickTitle: "Filter by this URL" })),
-            panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true }),
+            panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly), { filter: "operation" }),
+            panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" }), { filter: "kind" }),
+            panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" }), { filter: "command" }),
+            panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" }), { filter: "path" }),
+            panel("URLs", "click to filter", decisionRows(data.ByURL, { onPick: (k) => addFilter("url", exactPattern(k)), pickTitle: "Filter by this URL" }), { filter: "url" }),
+            panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true, filter: "workspace" }),
         ),
     ];
+}
+
+function askUserPanel(q, source = "session") {
+    const vscode = source === "vscode";
+    return panel("User questions", vscode ? "vscode_askQuestions · completed tool calls" : "ask_user · tool start to completion", [
+        h("p", { class: "muted small" }, vscode
+            ? "Each multi-question batch counts as one call and shares one wait interval. Partially skipped batches with an answer count as answered. Only recorded completed calls are available; in-flight questions cannot be reconstructed. Time bounds select call starts. Agent and tool filters apply; model filters and Top do not. Wait includes UI and transport overhead; overlapping intervals are summed, not unique wall-clock idle time."
+            : "Time bounds select question starts; answers completed later still resolve them. Permission filters do not apply. Wait includes UI and transport overhead. Totals sum per-question intervals, not unique wall-clock idle time."),
+        h("div", { class: "cards" },
+            card("Sessions with questions", num(q.Sessions)),
+            card(vscode ? "Question tool calls" : "Questions", num(vscode ? q.Calls : q.Questions)),
+            card("Answered", num(q.Answered)),
+            vscode ? card("Skipped", num(q.Skipped)) : null,
+            card("Cancelled", num(q.Cancelled)),
+            card("Failed", num(q.Failed)),
+            vscode ? null : card("Unresolved", num(q.Unresolved)),
+            card("Unknown outcome", num(q.Unknown)),
+            card("Total answer wait", duration(q.TotalWaitMs), `${num(q.TimedAnswers)} timed answers`),
+            card("Average answer wait", duration(q.AvgWaitMs)),
+            card("Longest answer wait", duration(q.MaxWaitMs))),
+        q.UntimedAnswers > 0
+            ? h("p", { class: "muted small" }, `${num(q.UntimedAnswers)} answered ${vscode ? "calls have missing or invalid duration" : "questions have missing or invalid timestamps"} and are excluded from wait metrics.`)
+            : null,
+        q.Unknown > 0
+            ? h("p", { class: "muted small" }, "Unknown outcomes have a completion but no recognized answer/cancellation result. They are excluded from answer wait metrics.")
+            : null,
+    ], { wide: true });
 }
 
 // ---------------------------------------------------------------- VS Code
@@ -638,17 +723,17 @@ function modelPanels(entries, source) {
     const share = aiuShare(entries);
     const session = source === "session";
     const note = session
-        ? "Only recorded modelMetrics are included; shares cover listed models. A session may use multiple models. Permission filters do not apply."
+        ? "Recorded modelMetrics and request usage are included; checkpoints may lack a model breakdown. Shares cover listed models. A session may use multiple models. Permission filters do not apply."
         : null;
     const missingSessions = entries.some((e) => e.Sessions == null);
     return [
-        share ? panel("Usage share by model", session ? "AIU · listed models" : "AIU", share, { wide: true }) : null,
-        panel("Models", session ? "modelMetrics · API requests" : "click to filter", [
+        share ? panel("Usage share by model", session ? "AIU · listed models" : "AIU", share, { wide: true, filter: session ? undefined : "model" }) : null,
+        panel("Models", session ? "recorded model usage · API requests" : "click to filter", [
             note ? h("p", { class: "muted small" }, note) : null,
             missingSessions ? h("p", { class: "muted small" }, "Session counts are not reported for some models; their AIU / session is unavailable.") : null,
             modelControls(source),
             modelTable(entries, source),
-        ], { wide: true }),
+        ], { wide: true, filter: session ? undefined : "model" }),
     ];
 }
 
@@ -665,7 +750,7 @@ function modelTable(entries, source) {
         header: (column) => modelHeader(column, source),
         pick: source === "vscode" ? (key) => addFilter("model", exactPattern(key)) : null,
         pickTitle: "Filter by this model",
-        empty: source === "session" ? "No recorded modelMetrics for this query." : "No entries.",
+        empty: source === "session" ? "No recorded model usage for this query." : "No entries.",
     });
 }
 
@@ -769,12 +854,12 @@ function workspacePanels(rawEntries, source, topNote = state.query.top ? `top ${
     if (usage && entries.some((e) => e.Requests === undefined)) notes.push("Request counts are not reported for some workspaces; their AIU / request is unavailable.");
     if (usage && entries.some((e) => e.Sessions === undefined)) notes.push("Session counts are not reported for some workspaces; their AIU / session is unavailable.");
     return [
-        share ? panel("Usage share by workspace", topNote ? `AIU · ${topNote}` : "AIU", share, { wide: true }) : null,
+        share ? panel("Usage share by workspace", topNote ? `AIU · ${topNote}` : "AIU", share, { wide: true, filter: "workspace" }) : null,
         panel("Workspaces", topNote ? `${topNote} · click to scope` : "click to scope", [
             ...notes.map((note) => h("p", { class: "muted small" }, note)),
             usage ? usageControls(source, WORKSPACE_UNITS, workspaceViews[source], (patch) => setWorkspaceView(source, patch)) : null,
             workspaceTable(entries, source, usage),
-        ], { wide: usage }),
+        ], { wide: usage, filter: "workspace" }),
     ];
 }
 
@@ -849,8 +934,12 @@ function renderVscode(data) {
     // ByModel is truncated to --top, so model-derived totals may be partial.
     const top = state.results.vscode.argv ? Number(state.results.vscode.argv.find((a) => a.startsWith("--top="))?.slice(6)) : state.query.top;
     const modelNote = top > 0 && models.length >= top ? " · listed models only" : "";
+    const agentScoped = state.results.vscode.argv?.some((a) => a.startsWith("--agent=")) ?? state.query.filters.vscode.agent.length > 0;
 
     return [
+        agentScoped
+            ? h("p", { class: "muted small" }, "Only the selected subagents' own usage is included. Main-agent and differently named descendant usage is excluded. Sessions count parent chats.")
+            : null,
         h(
             "div",
             { class: "cards" },
@@ -867,8 +956,9 @@ function renderVscode(data) {
             { class: "grid" },
             ...modelPanels(models, "vscode"),
             ...workspacePanels(workspaces, "vscode", topNote),
-            panel("Tools", topNote ? `${topNote} · click to filter` : "click to filter", toolTable(tools), { wide: true }),
-            panel("Subagents", "click to filter", simpleRows(data.ByAgent, (e) => e.Total, { onPick: (k) => addFilter("agent", exactPattern(k)), pickTitle: "Filter by this agent" })),
+            data.UserQuestions != null ? askUserPanel(data.UserQuestions, "vscode") : null,
+            panel("Tools", topNote ? `${topNote} · click to filter` : "click to filter", toolTable(tools), { wide: true, filter: "tool" }),
+            panel("Subagents", "click to scope usage", simpleRows(data.ByAgent, (e) => e.Total, { onPick: (k) => addFilter("agent", exactPattern(k)), pickTitle: "Show only this subagent's own usage" }), { filter: "agent" }),
         ),
     ];
 }

@@ -6,6 +6,8 @@
 // different flag or as shell syntax. Validation mirrors the CLI's own
 // constraints so errors surface in the dashboard before anything is spawned.
 
+import { RE2JS } from "../vendor/re2js.mjs";
+
 export const SOURCES = ["session", "vscode"];
 export const SCOPES = ["worktree", "all", "cwd"];
 export const OPERATIONS = ["read", "write"];
@@ -169,6 +171,13 @@ function checkFilterValues(source, name, values) {
         if (REGEX_FILTERS.has(`${source}.${name}`)) {
             const problem = checkGoRegexp(value);
             if (problem) throw new QueryError(`${label} "${value}" is not a valid regular expression: ${problem}`);
+        }
+        if (source === "vscode" && name === "agent") {
+            try {
+                RE2JS.compile(value);
+            } catch (error) {
+                throw new QueryError(`${label} "${value}" is not a valid regular expression: ${error.message}`);
+            }
         }
         if (!out.includes(value)) out.push(value);
     }
