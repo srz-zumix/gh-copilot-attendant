@@ -148,6 +148,19 @@ selected questions. Permission filters and `--top` do not affect this summary.
 No question or answer text is exported. Older logs without recorded events cannot
 reconstruct missing questions.
 
+`PERMISSION_WAIT` (`PermissionWait` in JSON) reports request-to-completion elapsed time
+separately from `ASK_USER`. `HumanResponses` includes only recorded `human_response`
+decisions; `NonHumanDecisions` and `UnknownSourceDecisions` retain other and missing-source
+decision times separately, without inferring human wait from an approval or a long delay.
+Each group reports completed/timed/untimed counts and total/average/maximum milliseconds.
+Zero-length intervals are valid; missing or negative timing is untimed and excluded.
+Average/maximum are `null` (`n/a` in tables) without timed decisions. Unresolved requests
+have no inferred duration. Replay duplicates count once, paired by session/agent/request
+identity. All permission filters and directory/session scope apply; time bounds select
+request starts, while later completions still resolve them. `--top` does not truncate
+these totals. Intervals include UI/transport overhead; overlapping waits are summed,
+not unique wall-clock idle time. Unlogged rule-based approvals cannot be reconstructed.
+
 ### skills
 
 `gh copilot-attendant skills` manages the agent skills bundled with this extension. Run
@@ -239,6 +252,9 @@ Both tabs show a User questions panel with answer outcomes and total/average/max
 wait; VS Code counts completed tool calls, while CLI pairs recorded question events.
 User questions follows Workspaces on both tabs and precedes Agent usage on CLI.
 The CLI Permissions summary uses the same bordered panel style as the other panels.
+It also shows confirmed human permission wait and separate other/unknown-source
+decision timing. VS Code debug logs do not independently identify ordinary permission
+request/response waits; confirmation-tool or execution durations are not substituted.
 
 ## Development
 

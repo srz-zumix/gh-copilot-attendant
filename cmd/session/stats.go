@@ -42,6 +42,14 @@ use request records or "modelMetrics"; checkpoint-only usage may have no model o
 breakdown. Unattributed usage is reported as unknown, never inferred from model names.
 Model request counts are API requests, not permission requests.
 
+Permission request-to-completion intervals report total, average, and maximum wait.
+Confirmed human_response waits are separate from non-human and unknown-source decisions;
+older logs without decisionSource are not inferred to be human responses. Invalid timing
+and unresolved requests are excluded from durations. All permission filters apply;
+time bounds select request starts, while completions after --until still resolve them.
+--top does not truncate wait totals. Intervals include UI/transport overhead, and
+overlapping waits are summed rather than deduplicated as wall-clock idle time.
+
 Recorded ask_user starts and completions also report questions, answered, cancelled,
 failed, unresolved, and unknown outcomes, plus total, average, and maximum answer wait.
 Only answered questions with valid paired timestamps contribute to wait metrics.

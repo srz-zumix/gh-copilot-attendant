@@ -106,6 +106,15 @@ is required to run the canvas.
   stacked bars per result, decision source (when the CLI reports it), read-only/read-write,
   tool kind, command, path, URL, and working directory. Click a decision source, tool kind,
   command, path, or URL entry to add it as a filter, or a working directory to scope to it.
+  The same panel shows human permission response wait (total/average/maximum) from
+  paired request/completion timestamps. Only `human_response` decisions contribute;
+  other and unknown-source decision timing stays separate. Completed/timed/untimed
+  counts expose coverage; missing/negative timing and unresolved requests have no inferred
+  duration. All permission filters and request start-time bounds apply; Top does not.
+  UI/transport overhead is included, and overlapping waits are summed, not unique idle
+  time. Older payloads without `PermissionWait` omit these metrics. Display, summaries,
+  and Ask agent agree. VS Code debug logs do not independently identify ordinary
+  permission request/response waits, so tool duration is not used as a substitute.
 - **VS Code user questions** — the User questions panel reports completed
   `vscode_askQuestions` calls (`UserQuestions` in JSON) and answered/skipped/cancelled/
   failed/unknown outcomes. Each multi-question batch shares one interval and counts once;
