@@ -282,8 +282,8 @@ test("Permissions contains human response wait and separate non-human/unknown ti
     const permissions = panels[titles.indexOf("Permissions")];
     const nodes = walk(permissions);
     const waitHeading = nodes.find((node) => node.children[0] === "Permission response wait");
-    assert.equal(waitHeading.tag, "h2");
-    assert.equal(waitHeading.tag, walk(permissions).find((node) => node.children[0] === "Permissions").tag);
+    assert.equal(waitHeading.tag, "h3");
+    assert.equal(walk(permissions).find((node) => node.children[0] === "Permissions").tag, "h2");
     const text = nodes.flatMap((node) => node.children.filter((child) => typeof child === "string")).join("\n");
     for (const label of ["Permission response wait", "Human responses", "Total permission wait", "Average permission wait",
         "Longest permission wait", "No recorded decision", "Other recorded sources", "Unknown source", "missing or invalid timestamps",
@@ -293,7 +293,7 @@ test("Permissions contains human response wait and separate non-human/unknown ti
     assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "1.0 s").length, 3);
     assert.equal(permissions.className, "panel wide");
     const legacy = renderedPanels(query, { Requests: 1 });
-    assert.equal(legacy.panels.flatMap(legacy.walk).some((node) => node.tag === "h2" && node.children[0] === "Permission response wait"), false);
+    assert.equal(legacy.panels.flatMap(legacy.walk).some((node) => node.tag === "h3" && node.children[0] === "Permission response wait"), false);
 });
 
 test("unknown-source permission timing never fabricates human wait samples", () => {
