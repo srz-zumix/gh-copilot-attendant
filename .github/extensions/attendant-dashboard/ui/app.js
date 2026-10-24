@@ -549,7 +549,7 @@ function renderSession(data) {
 function permissionWaitDetails(wait) {
     const human = wait.HumanResponses;
     return h("div", null,
-        h("h2", null, "Permission response wait"),
+        h("h3", null, "Permission response wait"),
         h("p", { class: "muted small" }, "Only recorded human_response decisions are confirmed user wait. Other and unknown-source decision times stay separate. Permission filters and request start-time bounds apply; Top does not. Later completions still resolve requests. Intervals include UI and transport overhead; overlapping waits are summed, not unique wall-clock idle time. Unresolved requests have no inferred duration."),
         h("div", { class: "cards" },
             card("Human responses", num(human.Completed), `${num(human.Timed)} timed · ${num(human.Untimed)} untimed`),
@@ -565,7 +565,7 @@ function permissionWaitDetails(wait) {
                 ["Other recorded sources", wait.NonHumanDecisions],
                 ["Unknown source", wait.UnknownSourceDecisions],
             ].map(([label, entry]) => h("tr", null,
-                h("td", { class: "key" }, label), h("td", null, num(entry.Completed)),
+                h("th", { class: "key", scope: "row" }, label), h("td", null, num(entry.Completed)),
                 h("td", null, num(entry.Timed)), h("td", null, num(entry.Untimed)),
                 h("td", null, duration(entry.TotalWaitMs)), h("td", null, duration(entry.AvgWaitMs)),
                 h("td", null, duration(entry.MaxWaitMs)))))),

@@ -30,7 +30,8 @@ body {
     line-height: var(--leading-body-medium, 20px);
 }
 
-h2 {
+h2,
+h3 {
     margin: 0 0 8px;
     font-size: var(--text-body-medium, 14px);
     font-weight: var(--font-weight-semibold, 600);
@@ -558,7 +559,8 @@ td:first-child {
     text-align: left;
 }
 
-td.key {
+td.key,
+th.key {
     max-width: 260px;
     overflow: hidden;
     text-overflow: ellipsis;
