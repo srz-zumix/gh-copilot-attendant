@@ -37,3 +37,30 @@ test("older CLI payloads do not fabricate new usage fields or role attribution",
     assert.equal("byRoleUsage" in result, false);
     assert.equal(summarize("session", { Sessions: 1 }).usage, undefined);
 });
+
+test("permission wait summaries preserve provenance, exact timing, coverage, and unknown-source nulls", () => {
+    const empty = { Completed: 0, Timed: 0, Untimed: 0, TotalWaitMs: 0, AvgWaitMs: null, MaxWaitMs: null };
+    const data = { PermissionWait: {
+        HumanResponses: { ...empty, Completed: 3, Timed: 2, Untimed: 1, TotalWaitMs: 10.25, AvgWaitMs: 5.125, MaxWaitMs: 10.25 },
+        NonHumanDecisions: empty,
+        UnknownSourceDecisions: { ...empty, Completed: 1, Untimed: 1 },
+        Unresolved: 1,
+    } };
+    const result = summarize("session", data, 1).permissionWait;
+    assert.deepEqual(result.humanResponses, {
+        completed: 3, timed: 2, untimed: 1, totalWaitMs: 10.25, avgWaitMs: 5.125, maxWaitMs: 10.25,
+    });
+    assert.equal(result.unknownSourceDecisions.completed, 1);
+    assert.equal(result.unknownSourceDecisions.avgWaitMs, null);
+    assert.equal(result.unresolved, 1);
+    assert.match(result.note, /only human_response is confirmed user wait/);
+    assert.match(result.note, /Permission filters/);
+    assert.match(result.note, /Top does not/);
+    const prompt = composePrompt({ source: "session", query: {}, argv: [], data, text: "Summarize permission waits" });
+    assert.match(prompt, /"permissionWait"/);
+    assert.match(prompt, /"avgWaitMs": 5.125/);
+    assert.match(prompt, /"unknownSourceDecisions"/);
+    assert.equal("permissionWait" in summarize("session", {}), false);
+    assert.equal("permissionWait" in summarize("session", { PermissionWait: null }), false);
+    assert.equal("permissionWait" in summarize("vscode", data), false);
+});

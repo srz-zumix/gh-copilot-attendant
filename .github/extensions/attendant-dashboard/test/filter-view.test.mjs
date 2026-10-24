@@ -264,3 +264,48 @@ test("permission-only and older CLI payloads retain framed summaries and optiona
         assert.equal(panels[titles.indexOf("Permissions")].className, "panel wide");
     }
 });
+
+test("Permissions contains human response wait and separate non-human/unknown timings without changing panel order", () => {
+    const empty = { Completed: 0, Timed: 0, Untimed: 0, TotalWaitMs: 0, AvgWaitMs: null, MaxWaitMs: null };
+    const data = { Requests: 5, UsageSessions: 0, ByRoleUsage: [], AskUser: {}, PermissionWait: {
+        HumanResponses: { ...empty, Completed: 2, Timed: 1, Untimed: 1, TotalWaitMs: 1000, AvgWaitMs: 1000, MaxWaitMs: 1000 },
+        NonHumanDecisions: { ...empty, Completed: 1, Timed: 1, TotalWaitMs: 0, AvgWaitMs: 0, MaxWaitMs: 0 },
+        UnknownSourceDecisions: { ...empty, Completed: 1, Timed: 1, TotalWaitMs: 60000, AvgWaitMs: 60000, MaxWaitMs: 60000 },
+        Unresolved: 1,
+    } };
+    const query = filteredQuery("session");
+    const { panels, walk } = renderedPanels(query, data);
+    const title = (panel) => walk(panel).find((node) => node.tag === "h2").children[0];
+    const titles = Array.from(panels, title);
+    assert.deepEqual(titles.slice(titles.indexOf("User questions"), titles.indexOf("Permissions") + 1),
+        ["User questions", "Agent usage", "Permissions"]);
+    const permissions = panels[titles.indexOf("Permissions")];
+    const nodes = walk(permissions);
+    const waitHeading = nodes.find((node) => node.children[0] === "Permission response wait");
+    assert.equal(waitHeading.tag, "h3");
+    assert.equal(walk(permissions).find((node) => node.children[0] === "Permissions").tag, "h2");
+    const text = nodes.flatMap((node) => node.children.filter((child) => typeof child === "string")).join("\n");
+    for (const label of ["Permission response wait", "Human responses", "Total permission wait", "Average permission wait",
+        "Longest permission wait", "No recorded decision", "Other recorded sources", "Unknown source", "missing or invalid timestamps",
+        "Top does not", "Unresolved requests have no inferred duration"]) {
+        assert.ok(text.includes(label), label);
+    }
+    assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "1.0 s").length, 3);
+    assert.equal(permissions.className, "panel wide");
+    const legacy = renderedPanels(query, { Requests: 1 });
+    assert.equal(legacy.panels.flatMap(legacy.walk).some((node) => node.tag === "h3" && node.children[0] === "Permission response wait"), false);
+});
+
+test("unknown-source permission timing never fabricates human wait samples", () => {
+    const empty = { Completed: 0, Timed: 0, Untimed: 0, TotalWaitMs: 0, AvgWaitMs: null, MaxWaitMs: null };
+    const data = { PermissionWait: {
+        HumanResponses: empty, NonHumanDecisions: empty,
+        UnknownSourceDecisions: { ...empty, Completed: 1, Timed: 1, TotalWaitMs: 60000, AvgWaitMs: 60000, MaxWaitMs: 60000 },
+        Unresolved: 0,
+    } };
+    const { panels, walk } = renderedPanels(filteredQuery("session"), data);
+    const permissions = panels.find((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Permissions"));
+    const nodes = walk(permissions);
+    assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "–").length, 2);
+    assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "0 ms").length, 1);
+});

@@ -525,6 +525,7 @@ function renderSession(data) {
                     card("Unresolved", num(totals.Unresolved), `${pct(totals.Unresolved, covered)}${partial}`),
                 ),
                 legend(DECISION_COLORS.map(([label, color]) => [label, color])),
+                data.PermissionWait != null ? permissionWaitDetails(data.PermissionWait) : null,
             ], { wide: true }),
             panel("Results", null, decisionRows(data.ByResult)),
             data.ByDecisionSource
@@ -543,6 +544,34 @@ function renderSession(data) {
             panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true, filter: "workspace" }),
         ),
     ];
+}
+
+function permissionWaitDetails(wait) {
+    const human = wait.HumanResponses;
+    return h("div", null,
+        h("h3", null, "Permission response wait"),
+        h("p", { class: "muted small" }, "Only recorded human_response decisions are confirmed user wait. Other and unknown-source decision times stay separate. Permission filters and request start-time bounds apply; Top does not. Later completions still resolve requests. Intervals include UI and transport overhead; overlapping waits are summed, not unique wall-clock idle time. Unresolved requests have no inferred duration."),
+        h("div", { class: "cards" },
+            card("Human responses", num(human.Completed), `${num(human.Timed)} timed · ${num(human.Untimed)} untimed`),
+            card("Total permission wait", duration(human.TotalWaitMs)),
+            card("Average permission wait", duration(human.AvgWaitMs)),
+            card("Longest permission wait", duration(human.MaxWaitMs)),
+            card("No recorded decision", num(wait.Unresolved), "excluded from timing")),
+        h("table", null,
+            h("thead", null, h("tr", null,
+                ["Other decision timing", "Completed", "Timed", "Untimed", "Total", "Average", "Longest"]
+                    .map((label) => h("th", { scope: "col" }, label)))),
+            h("tbody", null, [
+                ["Other recorded sources", wait.NonHumanDecisions],
+                ["Unknown source", wait.UnknownSourceDecisions],
+            ].map(([label, entry]) => h("tr", null,
+                h("th", { class: "key", scope: "row" }, label), h("td", null, num(entry.Completed)),
+                h("td", null, num(entry.Timed)), h("td", null, num(entry.Untimed)),
+                h("td", null, duration(entry.TotalWaitMs)), h("td", null, duration(entry.AvgWaitMs)),
+                h("td", null, duration(entry.MaxWaitMs)))))),
+        human.Untimed + wait.NonHumanDecisions.Untimed + wait.UnknownSourceDecisions.Untimed > 0
+            ? h("p", { class: "muted small" }, "Completed decisions with missing or invalid timestamps are counted as untimed and excluded from durations.")
+            : null);
 }
 
 function askUserPanel(q, source = "session") {

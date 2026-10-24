@@ -114,6 +114,20 @@ are selected by time bounds, and later completions still resolve them. Session/d
 scope applies; permission filters and Top do not. No question/answer text is exported.
 Older payloads without `AskUser` do not display invented question metrics.
 
+CLI `PERMISSION_WAIT` (`PermissionWait` in JSON) also reports request-to-completion
+elapsed time in the Permissions panel, separately from User questions. `HumanResponses`
+contains only recorded `human_response` decisions. `NonHumanDecisions` and
+`UnknownSourceDecisions` keep other and missing-source decision times separate; never
+infer human wait from result or duration. Each group exposes completed/timed/untimed
+counts and total/average/maximum milliseconds; average/maximum are null without timed
+decisions. Invalid timing and unresolved requests have no inferred duration. Replayed
+events count once by session/agent/request identity. All permission filters, session/
+directory scope, and request start-time bounds apply; Top does not. Later completions
+still resolve selected requests. Intervals include UI/transport overhead and sum overlaps,
+not unique idle time. Older payloads without this field omit the metrics.
+VS Code logs do not independently identify ordinary permission request/response waits;
+confirmation-tool or operation duration is not a substitute for human approval wait.
+
 VS Code `vscode stats` also reports `USER_QUESTIONS` (`UserQuestions` in JSON), shown in
 the VS Code canvas's User questions panel. `Calls` counts completed `vscode_askQuestions`
 tool invocations, not individual questions in a batch. Outcomes distinguish answered,

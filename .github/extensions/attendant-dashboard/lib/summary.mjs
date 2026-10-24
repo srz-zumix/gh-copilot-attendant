@@ -130,6 +130,13 @@ function workspaceUnitCosts(raw, source) {
     };
 }
 
+function permissionDecisionWait(wait) {
+    return {
+        completed: wait.Completed, timed: wait.Timed, untimed: wait.Untimed,
+        totalWaitMs: wait.TotalWaitMs, avgWaitMs: wait.AvgWaitMs, maxWaitMs: wait.MaxWaitMs,
+    };
+}
+
 /**
  * Summarizes a parsed stats payload.
  *
@@ -154,6 +161,15 @@ export function summarize(source, data, limit = 10) {
             byURL: counts(data.ByURL, limit),
             byCWD: counts(data.ByCWD, limit),
             ...usage(data, limit),
+            ...(data.PermissionWait != null ? {
+                permissionWait: {
+                    humanResponses: permissionDecisionWait(data.PermissionWait.HumanResponses),
+                    nonHumanDecisions: permissionDecisionWait(data.PermissionWait.NonHumanDecisions),
+                    unknownSourceDecisions: permissionDecisionWait(data.PermissionWait.UnknownSourceDecisions),
+                    unresolved: data.PermissionWait.Unresolved,
+                    note: "Request-to-decision intervals; only human_response is confirmed user wait. Other and unknown-source decision times stay separate. Permission filters and request start-time bounds apply; Top does not. Later completions still resolve requests. UI/transport overhead is included; overlapping intervals are summed, not unique idle time. Unresolved and invalid timing have no inferred duration",
+                },
+            } : {}),
             ...(data.AskUser != null ? {
                 askUser: {
                     sessions: data.AskUser.Sessions, questions: data.AskUser.Questions,
