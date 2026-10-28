@@ -205,6 +205,12 @@ textarea {
     background: var(--background-color-default, #ffffff);
 }
 
+.query input,
+.query select,
+.query .btn {
+    height: calc(var(--leading-body-medium, 20px) + 10px);
+}
+
 .form-actions {
     display: flex;
     gap: 6px;

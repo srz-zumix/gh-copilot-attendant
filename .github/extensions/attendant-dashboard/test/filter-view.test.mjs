@@ -38,8 +38,36 @@ function renderedPanels(query, data) {
     const nodes = vm.runInContext(query.source === "vscode" ? "renderVscode(data)" : "renderSession(data)", context);
     const walk = (node) => node instanceof Element ? [node, ...node.children.flatMap(walk)] : [];
     const panels = nodes.flatMap(walk).filter((node) => node.tag === "section");
-    return { nodes, panels, submitted, walk };
+    return { nodes, panels, submitted, walk, context };
 }
+
+test("the legacy-log warning stays visible only on VS Code, including loading, empty, and failed results", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "vscode" }), {});
+    const elements = {
+        "vscode-legacy-warning": { hidden: true },
+        content: { classList: { toggle() {} }, replaceChildren() {} },
+        error: { dataset: {} },
+        refresh: {},
+        command: {},
+        "command-label": {},
+    };
+    context.document.getElementById = (id) => elements[id];
+    context.document.querySelectorAll = () => [];
+    vm.runInContext(`
+        meta = {};
+        fillForm = renderFilters = renderStatus = renderWarnings = renderPresets = showError = () => {};
+        renderSession = renderVscode = () => [];
+    `, context);
+    for (const status of ["idle", "loading", "ok", "error"]) {
+        context.result = { status, command: [], data: status === "ok" ? {} : null };
+        vm.runInContext("state.results = { session: result, vscode: result };", context);
+        for (const source of ["vscode", "session", "vscode"]) {
+            context.source = source;
+            vm.runInContext("state.query.source = source; render();", context);
+            assert.equal(elements["vscode-legacy-warning"].hidden, source !== "vscode", `${source}: ${status}`);
+        }
+    }
+});
 
 function filteredQuery(source = "vscode") {
     return normalizeQuery({

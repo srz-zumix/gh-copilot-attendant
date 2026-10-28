@@ -54,6 +54,17 @@ test("index.html embeds the token and sets a CSP", async (t) => {
     assert.match(res.headers["content-security-policy"], /script-src 'self'/);
 });
 
+test("index.html includes a separate legacy-log warning pointing Agent Host users to the CLI tab", async (t) => {
+    const { server } = await setup();
+    t.after(() => server.close());
+    const res = await call(server.url);
+    const warning = res.text.match(/<div class="banner warn" id="vscode-legacy-warning" role="note" hidden>([\s\S]*?)<\/div>/)?.[1];
+    assert.ok(warning);
+    assert.match(warning, /Legacy VS Code logs only/);
+    assert.match(warning, /older Copilot Chat debug-log format/);
+    assert.match(warning, /VS Code Agent Host \(Copilot harness\) sessions are included in the Copilot CLI tab/);
+});
+
 test("table view modules are served as same-origin JavaScript", async (t) => {
     const { server } = await setup();
     t.after(() => server.close());

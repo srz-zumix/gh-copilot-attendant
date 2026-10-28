@@ -179,8 +179,9 @@ VS Code installation on macOS is supported.
 gh copilot-attendant vscode stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--tool <pattern>]... [--model <pattern>]... [--agent <pattern>]... [--include-log-stats] [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
 ```
 
-Scans the local VS Code Copilot Chat debug logs and reports tool usage, LLM token and usage
-totals, turn counts, and subagent invocations. Subagent log files referenced by each session
+Scans the local legacy VS Code Copilot Chat debug logs and reports tool usage,
+LLM token and usage totals, turn counts, and subagent invocations.
+Subagent log files referenced by each session
 are included recursively, with each file counted once. Their model requests, tokens,
 AIU, tool calls, and turns are attributed to the parent workspace; session counts still
 refer to parent chat sessions. Internal
@@ -192,6 +193,10 @@ excluded, and differently named descendants are excluded unless they also match 
 pattern. Without `--agent`, parent and referenced child usage is included as before.
 Tool and model filters apply independently within that scope. Missing child logs produce
 a warning, while their recorded matching invocations remain counted.
+
+Newer VS Code Agent Host (Copilot harness) sessions use CLI-format logs under
+`~/.copilot/session-state` and are reported by `gh copilot-attendant session stats`
+instead.
 
 `--all`, `--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional; when none
 are given, only sessions belonging to the
@@ -242,6 +247,8 @@ This repository ships a canvas extension for the GitHub Copilot app in
 When a Copilot session runs inside this repository, ask the agent to open the
 "Copilot attendant dashboard" to browse `session stats` and `vscode stats` results as
 interactive charts, filter by clicking entries, and hand the data back to the agent.
+The VS Code tab always warns that it reads the older Copilot Chat debug-log format.
+Newer VS Code Agent Host (Copilot harness) sessions are included in the Copilot CLI tab.
 The VS Code canvas fetches log details once and processes Agent and Top changes locally,
 without re-running gh. Refresh, scope/time/session changes, and tool/model filter changes
 fetch a new dataset. Filtered display, summaries, and Ask agent use the same projected data.
@@ -253,8 +260,9 @@ wait; VS Code counts completed tool calls, while CLI pairs recorded question eve
 User questions follows Workspaces on both tabs and precedes Agent usage on CLI.
 The CLI Permissions summary uses the same bordered panel style as the other panels.
 It also shows confirmed human permission wait and separate other/unknown-source
-decision timing. VS Code debug logs do not independently identify ordinary permission
-request/response waits; confirmation-tool or execution durations are not substituted.
+decision timing. Legacy VS Code debug logs do not independently identify ordinary
+permission request/response waits; confirmation-tool or execution durations are not
+substituted.
 
 ## Development
 

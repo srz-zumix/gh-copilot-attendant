@@ -54,6 +54,9 @@ is required to run the canvas.
 - **Tabs** — switch between Copilot CLI permission statistics and VS Code Copilot Chat usage.
   Each tab keeps its own result; switching only re-runs a tab whose result no longer matches
   the query.
+  The VS Code tab always shows a warning that it reads the older Copilot Chat debug-log
+  format, including while loading or when no data is available. Newer VS Code Agent Host
+  (Copilot harness) sessions use CLI-format logs and are included in the Copilot CLI tab.
 - **Query bar and filters** — scope, time window, session ID, top N, and the source-specific
   repeatable filters. Filter values appear as removable chips.
   VS Code Agent and Top changes are applied to the cached dataset without executing gh.
@@ -113,7 +116,7 @@ is required to run the canvas.
   duration. All permission filters and request start-time bounds apply; Top does not.
   UI/transport overhead is included, and overlapping waits are summed, not unique idle
   time. Older payloads without `PermissionWait` omit these metrics. Display, summaries,
-  and Ask agent agree. VS Code debug logs do not independently identify ordinary
+  and Ask agent agree. Legacy VS Code debug logs do not independently identify ordinary
   permission request/response waits, so tool duration is not used as a substitute.
 - **VS Code user questions** — the User questions panel reports completed
   `vscode_askQuestions` calls (`UserQuestions` in JSON) and answered/skipped/cancelled/
