@@ -54,6 +54,19 @@ test("index.html embeds the token and sets a CSP", async (t) => {
     assert.match(res.headers["content-security-policy"], /script-src 'self'/);
 });
 
+test("index.html explains harness-based tab routing without implying a VS Code version cutoff", async (t) => {
+    const { server } = await setup();
+    t.after(() => server.close());
+    const res = await call(server.url);
+    const warning = res.text.match(/<div class="banner warn" id="vscode-harness-warning" role="note" hidden>([\s\S]*?)<\/div>/)?.[1];
+    assert.ok(warning);
+    assert.match(warning, /VS Code Local harness only/);
+    assert.match(warning, /Copilot Chat debug logs from the Local harness/);
+    assert.match(warning, /Locally recorded VS Code Copilot harness \(Agent Host\) sessions are included in the Copilot CLI tab/);
+    assert.match(warning, /depends on the harness, not the VS Code version/);
+    assert.doesNotMatch(warning, /legacy|older|newer/i);
+});
+
 test("table view modules are served as same-origin JavaScript", async (t) => {
     const { server } = await setup();
     t.after(() => server.close());
