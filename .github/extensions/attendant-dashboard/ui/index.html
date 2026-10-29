@@ -19,10 +19,11 @@
             <button type="button" class="btn primary" id="refresh">Refresh</button>
         </header>
 
-        <div class="banner warn" id="vscode-legacy-warning" role="note" hidden>
-            <strong>Legacy VS Code logs only.</strong>
-            This tab reads the older Copilot Chat debug-log format.
-            Newer VS Code Agent Host (Copilot harness) sessions are included in the Copilot CLI tab.
+        <div class="banner warn" id="vscode-harness-warning" role="note" hidden>
+            <strong>VS Code Local harness only.</strong>
+            This tab reads Copilot Chat debug logs from the Local harness.
+            Locally recorded VS Code Copilot harness (Agent Host) sessions are included in the Copilot CLI tab.
+            The tab depends on the harness, not the VS Code version.
         </div>
 
         <form class="query" id="query" autocomplete="off">

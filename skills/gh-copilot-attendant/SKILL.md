@@ -33,10 +33,11 @@ is never truncated by `--top`. See the
 
 ### vscode stats
 
-Reports tool usage, LLM token/usage, turn, and subagent statistics from legacy local
-VS Code GitHub Copilot Chat debug logs, including recursively referenced subagent logs
-counted once each. Child activity contributes to the parent workspace without increasing parent
-session counts. Internal title-generation child logs and unreferenced files are excluded.
+Reports tool usage, LLM token/usage, turn, and subagent statistics from VS Code GitHub
+Copilot Chat debug logs for the Local harness, including recursively referenced
+subagent logs counted once each. Child activity contributes to the parent workspace
+without increasing parent session counts. Internal title-generation child logs and
+unreferenced files are excluded.
 Time bounds apply to individual events, even when the child invocation is older.
 `--agent` scopes models, AIU, tokens, tools, turns, and workspace totals to matching
 subagents' own logs. Main-agent and differently named descendant usage is excluded;
@@ -49,8 +50,9 @@ No raw events or conversation content are exported.
 See the [README](../../README.md#vscode-stats)
 for the full flag reference.
 
-Newer VS Code Agent Host (Copilot harness) sessions use CLI-format logs under
-`~/.copilot/session-state` and are included in `session stats`, not `vscode stats`.
+VS Code Copilot harness (Agent Host) sessions recorded locally under
+`~/.copilot/session-state` use CLI-format logs and are included in `session stats`,
+not `vscode stats`. The source depends on the harness, not the VS Code version.
 
 ## Dashboard canvas
 
@@ -59,9 +61,10 @@ In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
 `session stats` and `vscode stats` results. See its
 [README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.
 
-The VS Code tab always displays a legacy-log warning, even while loading or without
-data. It reads the older Copilot Chat debug-log format. Newer VS Code Agent Host
-(Copilot harness) sessions are included in the Copilot CLI tab instead.
+The VS Code tab always displays a harness warning, even while loading or without
+data. It reads Copilot Chat debug logs from the Local harness. Locally recorded
+VS Code Copilot harness (Agent Host) sessions are included in the Copilot CLI tab.
+The tab depends on the harness, not the VS Code version.
 
 Click a VS Code Subagents entry to scope all usage to that subagent's own logs, excluding
 the main agent and differently named descendants. Remove the Agent filter chip to return
@@ -132,7 +135,7 @@ events count once by session/agent/request identity. All permission filters, ses
 directory scope, and request start-time bounds apply; Top does not. Later completions
 still resolve selected requests. Intervals include UI/transport overhead and sum overlaps,
 not unique idle time. Older payloads without this field omit the metrics.
-Legacy VS Code debug logs do not independently identify ordinary permission
+VS Code Local harness debug logs do not independently identify ordinary permission
 request/response waits; confirmation-tool or operation duration is not a substitute
 for human approval wait.
 

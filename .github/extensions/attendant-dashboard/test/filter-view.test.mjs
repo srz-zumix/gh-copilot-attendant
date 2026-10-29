@@ -41,10 +41,10 @@ function renderedPanels(query, data) {
     return { nodes, panels, submitted, walk, context };
 }
 
-test("the legacy-log warning stays visible only on VS Code, including loading, empty, and failed results", () => {
+test("the harness warning stays visible only on VS Code, including loading, empty, and failed results", () => {
     const { context } = renderedPanels(normalizeQuery({ source: "vscode" }), {});
     const elements = {
-        "vscode-legacy-warning": { hidden: true },
+        "vscode-harness-warning": { hidden: true },
         content: { classList: { toggle() {} }, replaceChildren() {} },
         error: { dataset: {} },
         refresh: {},
@@ -64,7 +64,7 @@ test("the legacy-log warning stays visible only on VS Code, including loading, e
         for (const source of ["vscode", "session", "vscode"]) {
             context.source = source;
             vm.runInContext("state.query.source = source; render();", context);
-            assert.equal(elements["vscode-legacy-warning"].hidden, source !== "vscode", `${source}: ${status}`);
+            assert.equal(elements["vscode-harness-warning"].hidden, source !== "vscode", `${source}: ${status}`);
         }
     }
 });

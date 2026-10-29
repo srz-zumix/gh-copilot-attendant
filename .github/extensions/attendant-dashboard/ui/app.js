@@ -202,7 +202,7 @@ function render() {
     if (!state || !meta) return;
     const source = activeSource();
     const result = state.results[source];
-    $("vscode-legacy-warning").hidden = source !== "vscode";
+    $("vscode-harness-warning").hidden = source !== "vscode";
 
     for (const tab of document.querySelectorAll(".tabs button")) {
         const selected = tab.dataset.source === source;
