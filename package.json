@@ -4,6 +4,6 @@
     "vendor:canvas": "node scripts/vendor-canvas.mjs"
   },
   "devDependencies": {
-    "re2js": "2.8.6"
+    "re2js": "2.8.7"
   }
 }
