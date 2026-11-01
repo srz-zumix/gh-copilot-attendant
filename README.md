@@ -81,6 +81,238 @@ the installed one. Fails if an extension is not installed yet. `--scope` default
 `--ref` overrides the default git ref (`main`). `--dry-run` prints what would be updated.
 `--force` re-installs even when already up to date, or overwrites an unmanaged directory.
 
+### metrics
+
+`gh copilot-attendant metrics` groups commands that read GitHub Copilot usage
+metrics for an organization or enterprise.
+
+#### metrics report
+
+```sh
+gh copilot-attendant metrics report \
+  (--org [HOST/]ORG | --enterprise [HOST/]ENTERPRISE) \
+  [--allow-public] [--create-issue | --issue <number>] \
+  [--day <YYYY-MM-DD> | --since <time> [--until <time>]] \
+  [--format <md|html>]... [--label <label>]... [--output-dir <dir>] \
+  [--repo [HOST/]OWNER/REPO | -R [HOST/]OWNER/REPO] [--rich] \
+  [--section <section>]... [--strict] [--title <title>] [--top <n>]
+```
+
+Reads the Copilot usage metrics reports of an organization or enterprise and
+renders a summary that can be shared with people who cannot view the usage
+metrics dashboard. The caller needs access to the usage metrics API (for example
+an organization owner, or an enterprise owner or billing manager), and the
+"Copilot usage metrics" policy must be enabled. The report covers key metrics,
+the daily trend, and breakdowns by feature, language, model, IDE, repository,
+team, and user. Active-user metrics are never summed across days: daily active
+users are averaged and peaked, and weekly/monthly active users are taken from
+the last day with data. Counters are summed and rates are derived from the
+summed values. Values missing from the reports are shown as `n/a`, and days
+without a report are listed as partial data.
+
+The model and language sections include Model usage per chat mode and Model
+usage per language detail tables in both Markdown and HTML, with or without
+`--rich`. They list all reported model/chat-mode and language/model pairs, even
+when `--top` limits the main tables. Counts sum available values; percentages
+use the total of valid, nonnegative counts in the corresponding detail
+breakdown. Missing counts and percentages with a zero denominator are `n/a`.
+Empty names appear as `(not reported)`, and Other and Unknown names remain
+separate in the tables.
+
+Exactly one of `--org` or `--enterprise` is required.
+
+- `--allow-public`: allow publishing to a public repository (optional, default
+  `false`). Publishing to a public repository fails without it.
+- `--create-issue`: create an issue in `--repo` whose body is a short overview,
+  and attach the rendered reports to it as issue artifacts (optional, default
+  `false`). Mutually exclusive with `--issue`.
+- `--day`: report a single day from its 1-day report (optional, `YYYY-MM-DD`).
+  Mutually exclusive with `--since` and `--until`.
+- `--enterprise`: enterprise to report on, as `[HOST/]ENTERPRISE`.
+- `--format`: `md` (Markdown with mermaid charts) or `html` (a self-contained
+  page with inline CSS, SVG charts, collapsible sections and sortable tables,
+  and numeric heat colors) (optional, default `md`). Tables are expanded by
+  default, or collapsed with `--rich`; sections are expanded in both modes.
+  In either HTML mode, hovering or focusing a day in a time-series chart
+  reveals its available points and tooltip; missing days remain empty.
+  Stacked-area points mark cumulative boundaries, while tooltips show each
+  series' share.
+  With JavaScript enabled, printing temporarily expands all sections and tables
+  and then restores their screen state. May be repeated or comma separated.
+  Multiple formats require `--output-dir`, `--create-issue`, or `--issue`.
+- `--issue`: attach the rendered reports as artifacts to this existing issue
+  (optional).
+- `--label`: label to add to the created issue (optional, may be repeated).
+  Requires `--create-issue`.
+- `--org`: organization to report on, as `[HOST/]ORG`.
+- `--output-dir`: write `report.md` and/or `report.html` to this directory
+  (optional). Without it, a single format is written to stdout unless the report
+  is published.
+- `--repo` / `-R`: repository to publish to, as `[HOST/]OWNER/REPO` (optional,
+  defaults to the current repository). Requires `--create-issue` or `--issue`.
+  It may be on a different host than the metrics source.
+- `--rich`: add dashboard-style KPI cards and breakdown charts to the HTML
+  report (optional, default `false`). KPI cards sit side by side when space
+  allows; paired pie and stacked charts appear side by side or stack vertically
+  on narrow screens. Hover over chart areas, points, or bars to see their labels
+  and values in a tooltip; keyboard focus also shows the tooltip. Daily chart
+  tooltips list all series for the selected day, including `n/a` for missing
+  values. Stacked-bar tooltips list every displayed series and, when complete,
+  the bar total with counts and shares; missing values are `n/a`. Tooltips omit
+  chart titles and align numeric columns. Long tooltips can be scrolled over
+  the chart or with arrow keys while focused.
+  Requires `--format html`; it also applies when Markdown and HTML are both
+  selected. The per-user section, including login names, is included only
+  with `--section user` or `--section all`, in either mode. User-level reports
+  are also fetched when selected team data or aggregate IDE active-user counts
+  require them. The IDE active users card is an estimate: it counts distinct
+  users with a reported IDE from the first day of the calendar month through
+  the report end day, deduplicating across days and IDEs. It can differ from
+  GitHub's dashboard when IDE details are unavailable. Daily user reports
+  outside the selected period are fetched when needed for this card only; they
+  do not change the user or team tables. Missing days make the estimate
+  partial, or `n/a` if no day is available; `--strict` fails if these reports
+  are missing. Dashboard charts include active-user trends, requests per chat
+  mode, code-generation and acceptance activity, inline code completions
+  (suggested/accepted), their acceptance rates, IDE daily and rolling seven-day
+  users, model interactions by feature, and code-generation activity by
+  language and model. Requests per chat mode appears below Average chat
+  requests per active user as a daily stacked bar chart of request counts,
+  using the `user_initiated_interaction_count` values for `chat_panel_*_mode`
+  in each day's `totals_by_feature`, including Plan. It uses a green theme with
+  gray for Other. Missing counts remain `n/a`; incomplete days are marked with
+  `*` and show a subtotal of known counts (or `n/a` if none), without total
+  shares. The chart is omitted when no chat-mode feature is reported. When
+  both have data, the activity and completion charts each appear beside their
+  acceptance-rate chart; they stack vertically on narrow screens.
+  Model usage per chat mode uses the `chat_panel_*_mode` feature entries in
+  the model/feature breakdown: the
+  horizontal axis is model, segments are chat modes, and the vertical axis is
+  percentage of interactions across all chat modes. Inline chat and non-mode
+  features are excluded; unknown chat mode is Other. The chart retains the top
+  five models by chat-mode interaction total plus Other, beside the Chat model
+  usage (interactions) pie chart (vertically on narrow screens). Language/model
+  charts are code-generation activity, not chat requests. Rolling IDE counts
+  are unavailable for the first six days and for any window containing a
+  missing user report. Language usage is shown as a pie chart with percentages,
+  grouping languages below 1% into Other (exactly 1% stays separate); pie
+  tooltips retain activity counts. Model usage per day and Language usage per
+  day are 100% stacked area charts, showing shares of each day's reported model
+  interactions or language activities. Their tooltips show percentages;
+  zero-total days have no area. Boundaries are smoothly interpolated between
+  days with data. A missing series tapers to no area at its day, while its
+  tooltip remains `n/a`. These area charts do not use the section theme; named
+  series are colored by a hue gradient from blue toward red and purple, ordered
+  by total over the report period, with gray for Other. Model usage per
+  language is a vertical
+  stacked bar chart with languages on the horizontal axis and models as
+  segments. Its title is "Model usage per language (code-generation
+  activities)"; the vertical axis shows each segment's percentage of
+  code-generation activities across all languages, not a per-language
+  normalization. The vertical-axis maximum follows the largest language total
+  percentage, rounded up to the next whole percentage point (minimum 1%).
+  Other, Others, and Unknown (including the spelling Unkown) are combined as
+  Other in these charts, with the Other language bar placed rightmost. Chat
+  model usage (interactions) is a percentage pie chart based on model
+  interactions; shares below 1% and unknown models are grouped into Other,
+  with counts in tooltips. Additive activity
+  charts show at most seven categories (the palette size), including Other: the
+  largest activity totals are retained and remaining categories are combined;
+  stacked charts limit the breakdown segments separately. IDE active-user
+  series remain separate because their users can overlap. The model section
+  uses a blue theme and the language section an orange theme, with gray for
+  Other. A model or language keeps one color in HTML table keys; pie charts
+  use darker shades for larger categories.
+  Each stacked chat mode or model keeps one color in every bar and in the
+  detail-table keys.
+  Blue numeric table backgrounds
+  independently indicate relative values within each column. Model usage per
+  language retains the top five languages by activity total and combines the
+  rest into Other. It appears beside the language usage pie chart, stacking
+  vertically on narrow screens. Line charts use compact fonts and height.
+  Reports use shared typography sizes for headings, chart titles, KPI labels,
+  tables, legends, and tooltips; paired SVG charts compensate for their smaller
+  width. By team includes paired Team usage pie charts for user-initiated
+  interactions and code-generation activities, stacking vertically on narrow
+  screens. Each pie independently uses all reported teams regardless of
+  `--top`, groups shares below 1% and excess categories into Other, and shows
+  at most seven categories including Other. Tooltips show reported counts and
+  shares of team-attributed activity, joined using same-day membership.
+  Multi-team users count in each team, so shares are not an organization-wide
+  breakdown. Ambiguous team labels include team IDs. Missing and zero counts
+  have no slices; charts with no positive counts are omitted, and a single
+  available chart uses the full width.
+  By user includes two rose-themed chart pairs, both using all reported users
+  regardless of `--top`. Interaction per active days ranks the top seven
+  users by reported interactions divided by Active days, including days with
+  a user record but zero interactions. Missing interaction values are excluded
+  from totals; users without reported interactions are omitted. Users by
+  surface shows vertical bars of users who used each surface; users can count
+  toward multiple surfaces. Reported days distribution groups users by days
+  with a user record (`1`, `2–3`, `4–7`, `8–14`, `15+`). Acceptance rate
+  distribution groups users with code generation by accepted divided by
+  generated activities on matching days (`<20%` to `≥80%`; the last bucket
+  includes rates above 100%). Empty buckets have no slices. A pair uses half
+  widths only when both charts are available.
+  By repository includes horizontal stacked bars for reviewed, created,
+  and merged pull requests. The reviewed chart compares PRs reviewed with
+  Copilot to those without a Copilot review; created and merged charts compare
+  Copilot-created PRs with other-created PRs. Their tooltips show counts and
+  shares. Copilot review suggestions by repository compares generated and
+  applied counts in separate bars, not as an acceptance rate: the events may
+  concern different suggestions. When both are available, the reviewed and
+  suggestions charts appear side by side, stacking vertically on narrow
+  screens. Partial period totals are marked and show only known counts.
+  Copilot reviews per day by repository stacks daily counts
+  by repository. Available days without repository activity count as zero;
+  missing reports or values remain `n/a`. Incomplete days are marked, and
+  their tooltips show a displayed subtotal without shares. Each chart ranks
+  repositories separately and shows the top seven plus a combined Other
+  category, using all reported repositories regardless of `--top`. Review
+  counts sum daily reports, so a PR reviewed on multiple days can be counted
+  more than once.
+- `--section`: `kpi`, `trend`, `feature`, `language`, `model`, `ide`,
+  `repository`, `team`, `user`, or `all` (optional, default every section
+  except `user`). May be repeated or comma separated. The per-user ranking is
+  opt-in.
+- `--since`: first day of a range of 1-day reports (optional, `YYYY-MM-DD`,
+  RFC3339, or a relative duration such as `7d`). Without `--day`, `--since`,
+  and `--until`, the latest 28-day report is used.
+- `--strict`: fail when a selected report is missing for any day or the report
+  windows differ, instead of reporting partial data (optional, default `false`).
+- `--title`: title of the created issue (optional, defaults to the source and
+  window). Requires `--create-issue`.
+- `--top`: keep only the top N rows of ranked tables (optional, default `20`;
+  `0` keeps every row). It does not truncate the model/chat-mode or
+  language/model detail tables, or the data behind `--rich` charts.
+- `--until`: last day of the range (optional, defaults to and is capped at
+  yesterday). Requires `--since`.
+
+Each report is attached as an issue artifact (Markdown as `generic`, HTML as
+`embedded_html`) named after the source, window, and format, so re-running the
+report for the same window updates the existing artifacts instead of adding new
+ones. Issue artifacts are a public preview feature of GitHub. If attaching fails
+after the issue was created, the error shows the issue so that the command can
+be retried with `--issue`.
+Artifact names replace unsupported characters (including colons, parentheses,
+and host/owner separators) with spaces to meet GitHub's naming restrictions.
+Issue titles retain their original punctuation.
+
+```sh
+# Print the latest 28-day report of an organization as Markdown
+gh copilot-attendant metrics report --org my-org
+
+# Write a rich HTML dashboard and Markdown report for a date range
+gh copilot-attendant metrics report --org my-org \
+  --since 2025-06-01 --until 2025-06-30 --format md,html --rich \
+  --output-dir ./copilot-metrics
+
+# Publish the latest enterprise report to a new issue in a private repository
+gh copilot-attendant metrics report --enterprise my-enterprise \
+  --format md --format html --create-issue --repo my-org/copilot-reports \
+  --label copilot-metrics
+```
+
 ### session
 
 `gh copilot-attendant session` groups commands that inspect the local GitHub Copilot CLI
