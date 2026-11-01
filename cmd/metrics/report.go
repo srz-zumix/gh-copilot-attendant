@@ -170,7 +170,9 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 					return fmt.Errorf("write reports to %s: %w", outputDir, err)
 				}
 				for _, p := range paths {
-					fmt.Fprintf(stderr, "Wrote %s\n", p)
+					if _, err := fmt.Fprintf(stderr, "Wrote %s\n", p); err != nil {
+						return fmt.Errorf("write progress message to stderr: %w", err)
+					}
 				}
 			}
 
@@ -191,16 +193,20 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 				return fmt.Errorf("publish usage metrics report: %w", err)
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Issue: %s\n", result.IssueURL)
+			if _, err := fmt.Fprintf(out, "Issue: %s\n", result.IssueURL); err != nil {
+				return fmt.Errorf("write issue URL to stdout: %w", err)
+			}
 			for _, a := range result.Artifacts {
 				action := "Updated"
 				if a.Created {
 					action = "Created"
 				}
+				line := fmt.Sprintf("%s artifact: %s", action, a.Name)
 				if a.URL != "" {
-					fmt.Fprintf(out, "%s artifact: %s (%s)\n", action, a.Name, a.URL)
-				} else {
-					fmt.Fprintf(out, "%s artifact: %s\n", action, a.Name)
+					line += fmt.Sprintf(" (%s)", a.URL)
+				}
+				if _, err := fmt.Fprintln(out, line); err != nil {
+					return fmt.Errorf("write artifact %s result to stdout: %w", a.Name, err)
 				}
 			}
 			return nil

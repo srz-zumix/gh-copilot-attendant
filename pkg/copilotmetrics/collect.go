@@ -114,7 +114,8 @@ func Collect(ctx context.Context, f Fetcher, opts CollectOptions) (*Dataset, err
 	needsUsers := sections.NeedsUsers() || opts.IncludeIDEActiveUsers
 	progress := func(format string, args ...any) {
 		if opts.Progress != nil {
-			fmt.Fprintf(opts.Progress, format+"\n", args...)
+			// Progress output is best-effort and must not abort collection.
+			_, _ = fmt.Fprintf(opts.Progress, format+"\n", args...)
 		}
 	}
 

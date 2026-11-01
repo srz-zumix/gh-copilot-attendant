@@ -2194,7 +2194,7 @@ func copilotMetricsHTMLHeatmapColumn(section copilotmetrics.Section, column int)
 	if section == copilotmetrics.SectionKPI && column == 1 {
 		return false
 	}
-	return !(section == copilotmetrics.SectionUser && column == 0)
+	return section != copilotmetrics.SectionUser || column != 0
 }
 
 func copilotMetricsHTMLNumericColumn(section copilotmetrics.Section, column int) bool {
