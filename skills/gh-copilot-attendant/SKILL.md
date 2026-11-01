@@ -26,14 +26,19 @@ selects kpi, trend, feature, language, model, ide, repository, team, and user
 (user is opt-in). Active-user metrics are never summed across days; missing
 values are `n/a`, and missing days are reported as partial data (`--strict`
 fails instead). `--format md|html` renders Markdown with mermaid charts or
-self-contained HTML with collapsible sections and sortable, color-coded
-tables. Sections are expanded by default; tables are expanded in normal HTML
-and collapsed with `--rich`. In either HTML mode, hovering or focusing a day in
-a time-series chart reveals its available points and tooltip; missing days
-remain empty. Stacked-area points mark cumulative boundaries, while tooltips
-show each series' share. With JavaScript enabled, printing temporarily expands
-all sections and tables, then restores their screen state. `--rich`
-adds KPI cards and breakdown charts to HTML and requires `--format html`.
+self-contained HTML with collapsible sections and tables. JavaScript enables
+table sorting and numeric heat colors. Sections are expanded by default; tables
+are expanded in normal HTML and collapsed with `--rich`. In either HTML mode,
+hovering or focusing a day in a time-series chart reveals its available points
+and tooltip; missing days remain empty. Stacked-area points mark cumulative
+boundaries, while tooltips show each series' share. Without JavaScript, browsers
+supporting CSS `:has()` show a simplified tooltip on hover or focus, placed
+next to the target where CSS anchor positioning is supported; it can be scrolled
+with the pointer. Each chart's **Chart values** disclosure lists the full
+values. With
+JavaScript enabled, printing temporarily expands all sections and tables, then
+restores their screen state. `--rich` adds KPI cards and breakdown charts to
+HTML and requires `--format html`.
 The per-user section, including login names, is included only with
 `--section user` or `--section all`, in either mode. Model usage per chat
 mode and Model usage per language detail tables are present in Markdown and
@@ -57,14 +62,15 @@ bars show labels and values in tooltips on hover or keyboard focus. Daily
 chart tooltips show all series for that day, with missing values shown as
 `n/a`. Stacked-bar tooltips list every displayed series and, when complete, the
 bar total with counts and shares; missing values are `n/a`. Tooltips omit chart
-titles and align numeric columns. Long tooltips can be scrolled over the chart
-or with arrow keys while focused. Model usage per day and Language usage per
-day are 100% stacked area charts, using each day's reported model interaction
-or language activity total as 100%. Zero-total days have no area. Boundaries
-are smoothly interpolated between days with data; missing series taper to no
-area at their day, but remain `n/a` in tooltips. These area charts do not use
-the section theme; named series are colored by a hue gradient from blue toward
-red and purple, ordered by total over the report period, with gray for Other.
+titles. With JavaScript, they align numeric columns, and long tooltips can be
+scrolled over the chart or with arrow keys while focused. Model usage per day
+and Language usage per day are 100% stacked area charts, using each day's
+reported model interaction or language activity total as 100%. Zero-total days
+have no area. Boundaries are smoothly interpolated between days with data;
+missing series taper to no area at their day, but remain `n/a` in tooltips. These
+area charts do not use the section theme; named series are colored by a hue
+gradient from blue toward red and purple, ordered by total over the report
+period, with gray for Other.
 Language usage uses a percentage pie
 chart, grouping languages below 1%
 into Other; exactly 1%

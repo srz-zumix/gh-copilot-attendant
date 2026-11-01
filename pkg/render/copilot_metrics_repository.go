@@ -193,8 +193,11 @@ func copilotMetricsSVGRepositoryStackedBar(title string, bars []copilotMetricsRe
 		}
 		aria := template.HTMLEscapeString(tooltip.text())
 		copilotMetricsWriteRepositoryLabel(&b, bar.Name, y+(barHeight-rowHeight)/2, rowHeight)
+		hitWidth := copilotMetricsRepositoryChartWidth - copilotMetricsRepositoryChartLeft - copilotMetricsRepositoryChartRight
 		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`,
-			tooltip.attributes(), aria)
+			tooltip.svgAttributes(copilotMetricsRepositoryChartLeft, y, hitWidth, barHeight), aria)
+		fmt.Fprintf(&b, `<rect class="repository-chart-hit" x="%.1f" y="%.1f" width="%.1f" height="%.1f" aria-hidden="true"/>`,
+			copilotMetricsRepositoryChartLeft, y, hitWidth, barHeight)
 		if copilotWidth > 0 {
 			fmt.Fprintf(&b, `<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" aria-hidden="true"/>`,
 				copilotMetricsRepositoryChartLeft, y, copilotWidth, barHeight, copilotHex)

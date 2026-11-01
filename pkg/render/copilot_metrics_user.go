@@ -160,7 +160,7 @@ func copilotMetricsUserRatioPanel(users []copilotmetrics.UserRow) copilotMetrics
 		}
 		aria := template.HTMLEscapeString(tooltip.text())
 		copilotMetricsWriteRepositoryLabel(&b, ratio.Login, y+(barHeight-rowHeight)/2, rowHeight)
-		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`, tooltip.attributes(), aria)
+		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`, tooltip.svgAttributes(copilotMetricsRepositoryChartLeft, y, plotWidth, barHeight), aria)
 		fmt.Fprintf(&b, `<rect class="repository-chart-hit" x="%.1f" y="%.1f" width="%.1f" height="%.1f" aria-hidden="true"/>`,
 			copilotMetricsRepositoryChartLeft, y, plotWidth, barHeight)
 		if width := ratio.Rate / maxRate * plotWidth; width > 0 {
@@ -222,7 +222,7 @@ func copilotMetricsUserSurfacePanel(users []copilotmetrics.UserRow) copilotMetri
 			Note: "Share of reported users.",
 		}
 		aria := template.HTMLEscapeString(tooltip.text())
-		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`, tooltip.attributes(), aria)
+		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`, tooltip.svgAttributes(x, copilotMetricsUserColumnTop, barWidth, plotHeight), aria)
 		fmt.Fprintf(&b, `<rect class="repository-chart-hit" x="%.1f" y="%.1f" width="%.1f" height="%.1f" aria-hidden="true"/>`,
 			x, copilotMetricsUserColumnTop, barWidth, plotHeight)
 		if barHeight > 0 {

@@ -2,10 +2,13 @@ package render
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"html"
 	"html/template"
 	"math"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,14 +73,168 @@ func (tooltip copilotMetricsTooltip) attributes() string {
 	if tooltip.Note != "" {
 		fields.Set("note", tooltip.Note)
 	}
-	return fmt.Sprintf(`data-tooltip="%s" data-tooltip-fields="%s"`,
-		template.HTMLEscapeString(tooltip.text()), template.HTMLEscapeString(fields.Encode()))
+	text := tooltip.text()
+	return fmt.Sprintf(`data-tooltip="%s" data-tooltip-fields="%s" data-tooltip-key="%s"`,
+		template.HTMLEscapeString(text), template.HTMLEscapeString(fields.Encode()), copilotMetricsTooltipKey(text))
 }
+
+// svgAttributes returns the tooltip attributes plus the target's box in SVG
+// viewBox units, which positions the CSS-only fallback next to the target.
+func (tooltip copilotMetricsTooltip) svgAttributes(x, y, width, height float64) string {
+	return fmt.Sprintf(`%s data-tooltip-box="%.2f %.2f %.2f %.2f"`, tooltip.attributes(), x, y, width, height)
+}
+
+func copilotMetricsTooltipKey(text string) string {
+	digest := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("%x", digest[:12])
+}
+
+var copilotMetricsTooltipAttributes = regexp.MustCompile(`data-tooltip="([^"]*)" data-tooltip-fields="[^"]*" data-tooltip-key="([0-9a-f]{24})"`)
+
+type copilotMetricsHTMLTooltip struct {
+	Key  string
+	Text string
+}
+
+// copilotMetricsHTMLTooltipFallback is a CSS-only popup bound to one tooltip
+// target. SVG targets are not valid CSS anchors, so they are anchored through
+// an HTML proxy box positioned over the enclosing SVG; SVG names that SVG and
+// Box holds the target's left, top, width, and height as viewBox fractions.
+type copilotMetricsHTMLTooltipFallback struct {
+	Target string
+	Text   string
+	SVG    string
+	Box    [4]float64
+}
+
+var (
+	copilotMetricsTooltipBoxAttribute = regexp.MustCompile(` data-tooltip-box="([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+)"`)
+	copilotMetricsSVGViewBox          = regexp.MustCompile(`^<svg [^>]*viewBox="0 0 ([0-9.]+) ([0-9.]+)"`)
+)
+
+type copilotMetricsHTMLInsertion struct {
+	position int
+	text     string
+}
+
+// copilotMetricsChartTooltips assigns a report-unique target ID to every tooltip
+// target in chart and returns the rewritten chart, the distinct tooltip texts,
+// and one fallback popup per target. nextTarget is advanced for each target.
+func copilotMetricsChartTooltips(chart template.HTML, nextTarget *int) (template.HTML, []copilotMetricsHTMLTooltip, []copilotMetricsHTMLTooltipFallback, error) {
+	source := string(chart)
+	matches := copilotMetricsTooltipAttributes.FindAllStringSubmatchIndex(source, -1)
+	if len(matches) != strings.Count(source, ` data-tooltip="`) {
+		return "", nil, nil, fmt.Errorf("chart tooltip attributes are missing or malformed")
+	}
+	seen := make(map[string]string, len(matches))
+	svgIDs := make(map[int]string)
+	tooltips := make([]copilotMetricsHTMLTooltip, 0, len(matches))
+	fallbacks := make([]copilotMetricsHTMLTooltipFallback, 0, len(matches))
+	insertions := make([]copilotMetricsHTMLInsertion, 0, len(matches))
+	for _, match := range matches {
+		text, key := html.UnescapeString(source[match[2]:match[3]]), source[match[4]:match[5]]
+		if copilotMetricsTooltipKey(text) != key {
+			return "", nil, nil, fmt.Errorf("chart tooltip key does not match its text")
+		}
+		target := fmt.Sprintf("t%d", *nextTarget)
+		*nextTarget++
+		fallback := copilotMetricsHTMLTooltipFallback{Target: target, Text: text}
+		tagEnd := strings.IndexByte(source[match[1]:], '>')
+		if tagEnd < 0 {
+			return "", nil, nil, fmt.Errorf("chart tooltip target is not closed")
+		}
+		if box := copilotMetricsTooltipBoxAttribute.FindStringSubmatch(source[match[1] : match[1]+tagEnd]); box != nil {
+			svgStart := strings.LastIndex(source[:match[0]], "<svg ")
+			if svgStart < 0 || strings.Contains(source[svgStart:match[0]], "</svg>") {
+				return "", nil, nil, fmt.Errorf("chart tooltip box is outside an SVG")
+			}
+			viewBox := copilotMetricsSVGViewBox.FindStringSubmatch(source[svgStart:])
+			if viewBox == nil {
+				return "", nil, nil, fmt.Errorf("chart SVG has no viewBox")
+			}
+			var values [6]float64
+			for i, value := range append(box[1:], viewBox[1:]...) {
+				parsed, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					return "", nil, nil, fmt.Errorf("parse chart tooltip box: %w", err)
+				}
+				values[i] = parsed
+			}
+			if values[4] <= 0 || values[5] <= 0 {
+				return "", nil, nil, fmt.Errorf("chart SVG has an empty viewBox")
+			}
+			id, ok := svgIDs[svgStart]
+			if !ok {
+				id = target
+				svgIDs[svgStart] = id
+				svgTagEnd := strings.IndexByte(source[svgStart:], '>')
+				if source[svgStart+svgTagEnd-1] == '/' {
+					svgTagEnd--
+				}
+				insertions = append(insertions, copilotMetricsHTMLInsertion{svgStart + svgTagEnd, fmt.Sprintf(` data-tooltip-svg="%s"`, id)})
+			}
+			fallback.SVG = id
+			fallback.Box = [4]float64{values[0] / values[4], values[1] / values[5], values[2] / values[4], values[3] / values[5]}
+		}
+		insertions = append(insertions, copilotMetricsHTMLInsertion{match[1], fmt.Sprintf(` data-tooltip-target="%s"`, target)})
+		fallbacks = append(fallbacks, fallback)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = text
+		tooltips = append(tooltips, copilotMetricsHTMLTooltip{Key: key, Text: text})
+	}
+	sort.SliceStable(insertions, func(i, j int) bool { return insertions[i].position < insertions[j].position })
+	var b strings.Builder
+	last := 0
+	for _, insertion := range insertions {
+		b.WriteString(source[last:insertion.position])
+		b.WriteString(insertion.text)
+		last = insertion.position
+	}
+	b.WriteString(source[last:])
+	// #nosec G203 -- the chart is already-rendered HTML; only generated IDs are inserted.
+	return template.HTML(b.String()), tooltips, fallbacks, nil
+}
+
+// copilotMetricsTooltipFallbackCSS shows each target's popup on focus-visible,
+// hover (of the target or the popup), then plain focus, and anchors the popup
+// next to its own target where CSS anchor positioning is supported.
+func copilotMetricsTooltipFallbackCSS(fallbacks []copilotMetricsHTMLTooltipFallback) template.CSS {
+	var b strings.Builder
+	for _, fallback := range fallbacks {
+		target := fallback.Target
+		fmt.Fprintf(&b, `html:not(.chart-tooltip-active):not(.chart-tooltip-dismissed) figure:is(`+
+			`:has([data-tooltip-target="%s"]:not([data-tooltip-dismissed]):focus-visible), `+
+			`:not(:has([data-tooltip]:focus-visible)):has([data-tooltip-target="%s"]:not([data-tooltip-dismissed]):hover, > .chart-tooltip-fallback[data-tooltip-target="%s"]:hover), `+
+			`:not(:has([data-tooltip]:focus-visible, [data-tooltip]:hover, > .chart-tooltip-fallback:hover)):has([data-tooltip-target="%s"]:not([data-tooltip-dismissed]):focus)`+
+			`) > .chart-tooltip-fallback[data-tooltip-target="%s"] { display: block; }`+"\n", target, target, target, target, target)
+	}
+	b.WriteString(copilotMetricsTooltipAnchorSupports + " {\n")
+	for _, fallback := range fallbacks {
+		target := fallback.Target
+		if fallback.SVG == "" {
+			fmt.Fprintf(&b, `[data-tooltip-target="%s"] { anchor-name: --chart-tip-%s; }`+"\n", target, target)
+		} else {
+			if fallback.SVG == target {
+				fmt.Fprintf(&b, `[data-tooltip-svg="%s"] { anchor-name: --chart-svg-%s; }`+"\n", target, target)
+			}
+			fmt.Fprintf(&b, `.chart-tooltip-anchor[data-tooltip-anchor="%s"] { position-anchor: --chart-svg-%s; left: calc(anchor(left) + anchor-size(width) * %.5f); top: calc(anchor(top) + anchor-size(height) * %.5f); width: calc(anchor-size(width) * %.5f); height: calc(anchor-size(height) * %.5f); anchor-name: --chart-tip-%s; }`+"\n",
+				target, fallback.SVG, fallback.Box[0], fallback.Box[1], fallback.Box[2], fallback.Box[3], target)
+		}
+		fmt.Fprintf(&b, `.chart-tooltip-fallback[data-tooltip-target="%s"] { position-anchor: --chart-tip-%s; }`+"\n", target, target)
+	}
+	b.WriteString("}\n")
+	// #nosec G203 -- target IDs and geometry are generated internally, not report text.
+	return template.CSS(b.String())
+}
+
+const copilotMetricsTooltipAnchorSupports = "@supports (anchor-name: --a) and (width: anchor-size(width))"
 
 func copilotMetricsWriteDayTarget(b *strings.Builder, hitClass, dotClass string, x, y, width, height, radius float64, tooltip copilotMetricsTooltip, dots []copilotMetricsDayDot) {
 	label := template.HTMLEscapeString(tooltip.text())
-	fmt.Fprintf(b, `<g class="chart-day"><rect class="%s" x="%.3f" y="%.3f" width="%.3f" height="%.3f" %s tabindex="0" role="img" aria-label="%s"><title>%s</title></rect>`,
-		hitClass, x, y, width, height, tooltip.attributes(), label, label)
+	fmt.Fprintf(b, `<g class="chart-day"><rect class="%s" x="%.3f" y="%.3f" width="%.3f" height="%.3f" %s tabindex="0" role="img" aria-label="%s"></rect>`,
+		hitClass, x, y, width, height, tooltip.svgAttributes(x, y, width, height), label)
 	for _, dot := range dots {
 		fmt.Fprintf(b, `<circle class="%s"`, dotClass)
 		if dot.Color != "" {
@@ -148,8 +305,12 @@ func copilotMetricsSVGChart(title, kind string, labels []string, values []int64,
 			if !valid[i] {
 				continue
 			}
-			fmt.Fprintf(&b, `<rect class="bar" x="%.1f" y="%.1f" width="%.1f" height="%.1f"><title>%s: %s</title></rect>`,
-				x(i)-bw/2, y(v), bw, baseY-y(v), template.HTMLEscapeString(labels[i]), formatCopilotMetricsInt(v))
+			tooltip := copilotMetricsTooltip{Rows: []copilotMetricsTooltipRow{{Label: labels[i], Value: formatCopilotMetricsInt(v)}}}
+			label := template.HTMLEscapeString(tooltip.text())
+			fmt.Fprintf(&b, `<g class="chart-day"><rect class="bar" x="%.1f" y="%.1f" width="%.1f" height="%.1f" aria-hidden="true"/>`,
+				x(i)-bw/2, y(v), bw, baseY-y(v))
+			fmt.Fprintf(&b, `<rect class="chart-day-hit" x="%.3f" y="%.3f" width="%.3f" height="%.3f" %s tabindex="0" role="img" aria-label="%s"></rect></g>`,
+				x(i)-step/2, float64(copilotMetricsChartPadTop)-3, step, plotH+6, tooltip.svgAttributes(x(i)-step/2, float64(copilotMetricsChartPadTop)-3, step, plotH+6), label)
 		}
 	default:
 		var path, fill strings.Builder
@@ -253,6 +414,8 @@ type copilotMetricsHTMLPanel struct {
 	Title     string
 	Chart     template.HTML
 	HalfWidth bool
+	Tooltips  []copilotMetricsHTMLTooltip
+	Fallbacks []copilotMetricsHTMLTooltipFallback
 }
 
 type copilotMetricsHTMLKPI struct {
@@ -270,6 +433,7 @@ type copilotMetricsHTMLData struct {
 	Partial    []string
 	Warnings   []string
 	Sections   []copilotMetricsHTMLSection
+	TooltipCSS template.CSS
 }
 
 func copilotMetricsHTMLBreakdownTable(keyHeader string, rows []copilotmetrics.BreakdownRow) copilotMetricsHTMLTable {
@@ -1221,9 +1385,10 @@ func copilotMetricsHTMLRichStackedPanelWithColors(title string, values []copilot
 	var b strings.Builder
 	fmt.Fprintf(&b, `<ul class="stacked-legend" aria-label="%s">`, template.HTMLEscapeString(title+" legend"))
 	for _, model := range models {
-		escaped := template.HTMLEscapeString(copilotMetricsStackedSeriesLabel(dimension) + ": " + model)
-		fmt.Fprintf(&b, `<li><span class="series-key" style="background-color:%s" data-tooltip="%s" tabindex="0" role="img" aria-label="%s"></span><span class="stacked-legend-label">%s</span></li>`,
-			scheme.seriesColor(model), escaped, escaped, template.HTMLEscapeString(model))
+		tooltip := copilotMetricsTooltip{Heading: copilotMetricsStackedSeriesLabel(dimension) + ": " + model}
+		escaped := template.HTMLEscapeString(tooltip.text())
+		fmt.Fprintf(&b, `<li><span class="series-key" style="background-color:%s" %s tabindex="0" role="img" aria-label="%s"></span><span class="stacked-legend-label">%s</span></li>`,
+			scheme.seriesColor(model), tooltip.attributes(), escaped, template.HTMLEscapeString(model))
 	}
 	fmt.Fprintf(&b, `</ul><div class="stacked-chart-wrap"><svg class="stacked-chart" style="min-width:var(--stacked-min-width, %.0fpx)" viewBox="0 0 %.0f %.0f" role="group" aria-label="%s" xmlns="http://www.w3.org/2000/svg">`,
 		width, width, height, template.HTMLEscapeString(title))
@@ -1247,12 +1412,12 @@ func copilotMetricsHTMLRichStackedPanelWithColors(title string, values []copilot
 			y := baseY - float64(stacked+counter.Value)/totalActivities/axisMax*plotHeight
 			segmentLabel := copilotMetricsStackedSeriesLabel(dimension)
 			segmentLabel = template.HTMLEscapeString(segmentLabel + ": " + model + "\n" + tooltip.text())
-			fmt.Fprintf(&b, `<rect class="stacked-segment" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" %s tabindex="0" role="img" aria-label="%s"><title>%s</title></rect>`,
-				x-step*.3, y, step*.6, barHeight, scheme.seriesColor(model), tooltip.attributes(), segmentLabel, tooltipText)
+			fmt.Fprintf(&b, `<rect class="stacked-segment" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" %s tabindex="0" role="img" aria-label="%s"></rect>`,
+				x-step*.3, y, step*.6, barHeight, scheme.seriesColor(model), tooltip.svgAttributes(x-step*.3, y, step*.6, barHeight), segmentLabel)
 			stacked += counter.Value
 		}
-		fmt.Fprintf(&b, `<foreignObject x="%.1f" y="%.1f" width="%.1f" height="%.1f"><div xmlns="http://www.w3.org/1999/xhtml" class="stacked-axis-label" %s title="%s" tabindex="0" role="img" aria-label="%s">%s</div></foreignObject>`,
-			x-step/2, baseY+15, step, bottom-45, tooltip.attributes(), tooltipText, tooltipText, template.HTMLEscapeString(language))
+		fmt.Fprintf(&b, `<foreignObject x="%.1f" y="%.1f" width="%.1f" height="%.1f"><div xmlns="http://www.w3.org/1999/xhtml" class="stacked-axis-label" %s tabindex="0" role="img" aria-label="%s">%s</div></foreignObject>`,
+			x-step/2, baseY+15, step, bottom-45, tooltip.svgAttributes(x-step/2, baseY+15, step, bottom-45), tooltipText, template.HTMLEscapeString(language))
 	}
 	fmt.Fprintf(&b, `<text class="axis" x="%.1f" y="%.1f" text-anchor="middle">%s</text><text class="axis" transform="translate(20 %.1f) rotate(-90)" text-anchor="middle">%%</text></svg></div><p class="chart-color-key">Each %s keeps the same color in every bar.</p>`,
 		width/2, height-5, template.HTMLEscapeString(dimension), top+plotHeight/2, template.HTMLEscapeString(strings.ToLower(copilotMetricsStackedSeriesLabel(dimension))))
@@ -1339,18 +1504,19 @@ func copilotMetricsPieChart(title string, rows []copilotmetrics.RichValue, total
 		}}}
 		tooltipText := template.HTMLEscapeString(tooltip.text())
 		if share == 1 {
-			fmt.Fprintf(&b, `<circle class="pie-slice" cx="160" cy="160" r="145" fill="%s" %s tabindex="0" aria-label="%s"><title>%s</title></circle>`,
-				color, tooltip.attributes(), tooltipText, tooltipText)
+			fmt.Fprintf(&b, `<circle class="pie-slice" cx="160" cy="160" r="145" fill="%s" %s tabindex="0" aria-label="%s"></circle>`,
+				color, tooltip.svgAttributes(160-4, 160-4, 8, 8), tooltipText)
 		} else {
 			largeArc := 0
 			if share > .5 {
 				largeArc = 1
 			}
-			fmt.Fprintf(&b, `<path class="pie-slice" d="M160 160 L%.3f %.3f A145 145 0 %d 1 %.3f %.3f Z" fill="%s" %s tabindex="0" aria-label="%s"><title>%s</title></path>`,
-				160+145*math.Cos(angle), 160+145*math.Sin(angle), largeArc, 160+145*math.Cos(end), 160+145*math.Sin(end), color, tooltip.attributes(), tooltipText, tooltipText)
+			middle := (angle + end) / 2
+			fmt.Fprintf(&b, `<path class="pie-slice" d="M160 160 L%.3f %.3f A145 145 0 %d 1 %.3f %.3f Z" fill="%s" %s tabindex="0" aria-label="%s"></path>`,
+				160+145*math.Cos(angle), 160+145*math.Sin(angle), largeArc, 160+145*math.Cos(end), 160+145*math.Sin(end), color, tooltip.svgAttributes(156+87*math.Cos(middle), 156+87*math.Sin(middle), 8, 8), tooltipText)
 		}
-		fmt.Fprintf(&legend, `<li %s title="%s" tabindex="0" aria-label="%s"><span class="pie-key" style="background:%s"></span><span>%s</span><span>%.1f%%</span></li>`,
-			tooltip.attributes(), tooltipText, tooltipText, color, label, share*100)
+		fmt.Fprintf(&legend, `<li %s tabindex="0" aria-label="%s"><span class="pie-key" style="background:%s"></span><span>%s</span><span>%.1f%%</span></li>`,
+			tooltip.attributes(), tooltipText, color, label, share*100)
 		angle = end
 	}
 	b.WriteString(`</svg><ul class="pie-legend">`)
@@ -1396,15 +1562,16 @@ func copilotMetricsHTMLRichBarPanel(title string, values []copilotmetrics.RichVa
 		value := formatCopilotMetricsCounter(row.Value)
 		tooltip := copilotMetricsTooltip{Rows: []copilotMetricsTooltipRow{{Label: label, Value: value}}}
 		tooltipText := template.HTMLEscapeString(tooltip.text())
-		fmt.Fprintf(&b, `<div class="bar-row" %s title="%s" tabindex="0" aria-label="%s"><span class="bar-label">%s</span><span class="bar-track"><span class="bar-fill" style="width:%.1f%%"></span></span><span class="bar-value">%s</span></div>`,
-			tooltip.attributes(), tooltipText, tooltipText, template.HTMLEscapeString(label), width, value)
+		fmt.Fprintf(&b, `<div class="bar-row" %s tabindex="0" aria-label="%s"><span class="bar-label">%s</span><span class="bar-track"><span class="bar-fill" style="width:%.1f%%"></span></span><span class="bar-value">%s</span></div>`,
+			tooltip.attributes(), tooltipText, template.HTMLEscapeString(label), width, value)
 	}
 	b.WriteString(`</div>`)
 	// #nosec G203 -- label text is escaped and width is derived from numeric report values.
 	return copilotMetricsHTMLPanel{Title: title, Chart: template.HTML(b.String())}
 }
 
-var copilotMetricsHTMLTemplate = template.Must(template.New("report").Parse(`{{define "metricsTable"}}<div class="table-wrap"><table>
+var copilotMetricsHTMLTemplate = template.Must(template.New("report").Parse(`{{define "chartFallbacks"}}{{range .Fallbacks}}{{if .SVG}}<span class="chart-tooltip-anchor" data-tooltip-anchor="{{.Target}}" aria-hidden="true"></span>{{end}}<div class="chart-tooltip-fallback" data-tooltip-target="{{.Target}}" aria-hidden="true" tabindex="-1">{{.Text}}</div>{{end}}
+<details class="chart-values"><summary>Chart values</summary><ul>{{range .Tooltips}}<li>{{.Text}}</li>{{end}}</ul></details>{{end}}{{define "metricsTable"}}<div class="table-wrap"><table>
 <thead><tr>{{$classes := .NumericClass}}{{range $i, $h := .Headers}}<th scope="col" class="{{index $classes $i}}" aria-sort="none"><button class="sort-button" type="button">{{$h}}</button></th>{{end}}</tr></thead>
 <tbody>
 {{- range $rowIndex, $row := .Rows}}
@@ -1477,7 +1644,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rich-panels-paired { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .rich-panels-paired .rich-panel { grid-column: 1 / -1; }
 .rich-panels-paired .rich-panel-half { grid-column: auto; --stacked-min-width: 0px; }
-.rich-panel, .chart-panel { border: 1px solid var(--border); border-radius: 8px; margin: 0; min-width: 0; overflow: hidden; padding: 12px; }
+.rich-panel, .chart-panel { border: 1px solid var(--border); border-radius: 8px; margin: 0; min-width: 0; overflow: hidden; padding: 12px; position: relative; }
 .chart-panel { margin: 1em 0; }
 .rich-panel figcaption, .chart-panel figcaption { font-size: var(--text-body); font-weight: 600; line-height: 1.5; margin-bottom: .5em; }
 .metric-chart { display: block; height: auto; width: 100%; --text-chart: 7px; }
@@ -1533,7 +1700,18 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chart-tooltip-value, .chart-tooltip-share { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chart-tooltip-note, .chart-tooltip-scroll-hint { margin-top: 4px; color: var(--muted); }
 .chart-tooltip-scroll-hint { flex: 0 0 auto; }
+.chart-tooltip-fallback { display: none; position: absolute; z-index: 10; top: 3em; right: 12px; max-width: min(360px, calc(100% - 24px)); max-height: min(50vh, max(48px, calc(100% - 84px))); overflow: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); color: var(--fg); font-size: var(--text-detail); white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0, 0, 0, .2); }
+.chart-tooltip-anchor { position: absolute; pointer-events: none; }
+@supports (anchor-name: --a) and (width: anchor-size(width)) {
+  .chart-tooltip-fallback { inset: auto; min-width: min(200px, 60vw); min-height: 48px; max-width: min(360px, 100%); max-height: min(50vh, 320px, 100%); position-area: right; position-try-fallbacks: flip-inline, bottom span-all, top span-all; }
+}
+.chart-values { color: var(--muted); font-size: var(--text-detail); margin-top: .5em; }
+.chart-values summary { cursor: pointer; font-weight: 600; }
+.chart-values ul { list-style: none; max-height: 24em; overflow: auto; margin: .5em 0 0; padding: 0; }
+.chart-values li { border-top: 1px solid var(--border); color: var(--fg); padding: .5em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.js-enabled figure:not(.tooltip-failed) .chart-values { display: none; }
 [data-tooltip]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+{{.TooltipCSS}}
 </style>
 </head>
 <body class="{{if .Rich}}rich{{end}}">
@@ -1570,7 +1748,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 <div class="rich-panels{{if or (eq .ID "trend") (eq .ID "language") (eq .ID "model") (eq .ID "repository") (eq .ID "team") (eq .ID "user")}} rich-panels-paired{{end}}">
 {{- range .RichPanels}}
 {{- if .Chart}}
-<figure class="rich-panel{{if .HalfWidth}} rich-panel-half{{end}}"><figcaption>{{.Title}}</figcaption>{{.Chart}}</figure>
+<figure class="rich-panel{{if .HalfWidth}} rich-panel-half{{end}}"><figcaption>{{.Title}}</figcaption>{{.Chart}}{{if .Tooltips}}{{template "chartFallbacks" .}}{{end}}</figure>
 {{- end}}
 {{- end}}
 </div>
@@ -1579,7 +1757,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 <p>No data.</p>
 {{- else}}
 {{- range .Charts}}
-<figure class="chart-panel"><figcaption>{{.Title}}</figcaption>{{.Chart}}</figure>
+<figure class="chart-panel"><figcaption>{{.Title}}</figcaption>{{.Chart}}{{if .Tooltips}}{{template "chartFallbacks" .}}{{end}}</figure>
 {{- end}}
 <h3 class="visually-hidden" id="table-heading-{{.ID}}">{{.Title}} table</h3>
 <details class="table-details"{{if not $.Rich}} open{{end}}>
@@ -1609,7 +1787,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 {{- end}}
 <script>
 (() => {
-    document.documentElement.classList.add("js-enabled");
     const tooltip = document.createElement("div");
     tooltip.className = "chart-tooltip";
     tooltip.id = "chart-tooltip";
@@ -1624,16 +1801,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     scrollHint.hidden = true;
     tooltip.append(tooltipBody, scrollHint);
     document.body.appendChild(tooltip);
-    document.querySelectorAll("svg .dot, svg .metric-dot, svg .bar").forEach((item) => {
-        const title = item.querySelector("title");
-        if (!title) return;
-        if (!item.dataset.tooltip) {
-            item.dataset.tooltip = title.textContent;
-        }
-        item.setAttribute("tabindex", "0");
-        item.setAttribute("aria-label", item.dataset.tooltip);
-        title.remove();
-    });
     let activeItem = null;
     let hoveredItem = null;
     let tooltipHovered = false;
@@ -1654,12 +1821,28 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
         if (hideTimer !== null) clearTimeout(hideTimer);
         hideTimer = null;
     };
+    const clearDismissed = () => {
+        dismissedItem?.removeAttribute("data-tooltip-dismissed");
+        dismissedItem = null;
+        dismissedOverTrigger = false;
+        document.documentElement.classList.remove("chart-tooltip-dismissed");
+    };
     const hideTooltip = () => {
         cancelHide();
-        if (activeItem) activeItem.removeAttribute("aria-describedby");
+        if (activeItem) {
+            activeItem.removeAttribute("aria-describedby");
+            activeItem.removeAttribute("data-tooltip-active");
+        }
         activeItem = null;
+        document.documentElement.classList.remove("chart-tooltip-active");
         tooltipHovered = false;
         tooltip.hidden = true;
+    };
+    const failTooltip = (error) => {
+        const figure = activeItem?.closest("figure");
+        hideTooltip();
+        figure?.classList.add("tooltip-failed");
+        throw error;
     };
     const positionTooltip = (x, y) => {
         tooltip.style.left = "12px";
@@ -1718,22 +1901,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     const showTooltip = (item, x, y) => {
         hideTooltip();
         activeItem = item;
-        renderTooltip(item);
-        tooltip.setAttribute("aria-label", item.dataset.tooltip);
-        scrollHint.hidden = true;
-        tooltip.hidden = false;
-        tooltipBody.scrollTop = 0;
-        tooltipBody.scrollLeft = 0;
-        positionTooltip(x, y);
-        scrollHint.hidden = tooltipBody.scrollHeight <= tooltipBody.clientHeight && tooltipBody.scrollWidth <= tooltipBody.clientWidth;
-        item.setAttribute("aria-describedby", tooltip.id);
-        positionTooltip(x, y);
+        try {
+            renderTooltip(item);
+            tooltip.setAttribute("aria-label", item.dataset.tooltip);
+            scrollHint.hidden = true;
+            tooltip.hidden = false;
+            tooltipBody.scrollTop = 0;
+            tooltipBody.scrollLeft = 0;
+            positionTooltip(x, y);
+            scrollHint.hidden = tooltipBody.scrollHeight <= tooltipBody.clientHeight && tooltipBody.scrollWidth <= tooltipBody.clientWidth;
+            item.setAttribute("aria-describedby", tooltip.id);
+            positionTooltip(x, y);
+            item.setAttribute("data-tooltip-active", "");
+            document.documentElement.classList.add("chart-tooltip-active");
+        } catch (error) {
+            failTooltip(error);
+        }
     };
     const scrollTooltip = (x, y) => {
-        const previousX = tooltipBody.scrollLeft;
-        const previousY = tooltipBody.scrollTop;
-        tooltipBody.scrollBy(x, y);
-        return tooltipBody.scrollLeft !== previousX || tooltipBody.scrollTop !== previousY;
+        try {
+            const previousX = tooltipBody.scrollLeft;
+            const previousY = tooltipBody.scrollTop;
+            tooltipBody.scrollBy(x, y);
+            return tooltipBody.scrollLeft !== previousX || tooltipBody.scrollTop !== previousY;
+        } catch (error) {
+            failTooltip(error);
+        }
     };
     const scheduleHide = () => {
         cancelHide();
@@ -1785,8 +1978,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     });
     addScrollHandlers(tooltip, () => !tooltip.hidden);
     document.querySelectorAll("[data-tooltip]").forEach((item) => {
-        item.querySelector("title")?.remove();
-        item.removeAttribute("title");
         // Hiding a tooltip can reveal a target under the stationary pointer.
         item.addEventListener("pointerenter", (event) => {
             if (dismissedItem) return;
@@ -1801,29 +1992,34 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
             hoverY = event.clientY;
             if (dismissedItem) {
                 if ((hoverX === dismissedX && hoverY === dismissedY) || (dismissedOverTrigger && dismissedItem === item)) return;
-                dismissedItem = null;
-                dismissedOverTrigger = false;
+                clearDismissed();
                 hoveredItem = item;
                 showTooltip(item, hoverX, hoverY);
                 return;
             }
-            if (activeItem === item) positionTooltip(event.clientX, event.clientY);
+            if (activeItem === item) {
+                try {
+                    positionTooltip(event.clientX, event.clientY);
+                } catch (error) {
+                    failTooltip(error);
+                }
+            }
         });
         item.addEventListener("pointerleave", () => {
             if (dismissedItem === item && dismissedOverTrigger) {
-                dismissedItem = null;
-                dismissedOverTrigger = false;
+                if (document.activeElement === item) dismissedOverTrigger = false;
+                else clearDismissed();
             }
             if (hoveredItem === item) hoveredItem = null;
             if (activeItem === item && !tooltipHovered) scheduleHide();
         });
         item.addEventListener("focus", () => {
-            dismissedItem = null;
-            dismissedOverTrigger = false;
+            clearDismissed();
             const bounds = item.getBoundingClientRect();
             showTooltip(item, bounds.left + bounds.width / 2, bounds.bottom);
         });
         item.addEventListener("blur", () => {
+            if (dismissedItem === item && !dismissedOverTrigger) clearDismissed();
             if (activeItem !== item || tooltipHovered) return;
             if (hoveredItem) showTooltip(hoveredItem, hoverX, hoverY);
             else scheduleHide();
@@ -1832,7 +2028,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     });
     document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
+            if (!activeItem) return;
+            clearDismissed();
             dismissedItem = activeItem;
+            dismissedItem.setAttribute("data-tooltip-dismissed", "");
+            document.documentElement.classList.add("chart-tooltip-dismissed");
             dismissedX = pointerX;
             dismissedY = pointerY;
             hideTooltip();
@@ -1852,12 +2052,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     window.addEventListener("scroll", (event) => {
         if (event.target !== tooltipBody) hideTooltip();
     }, true);
-    window.addEventListener("resize", hideTooltip);
+    window.addEventListener("resize", () => hideTooltip());
     let printDetails = null;
     window.addEventListener("beforeprint", () => {
         if (printDetails !== null) return;
         hideTooltip();
-        printDetails = Array.from(document.querySelectorAll("details"), (item) => [item, item.open]);
+        printDetails = Array.from(document.querySelectorAll("details:not(.chart-values)"), (item) => [item, item.open]);
         printDetails.forEach(([item]) => { item.open = true; });
     });
     window.addEventListener("afterprint", () => {
@@ -1920,6 +2120,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
             });
         });
     });
+    document.documentElement.classList.add("js-enabled");
 })();
 </script>
 </body>
@@ -1941,6 +2142,8 @@ func RenderCopilotMetricsHTMLWithOptions(s *copilotmetrics.Summary, opts Copilot
 		Highlights: copilotMetricsHTMLHighlights(s),
 		Warnings:   append([]string(nil), s.Warnings...),
 	}
+	var tooltipFallbacks []copilotMetricsHTMLTooltipFallback
+	nextTooltipTarget := 0
 	if opts.Rich && s.Rich != nil && s.Rich.IDEActiveUserMonth != nil && len(s.Rich.IDEActiveUserMonth.MissingDays) > 0 {
 		data.Warnings = append(data.Warnings, fmt.Sprintf("IDE active user estimate is partial; users reports are missing for %s",
 			strings.Join(s.Rich.IDEActiveUserMonth.MissingDays, ", ")))
@@ -1966,8 +2169,20 @@ func RenderCopilotMetricsHTMLWithOptions(s *copilotmetrics.Summary, opts Copilot
 				hs.Table.Rows[i] = padded
 			}
 		}
+		for _, panels := range [][]copilotMetricsHTMLPanel{hs.Charts, hs.RichPanels} {
+			for i := range panels {
+				panel := &panels[i]
+				chart, tooltips, fallbacks, err := copilotMetricsChartTooltips(panel.Chart, &nextTooltipTarget)
+				if err != nil {
+					return "", fmt.Errorf("collect tooltips for chart %q: %w", panel.Title, err)
+				}
+				panel.Chart, panel.Tooltips, panel.Fallbacks = chart, tooltips, fallbacks
+				tooltipFallbacks = append(tooltipFallbacks, fallbacks...)
+			}
+		}
 		data.Sections = append(data.Sections, hs)
 	}
+	data.TooltipCSS = copilotMetricsTooltipFallbackCSS(tooltipFallbacks)
 	var buf bytes.Buffer
 	if err := copilotMetricsHTMLTemplate.Execute(&buf, data); err != nil {
 		return "", err

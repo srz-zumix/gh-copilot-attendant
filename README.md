@@ -130,13 +130,17 @@ Exactly one of `--org` or `--enterprise` is required.
   Mutually exclusive with `--since` and `--until`.
 - `--enterprise`: enterprise to report on, as `[HOST/]ENTERPRISE`.
 - `--format`: `md` (Markdown with mermaid charts) or `html` (a self-contained
-  page with inline CSS, SVG charts, collapsible sections and sortable tables,
-  and numeric heat colors) (optional, default `md`). Tables are expanded by
-  default, or collapsed with `--rich`; sections are expanded in both modes.
+  page with inline CSS, SVG charts, collapsible sections and tables)
+  (optional, default `md`). JavaScript enables table sorting and numeric heat
+  colors. Tables are expanded by default, or collapsed with `--rich`; sections
+  are expanded in both modes.
   In either HTML mode, hovering or focusing a day in a time-series chart
   reveals its available points and tooltip; missing days remain empty.
   Stacked-area points mark cumulative boundaries, while tooltips show each
-  series' share.
+  series' share. If JavaScript is unavailable, browsers supporting CSS `:has()`
+  show a simplified tooltip on hover or focus, placed next to the target where
+  CSS anchor positioning is supported; it can be scrolled with the pointer.
+  Each chart's **Chart values** disclosure lists its full values.
   With JavaScript enabled, printing temporarily expands all sections and tables
   and then restores their screen state. May be repeated or comma separated.
   Multiple formats require `--output-dir`, `--create-issue`, or `--issue`.
@@ -159,8 +163,8 @@ Exactly one of `--org` or `--enterprise` is required.
   tooltips list all series for the selected day, including `n/a` for missing
   values. Stacked-bar tooltips list every displayed series and, when complete,
   the bar total with counts and shares; missing values are `n/a`. Tooltips omit
-  chart titles and align numeric columns. Long tooltips can be scrolled over
-  the chart or with arrow keys while focused.
+  chart titles. With JavaScript, tooltips align numeric columns, and long
+  tooltips can be scrolled over the chart or with arrow keys while focused.
   Requires `--format html`; it also applies when Markdown and HTML are both
   selected. The per-user section, including login names, is included only
   with `--section user` or `--section all`, in either mode. User-level reports

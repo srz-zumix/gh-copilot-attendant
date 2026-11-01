@@ -180,8 +180,8 @@ func copilotMetricsDailyStackedBarChart(title string, days []string, series []co
 		}
 		tooltip := copilotMetricsDailyStackedBarTooltip(days[day], day, series, totals[day], options.incompleteNote)
 		label := template.HTMLEscapeString(tooltip.text())
-		fmt.Fprintf(&b, `<rect class="metric-day-hit" x="%.3f" y="%.3f" width="%.3f" height="%.3f" %s tabindex="0" role="img" aria-label="%s"><title>%s</title></rect></g>`,
-			x(day)-step/2, top-3, step, plotHeight+6, tooltip.attributes(), label, label)
+		fmt.Fprintf(&b, `<rect class="metric-day-hit" x="%.3f" y="%.3f" width="%.3f" height="%.3f" %s tabindex="0" role="img" aria-label="%s"></rect></g>`,
+			x(day)-step/2, top-3, step, plotHeight+6, tooltip.svgAttributes(x(day)-step/2, top-3, step, plotHeight+6), label)
 	}
 	if !options.externalLegend {
 		for seriesIndex, item := range series {

@@ -60,7 +60,6 @@ func TestCopilotMetricsChartsHaveNoNativeTitleTooltip(t *testing.T) {
 						assert.Equal(t, tt.role, attributes["role"])
 					}
 					if element.Name.Local == "title" && svgDepth >= 0 {
-						assert.NotEqual(t, svgDepth+1, depth, "a chart-level title creates a native tooltip")
 						pointTitles++
 					}
 					depth++
@@ -72,7 +71,7 @@ func TestCopilotMetricsChartsHaveNoNativeTitleTooltip(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 1, svgCount)
-			assert.Positive(t, pointTitles, "data-point titles remain available without JavaScript")
+			assert.Zero(t, pointTitles, "native titles would duplicate the custom tooltip")
 		})
 	}
 }
@@ -177,7 +176,7 @@ func TestCopilotMetricsSVGChartDayTargets(t *testing.T) {
 					assert.InDelta(t, float64(copilotMetricsChartPadLeft)+step*(float64(index)+0.5), got.Marker.X, 0.051)
 					assert.Equal(t, wantTooltip, got.Target.Tooltip)
 					assert.Equal(t, wantTooltip, got.Target.AriaLabel)
-					assert.Equal(t, wantTooltip, got.Target.Title)
+					assert.Empty(t, got.Target.Title, "native titles would duplicate the custom tooltip")
 					assert.Equal(t, "0", got.Target.TabIndex)
 					assert.Equal(t, "img", got.Target.Role)
 					assert.Equal(t, "true", got.Marker.AriaHidden)
@@ -296,12 +295,12 @@ func TestCopilotMetricsSVGTimeSeriesDayTargets(t *testing.T) {
 				assert.Equal(t, 137.0, got.Target.Height)
 				assert.Equal(t, "0", got.Target.TabIndex)
 				assert.Equal(t, "img", got.Target.Role)
-				assert.Contains(t, got.Target.Title, days[expected.index]+"\n")
-				assert.NotContains(t, got.Target.Title, title)
-				assert.Equal(t, got.Target.Title, got.Target.Tooltip)
+				assert.Empty(t, got.Target.Title, "native titles would duplicate the tooltip")
+				assert.Contains(t, got.Target.Tooltip, days[expected.index]+"\n")
+				assert.NotContains(t, got.Target.Tooltip, title)
 				assert.Equal(t, got.Target.Tooltip, got.Target.AriaLabel)
 				if expected.index == 2 {
-					assert.Contains(t, got.Target.Title, tt.wantMissing)
+					assert.Contains(t, got.Target.Tooltip, tt.wantMissing)
 				}
 				require.Len(t, got.Markers, len(expected.markers))
 				for j, wantMarker := range expected.markers {
@@ -405,8 +404,8 @@ func TestCopilotMetricsTooltipsOmitChartTitles(t *testing.T) {
 		assert.Contains(t, string(chart), `aria-label="`+title+`"`, "the chart remains accessible by name")
 	}
 	normalBar := string(copilotMetricsSVGChart(title, "bar", days, []int64{2}, []bool{true}))
-	assert.Contains(t, normalBar, "<title>2030-01-01: 2</title>")
-	assert.NotContains(t, normalBar, "<title>"+title)
+	assert.Contains(t, normalBar, `aria-label="2030-01-01: 2"`)
+	assert.NotContains(t, normalBar, "<title>", "native titles would duplicate the tooltip")
 }
 
 func TestCopilotMetricsStackedTooltipsListAllSeries(t *testing.T) {
@@ -450,7 +449,7 @@ func TestCopilotMetricsStackedTooltipsListAllSeries(t *testing.T) {
 	seenGroup := 0
 	for _, segment := range document.SVG.Segments {
 		assert.Equal(t, "img", segment.Role)
-		assert.Equal(t, segment.Tooltip, segment.Title)
+		assert.Empty(t, segment.Title, "native titles would duplicate the custom tooltip")
 		assert.NotContains(t, segment.Tooltip, "Unique chart title")
 		fields, err := url.ParseQuery(segment.Fields)
 		require.NoError(t, err)
@@ -466,7 +465,7 @@ func TestCopilotMetricsStackedTooltipsListAllSeries(t *testing.T) {
 	}
 	assert.Equal(t, 3, seenGroup)
 	assert.Equal(t, wantText, document.SVG.Axes[0].Label.Tooltip)
-	assert.Equal(t, wantText, document.SVG.Axes[0].Label.NativeTitle)
+	assert.Empty(t, document.SVG.Axes[0].Label.NativeTitle, "native titles would duplicate the custom tooltip")
 	assert.Equal(t, wantText, document.SVG.Axes[0].Label.AriaLabel)
 	assert.NotContains(t, chart, "<item>")
 }
@@ -477,7 +476,7 @@ func TestCopilotMetricsStackedZeroTotalTooltip(t *testing.T) {
 	}).Chart)
 	want := "Language: language-zero\nmodel-zero: 0 (n/a)\nLanguage total: 0 (n/a)"
 	assert.Contains(t, chart, `data-tooltip="`+want)
-	assert.Contains(t, chart, `title="`+want, "the zero-height bar remains reachable from its axis label without JavaScript")
+	assert.Contains(t, chart, `class="stacked-axis-label" data-tooltip="`+want, "the zero-height bar remains reachable from its axis label")
 	assert.NotContains(t, chart, "NaN")
 	assert.NotContains(t, chart, "Inf")
 }

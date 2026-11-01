@@ -202,7 +202,8 @@ func TestCopilotMetricsCategoryColorsAcrossChartsAndTables(t *testing.T) {
 			if section.ID == copilotmetrics.SectionLanguage {
 				keyLabel = "Model: " + series
 			}
-			assert.Contains(t, stacked, `class="series-key" style="background-color:`+shade+`" data-tooltip="`+keyLabel+`" tabindex="0" role="img" aria-label="`+keyLabel+`"`)
+			keyTooltip := copilotMetricsTooltip{Heading: keyLabel}
+			assert.Contains(t, stacked, `class="series-key" style="background-color:`+shade+`" `+keyTooltip.attributes()+` tabindex="0" role="img" aria-label="`+keyLabel+`"`)
 			assert.Equal(t, 1, strings.Count(stacked, `class="series-key" style="background-color:`+shade+`"`), "one legend swatch per series")
 			assert.Contains(t, stacked, "keeps the same color in every bar.")
 			for _, color := range []copilotMetricsColor{scheme.groups[group], scheme.series[series]} {

@@ -123,7 +123,7 @@ func copilotMetricsSVGRepositorySuggestionBars(bars []copilotMetricsRepositorySu
 		labelCenter := y + barTopOffset + (barSpacing+barHeight)/2
 		copilotMetricsWriteRepositoryLabel(&b, bar.Name, labelCenter-rowHeight/2, rowHeight)
 		fmt.Fprintf(&b, `<g class="repository-bar" %s tabindex="0" role="img" aria-label="%s">`,
-			tooltip.attributes(), template.HTMLEscapeString(tooltip.text()))
+			tooltip.svgAttributes(copilotMetricsRepositoryChartLeft, y, copilotMetricsRepositoryChartWidth-copilotMetricsRepositoryChartLeft-copilotMetricsRepositoryChartRight, rowHeight), template.HTMLEscapeString(tooltip.text()))
 		fmt.Fprintf(&b, `<rect class="repository-chart-hit" x="%.1f" y="%.1f" width="%.1f" height="%.1f" aria-hidden="true"/>`,
 			copilotMetricsRepositoryChartLeft, y, copilotMetricsRepositoryChartWidth-copilotMetricsRepositoryChartLeft-copilotMetricsRepositoryChartRight, rowHeight)
 		for seriesIndex, item := range []struct {
