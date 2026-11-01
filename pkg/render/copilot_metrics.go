@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -190,4 +191,18 @@ func RenderCopilotMetricsReportWithOptions(s *copilotmetrics.Summary, f copilotm
 		return RenderCopilotMetricsHTMLWithOptions(s, opts)
 	}
 	return "", fmt.Errorf("unsupported report format %q", f)
+}
+
+// formatCopilotMetricsAxisValue formats an axis tick, keeping one decimal
+// place for fractional ticks so labels match their plotted positions.
+func formatCopilotMetricsAxisValue(v float64) string {
+	tenths := int64(math.Round(v * 10))
+	if tenths%10 == 0 {
+		return formatCopilotMetricsInt(tenths / 10)
+	}
+	sign := ""
+	if tenths < 0 {
+		sign, tenths = "-", -tenths
+	}
+	return fmt.Sprintf("%s%s.%d", sign, formatCopilotMetricsInt(tenths/10), tenths%10)
 }

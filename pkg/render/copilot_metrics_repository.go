@@ -3,7 +3,6 @@ package render
 import (
 	"fmt"
 	"html/template"
-	"math"
 	"sort"
 	"strings"
 
@@ -29,14 +28,15 @@ type copilotMetricsRepositoryBar struct {
 	Total   copilotmetrics.Counter
 	Copilot copilotmetrics.Counter
 	Other   copilotmetrics.Counter
+	// Partial marks totals that omit days reporting only one of the paired counts.
+	Partial bool
 }
 
 type copilotMetricsRepositoryChartSpec struct {
 	title       string
 	copilotName string
 	otherName   string
-	total       func(copilotmetrics.RepositoryRow) copilotmetrics.Counter
-	copilot     func(copilotmetrics.RepositoryRow) copilotmetrics.Counter
+	pair        func(copilotmetrics.RepositoryRow) copilotmetrics.CounterPair
 	review      bool
 }
 
@@ -44,8 +44,7 @@ func copilotMetricsRepositoryPanels(rows []copilotmetrics.RepositoryRow, rich *c
 	reviewed := copilotMetricsRepositoryPanel(rows, copilotMetricsRepositoryChartSpec{
 		title: "Pull requests reviewed by repository", copilotName: "Reviewed with Copilot",
 		otherName: "Reviewed without Copilot",
-		total:     func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.Reviewed },
-		copilot:   func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.ReviewedByCopilot },
+		pair:      func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.ReviewedPair },
 		review:    true,
 	})
 	suggestions := copilotMetricsRepositorySuggestionsPanel(rich)
@@ -64,14 +63,12 @@ func copilotMetricsRepositoryPanels(rows []copilotmetrics.RepositoryRow, rich *c
 		{
 			title: "Pull requests created by repository", copilotName: "Copilot-created",
 			otherName: "Other-created",
-			total:     func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.Created },
-			copilot:   func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.CreatedByCopilot },
+			pair:      func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.CreatedPair },
 		},
 		{
 			title: "Pull requests merged by repository", copilotName: "Merged Copilot-created",
 			otherName: "Merged other-created",
-			total:     func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.Merged },
-			copilot:   func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.MergedCreatedByCopilot },
+			pair:      func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.MergedPair },
 		},
 	}
 
@@ -111,7 +108,8 @@ func copilotMetricsRepositoryPanel(rows []copilotmetrics.RepositoryRow, spec cop
 func copilotMetricsRepositoryBars(rows []copilotmetrics.RepositoryRow, spec copilotMetricsRepositoryChartSpec) []copilotMetricsRepositoryBar {
 	bars := make([]copilotMetricsRepositoryBar, 0, len(rows))
 	for _, row := range rows {
-		total, copilot := spec.total(row), spec.copilot(row)
+		pair := spec.pair(row)
+		total, copilot := pair.Total, pair.Copilot
 		if !total.Valid || !copilot.Valid || total.Value < 0 || copilot.Value < 0 {
 			continue
 		}
@@ -121,7 +119,7 @@ func copilotMetricsRepositoryBars(rows []copilotmetrics.RepositoryRow, spec copi
 		}
 		bars = append(bars, copilotMetricsRepositoryBar{
 			Name: row.Name, Total: total, Copilot: copilot,
-			Other: copilotmetrics.Counter{Value: other, Valid: true},
+			Other: copilotmetrics.Counter{Value: other, Valid: true}, Partial: pair.Partial,
 		})
 	}
 	sort.SliceStable(bars, func(i, j int) bool {
@@ -144,6 +142,7 @@ func copilotMetricsRepositoryBars(rows []copilotmetrics.RepositoryRow, spec copi
 		other.Total.AddCounter(bar.Total)
 		other.Copilot.AddCounter(bar.Copilot)
 		other.Other.AddCounter(bar.Other)
+		other.Partial = other.Partial || bar.Partial
 	}
 	bars = append(bars[:copilotMetricsRepositoryChartLimit], other)
 	return bars
@@ -172,11 +171,20 @@ func copilotMetricsSVGRepositoryStackedBar(title string, bars []copilotMetricsRe
 		y := copilotMetricsRepositoryChartTop + float64(index)*rowHeight
 		copilotWidth := float64(bar.Copilot.Value) * scale
 		otherWidth := float64(bar.Other.Value) * scale
-		note := ""
+		var notes []string
 		if review {
-			note = "Review counts sum daily repository reports; a pull request reviewed on multiple days can be counted more than once."
+			notes = append(notes, "Review counts sum daily repository reports; a pull request reviewed on multiple days can be counted more than once.")
 		}
+		totalLabel := "Total"
+		if bar.Partial {
+			totalLabel = "Displayed subtotal"
+			notes = append(notes, "Days reporting only one of the paired counts are excluded; shares are not shown.")
+		}
+		note := strings.Join(notes, " ")
 		share := func(value int64) string {
+			if bar.Partial {
+				return ""
+			}
 			if bar.Total.Value == 0 {
 				return copilotMetricsNA
 			}
@@ -187,7 +195,7 @@ func copilotMetricsSVGRepositoryStackedBar(title string, bars []copilotMetricsRe
 			Rows: []copilotMetricsTooltipRow{
 				{Label: copilotName, Value: formatCopilotMetricsInt(bar.Copilot.Value), Share: share(bar.Copilot.Value)},
 				{Label: otherName, Value: formatCopilotMetricsInt(bar.Other.Value), Share: share(bar.Other.Value)},
-				{Label: "Total", Value: formatCopilotMetricsInt(bar.Total.Value), Share: share(bar.Total.Value)},
+				{Label: totalLabel, Value: formatCopilotMetricsInt(bar.Total.Value), Share: share(bar.Total.Value)},
 			},
 			Note: note,
 		}
@@ -238,11 +246,11 @@ func copilotMetricsOpenRepositoryChart(b *strings.Builder, title string, rows in
 		copilotMetricsRepositoryChartWidth, height, template.HTMLEscapeString(title))
 	for _, fraction := range []float64{0, .5, 1} {
 		x := copilotMetricsRepositoryChartLeft + plotWidth*fraction
-		value := math.Round(float64(maxValue) * fraction)
+		value := float64(maxValue) * fraction
 		fmt.Fprintf(b, `<line class="grid" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>`,
 			x, copilotMetricsRepositoryChartTop-3, x, copilotMetricsRepositoryChartTop+plotHeight)
 		fmt.Fprintf(b, `<text class="axis" x="%.1f" y="%.1f" text-anchor="middle">%s</text>`,
-			x, height-5, formatCopilotMetricsInt(int64(value)))
+			x, height-5, formatCopilotMetricsAxisValue(value))
 	}
 	return plotWidth / float64(maxValue)
 }

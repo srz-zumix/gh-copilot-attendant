@@ -134,6 +134,7 @@ func TestRenderCopilotMetricsHTMLRich(t *testing.T) {
 	}
 	s.Repositories[0].CopilotSuggestions = valid(5)
 	s.Repositories[0].CopilotAppliedSuggestions = valid(7)
+	s.Repositories = withCopilotMetricsRepositoryPairs(s.Repositories)
 	s.AllRepositories = s.Repositories
 	s.Rich = &copilotmetrics.RichMetrics{
 		Days: []string{"2030-01-01", "2030-01-02"},

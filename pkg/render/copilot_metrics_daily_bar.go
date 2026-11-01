@@ -135,7 +135,7 @@ func copilotMetricsDailyStackedBarChart(title string, days []string, series []co
 		gy := top + plotHeight*(1-fraction)
 		fmt.Fprintf(&b, `<line class="grid" x1="%.0f" y1="%.1f" x2="%.0f" y2="%.1f"/>`, left, gy, width-right, gy)
 		fmt.Fprintf(&b, `<text class="axis" x="%.0f" y="%.1f" text-anchor="end">%s</text>`,
-			left-7, gy+4, template.HTMLEscapeString(formatCopilotMetricsInt(int64(math.Round(maxValue*fraction)))))
+			left-7, gy+4, template.HTMLEscapeString(formatCopilotMetricsAxisValue(maxValue*fraction)))
 	}
 	labelEvery := 1
 	if len(days) > 14 {

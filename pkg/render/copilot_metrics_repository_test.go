@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// withCopilotMetricsRepositoryPairs fills paired counters from fully reported totals.
+func withCopilotMetricsRepositoryPairs(rows []copilotmetrics.RepositoryRow) []copilotmetrics.RepositoryRow {
+	for i := range rows {
+		row := &rows[i]
+		row.CreatedPair = copilotmetrics.CounterPair{Total: row.Created, Copilot: row.CreatedByCopilot}
+		row.ReviewedPair = copilotmetrics.CounterPair{Total: row.Reviewed, Copilot: row.ReviewedByCopilot}
+		row.MergedPair = copilotmetrics.CounterPair{Total: row.Merged, Copilot: row.MergedCreatedByCopilot}
+	}
+	return rows
+}
+
 func TestCopilotMetricsRepositoryPanels(t *testing.T) {
 	counter := func(value int64) copilotmetrics.Counter {
 		return copilotmetrics.Counter{Value: value, Valid: true}
@@ -25,7 +36,7 @@ func TestCopilotMetricsRepositoryPanels(t *testing.T) {
 			Created: counter(3), CreatedByCopilot: counter(3), Merged: counter(4), MergedCreatedByCopilot: counter(4),
 		},
 	}
-	panels := copilotMetricsRepositoryPanels(rows, nil)
+	panels := copilotMetricsRepositoryPanels(withCopilotMetricsRepositoryPairs(rows), nil)
 	require.Len(t, panels, 3)
 	assert.False(t, panels[0].HalfWidth)
 	assert.True(t, panels[1].HalfWidth)
@@ -88,7 +99,7 @@ func TestCopilotMetricsRepositoryReviewSuggestionPairing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			panels := copilotMetricsRepositoryPanels(tt.rows, tt.rich)
+			panels := copilotMetricsRepositoryPanels(withCopilotMetricsRepositoryPairs(tt.rows), tt.rich)
 			require.Len(t, panels, len(tt.titles))
 			for i, panel := range panels {
 				assert.Equal(t, tt.titles[i], panel.Title)
@@ -112,9 +123,8 @@ func TestCopilotMetricsRepositoryChartsAggregateRemainingRepositories(t *testing
 			Merged: counter(int64(index)), MergedCreatedByCopilot: counter(int64(index / 2)),
 		})
 	}
-	bars := copilotMetricsRepositoryBars(rows, copilotMetricsRepositoryChartSpec{
-		total:   func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.Created },
-		copilot: func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.CreatedByCopilot },
+	bars := copilotMetricsRepositoryBars(withCopilotMetricsRepositoryPairs(rows), copilotMetricsRepositoryChartSpec{
+		pair: func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.CreatedPair },
 	})
 	require.Len(t, bars, copilotMetricsRepositoryChartLimit+1)
 	assert.Equal(t, "octo/repo-09", bars[0].Name)
@@ -133,8 +143,7 @@ func TestCopilotMetricsRepositoryChartsEmptyAndInvalid(t *testing.T) {
 	assert.Empty(t, copilotMetricsRepositoryBars([]copilotmetrics.RepositoryRow{{
 		Name: "octo/no-data",
 	}}, copilotMetricsRepositoryChartSpec{
-		total:   func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.Created },
-		copilot: func(row copilotmetrics.RepositoryRow) copilotmetrics.Counter { return row.CreatedByCopilot },
+		pair: func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.CreatedPair },
 	}))
 }
 
@@ -197,4 +206,32 @@ func TestCopilotMetricsRepositoryChartLabels(t *testing.T) {
 			assert.NotContains(t, tt.chart, "<script>")
 		})
 	}
+}
+
+func TestCopilotMetricsRepositoryBarsPartialPairs(t *testing.T) {
+	ten, two, three := 10, 2, 3
+	var pair copilotmetrics.CounterPair
+	pair.Add(&ten, &two)
+	pair.Add(nil, &three)
+	bars := copilotMetricsRepositoryBars([]copilotmetrics.RepositoryRow{{Name: "octo/repo", CreatedPair: pair}},
+		copilotMetricsRepositoryChartSpec{
+			pair: func(row copilotmetrics.RepositoryRow) copilotmetrics.CounterPair { return row.CreatedPair },
+		})
+	require.Len(t, bars, 1)
+	assert.Equal(t, int64(8), bars[0].Other.Value)
+	assert.True(t, bars[0].Partial)
+
+	chart := string(copilotMetricsSVGRepositoryStackedBar("Created", bars, "Copilot", "Other", false))
+	assert.Contains(t, chart, "Copilot: 2\nOther: 8\nDisplayed subtotal: 10")
+	assert.NotContains(t, chart, "Total:")
+}
+
+func TestCopilotMetricsAxisMidpointLabels(t *testing.T) {
+	assert.Equal(t, "0.5", formatCopilotMetricsAxisValue(0.5))
+	assert.Equal(t, "1,234.5", formatCopilotMetricsAxisValue(1234.5))
+	assert.Equal(t, "2", formatCopilotMetricsAxisValue(2))
+	chart := string(copilotMetricsSVGRepositoryStackedBar("One", []copilotMetricsRepositoryBar{{
+		Name: "octo/repo", Total: copilotmetrics.Counter{Value: 1, Valid: true}, Copilot: copilotmetrics.Counter{Value: 1, Valid: true},
+	}}, "Copilot", "Other", false))
+	assert.Contains(t, chart, `text-anchor="middle">0.5</text>`)
 }

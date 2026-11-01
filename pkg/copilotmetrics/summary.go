@@ -33,6 +33,27 @@ func (c *Counter) AddCounter(o Counter) {
 	c.Valid = true
 }
 
+// CounterPair aggregates a total and its Copilot subset only from days that
+// report both values, so complementary counts are derived from matching days.
+type CounterPair struct {
+	Total   Counter
+	Copilot Counter
+	// Partial reports that some days reported only one of the two values.
+	Partial bool
+}
+
+// Add adds a daily pair when both values are reported.
+func (p *CounterPair) Add(total, copilot *int) {
+	if total == nil || copilot == nil {
+		if total != nil || copilot != nil {
+			p.Partial = true
+		}
+		return
+	}
+	p.Total.Add(total)
+	p.Copilot.Add(copilot)
+}
+
 // FloatCounter is a nullable additive float.
 type FloatCounter struct {
 	Value float64
@@ -124,6 +145,10 @@ type RepositoryRow struct {
 	MergedCreatedByCopilot    Counter
 	CopilotSuggestions        Counter
 	CopilotAppliedSuggestions Counter
+	// Paired counters aggregate total and Copilot counts from matching days.
+	CreatedPair  CounterPair
+	ReviewedPair CounterPair
+	MergedPair   CounterPair
 }
 
 // TeamRow aggregates usage of the members of a team.
@@ -617,6 +642,9 @@ func buildRepositories(records []*github.CopilotRepositoryDailyMetrics) []Reposi
 		row.ReviewedByCopilot.Add(pr.TotalReviewedByCopilot)
 		row.Merged.Add(pr.TotalMerged)
 		row.MergedCreatedByCopilot.Add(pr.TotalMergedCreatedByCopilot)
+		row.CreatedPair.Add(pr.TotalCreated, pr.TotalCreatedByCopilot)
+		row.ReviewedPair.Add(pr.TotalReviewed, pr.TotalReviewedByCopilot)
+		row.MergedPair.Add(pr.TotalMerged, pr.TotalMergedCreatedByCopilot)
 		row.CopilotSuggestions.Add(pr.TotalCopilotSuggestions)
 		row.CopilotAppliedSuggestions.Add(pr.TotalCopilotAppliedSuggestions)
 	}
