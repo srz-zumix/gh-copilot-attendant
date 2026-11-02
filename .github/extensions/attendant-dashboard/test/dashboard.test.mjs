@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { normalizeQuery } from "../lib/query.mjs";
+import { fusionDataset } from "./fixtures/fusion.mjs";
 import { vscodeDataset } from "./fixtures/vscode.mjs";
 
 function deferred() {
@@ -109,6 +110,242 @@ test("switching source only runs the newly active source", async () => {
     await dashboard.setQuery({ source: "session" });
     await dashboard.setQuery({ source: "vscode" });
     assert.deepEqual(sources, ["vscode", "session"]);
+});
+
+test("Fusion-only toggles project synchronously and never expose full session data as filtered", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(async (runner, argv) => {
+        calls.push(argv);
+        return { data: argv[0] === "vscode" ? vscodeDataset() : fusionDataset(), warnings: [], durationMs: 1 };
+    });
+    await dashboard.setQuery({ filters: { session: { kind: ["shell"] } } });
+    const ranAt = dashboard.results.session.ranAt;
+    const snapshots = [];
+    dashboard.subscribe((snapshot) => snapshots.push(structuredClone(snapshot)));
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(calls.length, 1);
+    assert.equal(dashboard.results.session.ranAt, ranAt);
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal(dashboard.results.session.data.FusionUsage.UsageRecords, 3);
+    assert.equal("Requests" in dashboard.results.session.data, false);
+    assert.equal(dashboard.summary().summary.filter, "explicitly Fusion-tagged usage records");
+    assert.equal(dashboard.isFresh("session"), true);
+    assert.deepEqual(dashboard.query.filters.session.kind, ["shell"]);
+    await dashboard.setQuery({ source: "vscode" });
+    assert.equal(dashboard.query.fusionOnly, true);
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    await dashboard.setQuery({ source: "session" });
+    assert.equal(calls.length, 2);
+    await dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.data.Requests, 99);
+    assert.equal(dashboard.results.session.data.FusionOnly, undefined);
+    assert.equal(dashboard.results.session.ranAt, ranAt);
+    assert.deepEqual(dashboard.query.filters.session.kind, ["shell"]);
+    for (const snapshot of snapshots.filter((value) => value.query.fusionOnly)) {
+        const data = snapshot.results.session.data;
+        assert.ok(!data || (data.FusionOnly && !("Requests" in data)));
+    }
+});
+
+test("Fusion-only Top, scope, and runner changes clear incompatible data and refetch", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(async (runner, argv) => {
+        calls.push(argv);
+        return { data: fusionDataset(argv.includes("--top=1") ? 1 : 0), warnings: [], durationMs: 1 };
+    });
+    await dashboard.setQuery({ top: 1 });
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.data.FusionUsage.ByModel.length, 1);
+    dashboard.applyQuery({ top: 3 });
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(dashboard.isFresh("session"), false);
+    await dashboard.ensureFresh();
+    assert.equal(dashboard.results.session.data.FusionUsage.ByModel.length, 2);
+    assert.equal(calls.length, 2);
+    dashboard.applyQuery({ scope: "all" });
+    assert.equal(dashboard.results.session.data, null);
+    await dashboard.ensureFresh();
+    assert.equal(calls.length, 3);
+    dashboard.setRunnerMode("source");
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(dashboard.isFresh("session"), false);
+    await dashboard.ensureFresh();
+    assert.equal(calls.length, 4);
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal(dashboard.isFresh("session"), true);
+});
+
+test("Fusion-only toggles during fetching use the latest projection without starting another run", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(() => {
+        const d = deferred();
+        calls.push(d);
+        return d.promise;
+    });
+    const first = dashboard.ensureFresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    const filtered = dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(calls.length, 1);
+    calls[0].resolve({ data: fusionDataset(), warnings: [], durationMs: 1 });
+    await Promise.all([first, filtered]);
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal(dashboard.isFresh("session"), true);
+
+    const refresh = dashboard.ensureFresh({ force: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    const off = dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.status, "loading");
+    assert.equal(dashboard.results.session.data.Requests, 99);
+    const on = dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "loading");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal("Requests" in dashboard.results.session.data, false);
+    assert.equal(calls.length, 2);
+    calls[1].resolve({ data: fusionDataset(), warnings: [], durationMs: 2 });
+    await Promise.all([refresh, off, on]);
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal(dashboard.results.session.status, "ok");
+});
+
+test("unsupported Fusion data fail closed and returning to ordinary mode restores the cached result", async () => {
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        return { data: { Sessions: 1, Requests: 7 }, warnings: [], durationMs: 1 };
+    });
+    await dashboard.ensureFresh();
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.data, null);
+    assert.match(dashboard.results.session.error, /update gh copilot-attendant or choose the source runner/);
+    await dashboard.ensureFresh();
+    assert.equal(runs, 1, "unsupported cached data do not cause repeated automatic fetches");
+    await dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.status, "ok");
+    assert.equal(dashboard.results.session.data.Requests, 7);
+    assert.equal(runs, 1);
+});
+
+test("a pending newer fetch takes precedence over an unsupported cached Fusion projection", async () => {
+    const pending = deferred();
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        if (runs === 1) return { data: { Sessions: 1, Requests: 7 }, warnings: [], durationMs: 1 };
+        return pending.promise;
+    });
+    await dashboard.ensureFresh();
+    const refresh = dashboard.ensureFresh({ force: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    const filtered = dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "loading");
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(dashboard.results.session.error, null);
+    pending.resolve({ data: fusionDataset(), warnings: [], durationMs: 1 });
+    await Promise.all([refresh, filtered]);
+    assert.equal(dashboard.results.session.status, "ok");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+});
+
+test("recovering an unsupported cache does not finish a forced refresh while the filter toggles", async () => {
+    const pending = deferred();
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        if (runs === 1) return { data: { Sessions: 1, Requests: 7 }, warnings: [], durationMs: 1 };
+        return pending.promise;
+    });
+    await dashboard.ensureFresh();
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "error");
+    const refresh = dashboard.ensureFresh({ force: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    const off = dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.status, "loading");
+    assert.equal(dashboard.results.session.data.Requests, 7);
+    const on = dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "loading");
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(dashboard.results.session.error, null);
+    assert.equal(runs, 2);
+    pending.resolve({ data: fusionDataset(), warnings: [], durationMs: 1 });
+    await Promise.all([refresh, off, on]);
+    assert.equal(dashboard.results.session.status, "ok");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+});
+
+test("failed refreshes remain visible while cached Fusion projections change", async () => {
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        if (runs === 2) throw new Error("refresh failed");
+        return { data: fusionDataset(), warnings: [], durationMs: 1 };
+    });
+    await dashboard.setQuery({ fusionOnly: true });
+    await dashboard.ensureFresh({ force: true });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    await dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.data.Requests, 99);
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal("Requests" in dashboard.results.session.data, false);
+    assert.equal(runs, 2);
+    await dashboard.ensureFresh({ force: true });
+    assert.equal(dashboard.results.session.status, "ok");
+    assert.equal(runs, 3);
+});
+
+test("unsupported cached Fusion data cannot hide a failed refresh during filter or scope changes", async () => {
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        if (runs === 2) throw new Error("refresh failed");
+        return { data: runs === 1 ? { Sessions: 1, Requests: 7 } : fusionDataset(), warnings: [], durationMs: 1 };
+    });
+    await dashboard.ensureFresh();
+    await dashboard.ensureFresh({ force: true });
+    assert.equal(dashboard.results.session.error, "refresh failed");
+    await dashboard.setQuery({ fusionOnly: true });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.data, null);
+    assert.match(dashboard.results.session.error, /update gh copilot-attendant or choose the source runner/);
+    assert.match(dashboard.results.session.error, /refresh failed/);
+    dashboard.applyQuery({ scope: "all" });
+    dashboard.applyQuery({ scope: "worktree" });
+    assert.match(dashboard.results.session.error, /refresh failed/);
+    await dashboard.setQuery({ fusionOnly: false });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.results.session.error, "refresh failed");
+    assert.equal(dashboard.results.session.data.Requests, 7);
+    assert.equal(runs, 2);
+    await dashboard.setQuery({ fusionOnly: true });
+    await dashboard.ensureFresh({ force: true });
+    assert.equal(dashboard.results.session.status, "ok");
+    assert.equal(dashboard.results.session.data.FusionOnly, true);
+    assert.equal(runs, 3);
+});
+
+test("an obsolete completion cannot publish unfiltered data under a new Fusion-only scope", async () => {
+    const pending = deferred();
+    let runs = 0;
+    const dashboard = makeDashboard(async () => {
+        runs++;
+        if (runs === 1) return { data: fusionDataset(), warnings: [], durationMs: 1 };
+        return pending.promise;
+    });
+    await dashboard.setQuery({ fusionOnly: true });
+    const refresh = dashboard.ensureFresh({ force: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    dashboard.applyQuery({ scope: "all" });
+    assert.equal(dashboard.results.session.data, null);
+    pending.resolve({ data: fusionDataset(), warnings: [], durationMs: 1 });
+    await refresh;
+    assert.equal(dashboard.results.session.data, null);
+    assert.equal(dashboard.isFresh("session"), false);
 });
 
 test("Agent selection, union, removal, and Top project locally without any new runner calls", async () => {

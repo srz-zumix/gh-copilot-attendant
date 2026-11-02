@@ -89,7 +89,9 @@ function usage(data, limit) {
         ...(data.ByRoleUsage !== undefined
             ? {
                   roleUsageNote: "Main/subagent attribution comes from request records; unknown includes unattributed snapshot usage. Incomplete sessions have recorded request/token subtotals, not complete counts",
-                  usageTimeBoundsNote: "Lifetime usage totals selected by latest recorded usage update, not individual API request times",
+                  usageTimeBoundsNote: data.Fusion != null
+                      ? "Usage updates are selected by their recorded timestamps; cumulative snapshots are differenced against earlier recorded totals and may include usage before the selected period"
+                      : "Lifetime usage totals selected by latest recorded usage update, not individual API request times",
                   byRoleUsage: (data.ByRoleUsage ?? []).slice(0, 3).map((e) => ({
                       key: cap(e.Key), sessions: e.Sessions, requests: e.Requests,
                       premiumRequests: e.PremiumRequests, aiu: round2(e.AIU),
@@ -137,6 +139,109 @@ function permissionDecisionWait(wait) {
     };
 }
 
+function fusionSummary(data, limit) {
+    const fusion = data.Fusion;
+    if (fusion == null) return {};
+    const recordedAIU = (entry) => entry.AIURecords > 0 ? Math.round(entry.AIU * 1e9) / 1e9 : null;
+    return {
+        fusion: {
+            sessions: fusion.Sessions,
+            resolvedTurns: fusion.ResolvedTurns,
+            unidentifiedResolutions: fusion.UnidentifiedResolutions,
+            turnsWithUsage: fusion.TurnsWithUsage,
+            phasesWithUsage: fusion.PhasesWithUsage,
+            usageRecords: fusion.UsageRecords,
+            recordedAIU: recordedAIU(fusion),
+            aiuRecords: fusion.AIURecords,
+            missingFusionIDRecords: fusion.MissingFusionIDRecords,
+            missingPhaseIdentityRecords: fusion.MissingPhaseIdentityRecords,
+            byPattern: (fusion.ByPattern ?? []).slice(0, limit).map((entry) => ({
+                pattern: cap(entry.Key), sessions: entry.Sessions, resolvedTurns: entry.ResolvedTurns,
+                unidentifiedResolutions: entry.UnidentifiedResolutions,
+            })),
+            byPhase: (fusion.ByPhase ?? []).slice(0, limit).map((entry) => ({
+                pattern: cap(entry.Pattern), phase: cap(entry.Phase), role: cap(entry.Role), model: cap(entry.Model),
+                sessions: entry.Sessions, turns: entry.Turns, phases: entry.Phases,
+                usageRecords: entry.UsageRecords, recordedAIU: recordedAIU(entry), aiuRecords: entry.AIURecords,
+                missingFusionIDRecords: entry.MissingFusionIDRecords,
+                missingPhaseIdentityRecords: entry.MissingPhaseIdentityRecords,
+            })),
+            note: "Resolution and usage timestamps are filtered independently. Only recorded Fusion metadata and request-level AIU are attributed; missing AIU and checkpoint-only usage are not inferred. Phase/model rows may share turns or phases. Permission filters do not apply; Top limits rows, not totals. Active sessions can change during scanning, so shared and Fusion totals are not an atomic snapshot.",
+        },
+    };
+}
+
+function fusionOnlyMetric(metric, records) {
+    return {
+        recordedTotal: metric.ObservedRecords ? metric.Total : null,
+        observedRecords: metric.ObservedRecords,
+        completeRecords: metric.CompleteRecords,
+        excludedRecords: metric.ExcludedRecords,
+        totalRecords: records,
+        complete: records > 0 && metric.CompleteRecords + metric.ExcludedRecords === records,
+    };
+}
+
+function fusionOnlyMetrics(metrics, records) {
+    const fields = {
+        aiu: "AIU", premiumRequests: "PremiumRequests", promptTokens: "PromptTokens",
+        uncachedInputTokens: "UncachedInputTokens", cacheReadTokens: "CacheReadTokens",
+        cacheWriteTokens: "CacheWriteTokens", outputTokens: "OutputTokens", apiDurationMs: "APIDurationMs",
+    };
+    return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, fusionOnlyMetric(metrics[field], records)]));
+}
+
+function fusionOnlyGroup(entry) {
+    const metrics = entry.Metrics;
+    const records = entry.UsageRecords;
+    const complete = (metric) => records > 0 && metric.CompleteRecords === records;
+    const aiu = complete(metrics.AIU) ? metrics.AIU.Total : null;
+    const tokens = complete(metrics.PromptTokens) && complete(metrics.OutputTokens)
+        ? metrics.PromptTokens.Total + metrics.OutputTokens.Total : null;
+    return {
+        key: cap(entry.Key),
+        sessions: entry.Sessions,
+        usageRecords: records,
+        metrics: fusionOnlyMetrics(metrics, records),
+        aiuPerSession: aiu === null || !entry.Sessions ? null : aiu / entry.Sessions,
+        aiuPerUsageRecord: aiu === null || !records ? null : aiu / records,
+        aiuPer1MTokens: aiu === null || !tokens ? null : aiu * 1e6 / tokens,
+    };
+}
+
+function fusionOnlySummary(data, limit) {
+    const usage = data.FusionUsage;
+    const fusion = data.Fusion;
+    return {
+        source: "session",
+        ...range(data),
+        filter: "explicitly Fusion-tagged usage records",
+        usage: {
+            sessions: usage.Sessions,
+            usageRecords: usage.UsageRecords,
+            metrics: fusionOnlyMetrics(usage.Metrics, usage.UsageRecords),
+        },
+        byModelUsage: usage.ByModel.slice(0, limit).map(fusionOnlyGroup),
+        byCWDUsage: usage.ByCWD.slice(0, limit).map(fusionOnlyGroup),
+        byRoleUsage: usage.ByRole.slice(0, limit).map(fusionOnlyGroup),
+        groups: { models: usage.ModelGroups, workspaces: usage.CWDGroups, roles: usage.RoleGroups, phases: usage.PhaseGroups },
+        fusion: {
+            turnsWithUsage: fusion.TurnsWithUsage,
+            phasesWithUsage: fusion.PhasesWithUsage,
+            missingFusionIDRecords: fusion.MissingFusionIDRecords,
+            missingPhaseIdentityRecords: fusion.MissingPhaseIdentityRecords,
+            byPhase: fusion.ByPhase.slice(0, limit).map((entry) => ({
+                pattern: cap(entry.Pattern), phase: cap(entry.Phase), role: cap(entry.Role), model: cap(entry.Model),
+                sessions: entry.Sessions, turns: entry.Turns, phases: entry.Phases,
+                usageRecords: entry.UsageRecords, recordedAIU: entry.AIURecords ? entry.AIU : null,
+                aiuRecords: entry.AIURecords, missingFusionIDRecords: entry.MissingFusionIDRecords,
+                missingPhaseIdentityRecords: entry.MissingPhaseIdentityRecords,
+            })),
+        },
+        note: "Only usage records explicitly marked Fusion and within the time window are included; resolution events, permission data, and checkpoint-only usage are excluded. Usage records are not necessarily distinct API calls. Metrics report observed subtotals and coverage; missing values are not zero, and unit costs are omitted unless all required records are complete. Premium requests sum cost multipliers for user or unspecified initiators, following the shared collector; other initiators are excluded. Unknown agent provenance remains unknown. Top limits each breakdown, not totals.",
+    };
+}
+
 /**
  * Summarizes a parsed stats payload.
  *
@@ -147,6 +252,7 @@ function permissionDecisionWait(wait) {
 export function summarize(source, data, limit = 10) {
     if (!data) return null;
     if (source === "session") {
+        if (data.FusionOnly) return fusionOnlySummary(data, limit);
         return {
             source,
             ...range(data),
@@ -161,6 +267,7 @@ export function summarize(source, data, limit = 10) {
             byURL: counts(data.ByURL, limit),
             byCWD: counts(data.ByCWD, limit),
             ...usage(data, limit),
+            ...fusionSummary(data, limit),
             ...(data.PermissionWait != null ? {
                 permissionWait: {
                     humanResponses: permissionDecisionWait(data.PermissionWait.HumanResponses),

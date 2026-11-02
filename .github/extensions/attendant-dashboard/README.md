@@ -31,17 +31,18 @@ input (all fields are optional):
 
 ### Query
 
-| Field     | Type      | Default    | CLI flag                                                                                                                             |
-| --------- | --------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `filters` | `object`  | none       | `session`: `operation`, `kind`, `command`, `path`, `url`, `decisionSource` (`--decision-source`); `vscode`: `tool`, `model`, `agent` |
-| `path`    | `string`  | empty      | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree`                                                               |
-| `period`  | `string`  | `30d`      | `--period` (mutually exclusive with `since`)                                                                                         |
-| `scope`   | `string`  | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd`                                                                         |
-| `session` | `string`  | empty      | `--session`                                                                                                                          |
-| `since`   | `string`  | empty      | `--since`                                                                                                                            |
-| `source`  | `string`  | `session`  | `session stats` or `vscode stats`                                                                                                    |
-| `top`     | `integer` | `10`       | `--top` (`0` keeps every entry)                                                                                                      |
-| `until`   | `string`  | empty      | `--until`                                                                                                                            |
+| Field | Type | Default | CLI flag |
+| --- | --- | --- | --- |
+| `filters` | `object` | none | `session`: `operation`, `kind`, `command`, `path`, `url`, `decisionSource` (`--decision-source`); `vscode`: `tool`, `model`, `agent` |
+| `fusionOnly` | `boolean` | `false` | Locally show only explicitly Fusion-tagged usage records on the Copilot CLI tab; no CLI flag |
+| `path` | `string` | empty | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree` |
+| `period` | `string` | `30d` | `--period` (mutually exclusive with `since`) |
+| `scope` | `string` | `worktree` | `worktree` (current git worktree), `all` (`--all`), or `cwd` |
+| `session` | `string` | empty | `--session` |
+| `since` | `string` | empty | `--since` |
+| `source` | `string` | `session` | `session stats` or `vscode stats` |
+| `top` | `integer` | `10` | `--top` (`0` keeps every entry) |
+| `until` | `string` | empty | `--until` |
 
 The `path` and `url` session filters and all `vscode` filters are regular expressions in
 Go's RE2 syntax. Constructs RE2 does not support, such as lookaround and backreferences, are
@@ -69,28 +70,121 @@ is required to run the canvas.
   An unsupported CLI reports an error rather than falling back to per-click commands.
   Display, `get_data`, `get_summary`, and Ask agent share the same projected results.
   The footer shows an equivalent CLI command; its tooltip and summary `fetchCommand`
-  identify the actual data-fetch command.
+  identify the actual data-fetch command for VS Code local filtering.
+- **Fusion usage only** — the Copilot CLI filter projects only explicitly
+  Fusion-tagged usage records, not all usage in sessions that used Fusion.
+  Permission statistics, user questions, resolution events, planned phases, and
+  checkpoint-only usage are excluded. Existing permission filters are retained
+  but inactive, and are restored when the switch is turned off. The switch has
+  no effect on the VS Code tab. The filtered view groups records by model,
+  workspace, agent role, and Fusion phase, with usage-only session counts.
+  Records without timestamps are excluded when a time window is selected.
+  Missing models or workspaces remain unknown; roles come from request
+  provenance, not Fusion phase roles; missing agent provenance remains unknown.
+  `≥` marks a recorded subtotal and `–`
+  means unavailable, not zero. Metric coverage reports complete, observed, and
+  excluded records. Premium requests sum cost multipliers for user or
+  unspecified initiators, following the shared collector; other initiators are
+  excluded. Unit costs are shown only when their inputs are
+  complete, and use usage records rather than distinct API calls.
+  Model and workspace share bars compare recorded AIU subtotals for listed
+  groups; missing AIU is excluded, so incomplete coverage can affect proportions.
+  The cards and Models, Workspaces, and Agent usage tables follow the normal
+  view's order and notation where comparable, while keeping usage records
+  distinct from API requests. Cache read, cache write, and uncached input
+  totals appear in both views. Fusion model and workspace token bars require
+  complete prompt, cache read, cache write, uncached input, and output totals,
+  with prompt equal to the sum of its components. Cache hit requires complete
+  prompt and cache-read totals and a valid nonzero denominator; otherwise it is
+  unavailable.
+  Token counts use the same compact notation as the normal view. Hover over
+  a token total for its exact recorded count and coverage. Partial token,
+  AIU, and API-time subtotals are formatted without overstating their `≥` values.
+  Top limits each breakdown independently, not totals. Models use the same
+  unit selector and cost comparison bars as the normal view: per session,
+  per usage record (default), or per 1M tokens. Click a heading to sort the
+  selected rows; Top selects models by recorded AIU before local sorting.
+  Model unit and sort preferences persist independently of the normal view.
+  Workspaces use the same unit selector and cost comparison bars as Models:
+  per session, per usage record, or per 1M tokens. Their unit and sort
+  preferences are stored independently from Models and the normal view;
+  sorting applies to the groups selected by Top. A matching
+  cached result is projected immediately without running gh;
+  Refresh and scope/time/session/Top changes fetch again. Display, `get_data`,
+  `get_summary`, and Ask agent use the same projection. An older or unsupported
+  CLI reports an explicit error; update it or use the `source` runner. The
+  footer shows the unfiltered data-fetch command, not an equivalent filtered CLI
+  command.
 - **Panel Clear** — filterable panel headers clear only their corresponding filter group:
   VS Code Models (including model shares), Tools, and Subagents; CLI Decision sources,
   Read-only vs read-write, Tool kinds, Commands, Paths, and URLs. Workspaces, workspace
   shares, and Working directories clear directory scope to all workspaces. Other
   filters, period/time bounds, session, Top, and display preferences remain unchanged.
   Clear is disabled without an active matching condition, including panels with no rows.
-  CLI model and role usage panels do not have Clear buttons because those axes are not filters.
-- **Usage panel order** — both tabs show the model AIU share, Models table, workspace
-  AIU share, then the Workspaces table, followed by User questions, when the corresponding
-  data is available. On CLI, Agent usage follows User questions, then the Permissions
-  summary uses the same bordered panel style as the other panels.
-- **Copilot CLI usage** — AIU, premium requests, prompt/output tokens, cache hit rate,
-  API requests, and API time, including unfinished sessions. Request usage records and
-  cumulative checkpoints/shutdown snapshots are combined without double counting.
+  CLI model, role, and Fusion panels do not have Clear buttons because those
+  axes are not filters.
+- **Usage panel order** — both views show the model AIU share, Models table,
+  workspace AIU share, then the Workspaces table, when data is available. In
+  the normal CLI view, User questions and Agent usage follow, then the Fusion
+  panel and Permissions summary. Fusion-only excludes user questions and
+  permissions. CLI, Fusion-only, and VS Code summary cards use the same compact,
+  responsive, equal-width layout and start with sessions, AIU, and a request or
+  record count. Usage card titles stay on one line; other content may wrap.
+  Within each card row, title height grows only when a title wraps; titles
+  bottom-align and values stay aligned without extra space for single-line rows.
+  Count semantics remain source-specific.
+  Table column headings can wrap to two lines to reduce horizontal scrolling.
+  Panels use the same bordered style as the other panels.
+- **Copilot CLI usage** — AIU, premium requests, prompt/output tokens, cache
+  read/write, uncached input, cache hit rate, API requests, and API time,
+  including unfinished sessions. Across CLI and VS Code, AIU totals and unit
+  costs use at most two decimal places; positive values below 0.01 display as
+  `<0.01`. Normal and Fusion-only cards use the same order but retain their
+  different request/record counting semantics. The normal collector does not
+  expose per-metric record coverage, so its aggregate totals do not imply
+  Fusion-level completeness. Request usage records and cumulative
+  checkpoints/shutdown snapshots are combined without double counting.
   Refresh reads the latest recorded totals; logs are not continuously polled.
   Incomplete model/request/token breakdowns are noted explicitly. Permission filters
-  do not apply to usage totals. Time bounds select lifetime totals by latest usage update.
-- **Copilot CLI agent usage** — an Agent usage table separates main, subagent, and unknown
-  requests, premium requests, AIU, and tokens using recorded request metadata, not model
-  names. Unknown includes older/unattributed snapshot usage. In incomplete breakdowns,
-  request/token subtotals are marked with `≥`; `–` means unavailable, not zero usage.
+  do not apply to usage totals. With Fusion-capable CLI builds, time bounds
+  select recorded usage updates; cumulative snapshots are differenced against
+  earlier recorded totals and may include usage before the selected period.
+- **Copilot CLI agent usage** — an Agent usage table separates main, subagent,
+  and unknown sessions, requests, premium requests, AIU, and tokens using
+  recorded request metadata, not model names. Unknown includes
+  older/unattributed snapshot usage. In incomplete breakdowns, request/token
+  subtotals are marked with `≥`; `–` means unavailable, not zero usage.
+  Normal-view per-session, per-request, and per-1M-token AIU costs require
+  available row inputs and no reported incomplete session breakdowns; this is
+  not per-record coverage. Fusion-only costs require complete record coverage.
+  The Fusion-only model and agent tables also show recorded API time; the normal
+  model and agent tables omit it because comparable per-record time coverage is
+  unavailable. Click any column heading to sort and click again to reverse. The
+  normal view defaults to role ascending and is not limited by Top. The
+  Fusion-only view defaults to recorded AIU descending; Top selects role
+  groups by recorded AIU before local sorting, so set Top to 0 for all groups.
+  Unavailable values sort last in either direction, and partial values sort by
+  their recorded subtotal. Preferences persist across reloads and are
+  independent for the normal and Fusion-only views.
+- **Copilot Fusion** — resolved turns are grouped by recorded pattern, and
+  usage records by pattern, phase, role, and usage model. Distinct turn and
+  phase counts require their recorded IDs; phase counts require both a Fusion
+  ID and a phase ID. A turn or phase may appear in multiple rows. AIU is a
+  subtotal from request records, with coverage shown: `≥` marks a partial
+  subtotal and `–` means no record reported AIU. Checkpoint-only usage and
+  planned phases are not attributed. Missing Fusion metadata does not prove
+  that Fusion was not used. Click any Phase usage column heading to sort, and
+  click again to reverse the order. The default is record count descending;
+  AIU coverage sorts by the fraction of records reporting AIU. Unavailable AIU
+  and undefined coverage sort last in either direction. Sorting applies only
+  to the rows selected by Top, which ranks phase groups by record count; set
+  Top to 0 for all groups. The sort preference is shared by the normal and
+  Fusion-only views and persists across reloads. Time bounds select resolution
+  and usage timestamps separately; permission filters do not apply, and Top
+  limits rows but not totals. The same information is available to `get_data`, `get_summary`, and
+  Ask agent. Older CLI builds without `Fusion` omit the panel; use an updated
+  CLI or the `source` runner to view it. Active sessions may change while
+  scanning, so shared and Fusion totals are not an atomic snapshot.
 - **Copilot CLI user questions** — the User questions panel reports `ask_user` counts
   and answered/cancelled/failed/unresolved/unknown outcomes. Total, average, and maximum
   answer wait use only answered pairs with valid timestamps; missing timing is noted.
@@ -146,7 +240,7 @@ is required to run the canvas.
   When the CLI reports per-workspace
   usage, workspaces also get an AIU share bar and a table of sessions, AIU (total and per
   turn), and token breakdown. Click an entry to filter or scope.
-- **Model comparison** — in either tab, click any Models column heading to sort and click
+- **Model comparison** — in the normal view on either tab, click any Models column heading to sort and click
   again to reverse the order. Numeric columns start descending, model names ascending;
   undefined ratios stay last. Sorting applies to listed models only (set Top to 0 to
   include all models). Unit and sort preferences are independent for each tab.
@@ -154,7 +248,7 @@ is required to run the canvas.
   AIU per session uses each model's recorded `Sessions` count, not the overall session
   count. Missing session counts or zero denominators show a dash; missing counts also
   display an explanation. Current VS Code statistics do not report model session counts.
-- **Workspace comparison** — both tabs use the Workspaces title and compare AIU per session,
+- **Workspace comparison** — in the normal view, both tabs use the Workspaces title and compare AIU per session,
   per API request, or per 1M tokens (default: session), with the same unit controls and
   comparison bars as Models. CLI request counts come from `ByCWDUsage.Requests`, not
   permission requests or premium requests; VS Code uses `ByWorkspace.LLMRequests` and
@@ -167,17 +261,22 @@ is required to run the canvas.
 - **Ask agent** — preset prompts (summarize, suggest allow rules, tool health, token cost) and a
   free-text box; the current tab's data is sent to the agent as delimited, untrusted JSON.
   Asking is only available once the current tab has a successful result for the current query.
+  The permission-suggestion preset is unavailable in Fusion-only mode.
 - The footer shows the `gh copilot-attendant` command for the current query, with each argument
   quoted for a POSIX shell (not PowerShell or `cmd.exe`) so it can be copied and pasted safely.
 
 ## Actions
 
-| Action        | Description                                                                         |
-| ------------- | ----------------------------------------------------------------------------------- |
-| `get_data`    | Return the full JSON result projected for the current filters, without raw log details. |
-| `get_summary` | Return a compact summary of the current result without re-running it.               |
-| `refresh`     | Optionally patch the query and return a summary. Default `force: true` fetches; `force: false` reuses matching data and locally projects VS Code Agent/Top changes. |
-| `reset_query` | Reset the query to its defaults and refresh.                                        |
+| Action | Description |
+| --- | --- |
+| `get_data` | Return the current filtered JSON result. |
+| `get_summary` | Summarize the current result without re-running it. |
+| `refresh` | Optionally patch the query and return a summary. |
+| `reset_query` | Reset the query to its defaults and refresh. |
+
+`get_data` excludes raw log details. `refresh` fetches by default
+(`force: true`); `force: false` reuses matching results and locally projects
+VS Code Agent/Top or Copilot CLI `fusionOnly` changes.
 
 ## Storage
 

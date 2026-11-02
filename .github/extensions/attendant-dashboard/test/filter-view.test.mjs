@@ -8,6 +8,9 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import * as modelView from "../ui/model-view.mjs";
 import * as workspaceView from "../ui/workspace-view.mjs";
+import * as tableView from "../ui/table-view.mjs";
+import { projectFusion } from "../lib/fusion-data.mjs";
+import { emptyFusionDataset, fusionDataset } from "./fixtures/fusion.mjs";
 
 class Element {
     constructor(tag) {
@@ -17,20 +20,36 @@ class Element {
         this.events = {};
         this.style = { setProperty() {} };
         this.classList = { add() {} };
+        this.scrollLeft = 0;
     }
     setAttribute(name, value) { this.attributes[name] = value; }
+    getAttribute(name) { return this.attributes[name] ?? null; }
     addEventListener(name, handler) { this.events[name] = handler; }
-    append(child) { this.children.push(child); }
+    append(child) {
+        this.children.push(child);
+        if (child instanceof Element) child.parentElement = this;
+    }
+    closest(selector) {
+        for (let node = this; node; node = node.parentElement) {
+            if (selector === ".panel" && node.className?.split(" ").includes("panel")) return node;
+        }
+        return null;
+    }
 }
 
-function renderedPanels(query, data) {
+function renderedPanels(query, data, { storage } = {}) {
     const source = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8")
         .replace(/^import .*;\n/gm, "").replace(/\nmain\(\);\s*$/, "\n");
     const submitted = [];
+    const warnings = [];
     const context = vm.createContext({
-        ...modelView, ...workspaceView, panelClearPatch, Intl,
-        Node: Element, document: { querySelector: () => ({ content: "test" }), createElement: (tag) => new Element(tag) },
-        localStorage: { getItem: () => null },
+        ...modelView, ...workspaceView, ...tableView, panelClearPatch, Intl,
+        Node: Element, document: {
+            querySelector: (selector) => selector === 'meta[name="dashboard-token"]' ? { content: "test" } : null,
+            createElement: (tag) => new Element(tag),
+        },
+        localStorage: storage ?? { getItem: () => null, setItem() {} },
+        console: { warn: (...args) => warnings.push(args) },
         query, data, submitted,
     });
     vm.runInContext(source, context);
@@ -38,7 +57,151 @@ function renderedPanels(query, data) {
     const nodes = vm.runInContext(query.source === "vscode" ? "renderVscode(data)" : "renderSession(data)", context);
     const walk = (node) => node instanceof Element ? [node, ...node.children.flatMap(walk)] : [];
     const panels = nodes.flatMap(walk).filter((node) => node.tag === "section");
-    return { nodes, panels, submitted, walk, context };
+    return { nodes, panels, submitted, walk, context, warnings };
+}
+
+function interactiveFusion(data, { storage, fusionOnly = false, top = 10 } = {}) {
+    const query = normalizeQuery({ source: "session", fusionOnly, top });
+    const view = renderedPanels(query, data, { storage });
+    const { context, walk } = view;
+    const content = new Element("main");
+    content.classList = { toggle() {} };
+    content.replaceChildren = (...children) => {
+        if (walk(content).includes(context.document.activeElement)) context.document.activeElement = null;
+        content.children = children;
+    };
+    const elements = {
+        "vscode-harness-warning": {}, content, error: { dataset: {} }, refresh: {}, command: {}, "command-label": {},
+    };
+    context.document.getElementById = (id) => elements[id];
+    context.document.querySelectorAll = () => [];
+    context.document.activeElement = null;
+    context.document.querySelector = (selector) => {
+        const match = /^\[([a-z-]+)(?:="([^"]+)")?\]$/.exec(selector);
+        const found = match && walk(content).find((node) => Object.hasOwn(node.attributes, match[1]) &&
+            (match[2] === undefined || node.attributes[match[1]] === match[2]));
+        if (found) found.focus = () => { context.document.activeElement = found; };
+        return found || null;
+    };
+    vm.runInContext(`
+        meta = {};
+        fillForm = renderFilters = renderStatus = renderWarnings = renderPresets = showError = () => {};
+        state.results = { session: { status: "ok", data, command: [] } };
+        render();
+    `, context);
+    const table = () => walk(content).find((node) => node.tag === "table" &&
+        walk(node).some((child) => child.attributes["data-fusion-phase-sort"] === "pattern"));
+    const button = (id) => walk(table()).find((node) => node.attributes["data-fusion-phase-sort"] === id);
+    const header = (id) => walk(table()).find((node) => node.tag === "th" &&
+        walk(node).some((child) => child.attributes["data-fusion-phase-sort"] === id));
+    const rows = () => walk(table()).find((node) => node.tag === "tbody").children.map((row) => row.children[0].children[0]);
+    const agentTable = () => walk(content).find((node) => node.tag === "table" &&
+        walk(node).some((child) => child.attributes["data-agent-sort"] === "role"));
+    const agentButton = (id) => walk(agentTable()).find((node) => node.attributes["data-agent-sort"] === id);
+    const agentHeader = (id) => walk(agentTable()).find((node) => node.tag === "th" &&
+        walk(node).some((child) => child.attributes["data-agent-sort"] === id));
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    const agentRows = () => walk(agentTable()).find((node) => node.tag === "tbody").children.map((row) => text(row.children[0]));
+    const modelTable = () => walk(content).find((node) => node.tag === "table" &&
+        walk(node).some((child) => child.attributes["data-fusion-model-sort"] === "model"));
+    const modelButton = (id) => walk(modelTable()).find((node) => node.attributes["data-fusion-model-sort"] === id);
+    const modelHeader = (id) => walk(modelTable()).find((node) => node.tag === "th" &&
+        walk(node).some((child) => child.attributes["data-fusion-model-sort"] === id));
+    const modelRows = () => walk(modelTable()).find((node) => node.tag === "tbody").children;
+    const modelNames = () => modelRows().map((row) => text(row.children[0]));
+    const modelUnit = (label) => walk(modelTable().closest(".panel")).find((node) => node.tag === "button" && text(node) === label);
+    const workspaceTable = () => walk(content).find((node) => node.tag === "table" &&
+        walk(node).some((child) => child.attributes["data-fusion-workspace-sort"] === "workspace"));
+    const workspaceButton = (id) => walk(workspaceTable()).find((node) => node.attributes["data-fusion-workspace-sort"] === id);
+    const workspaceHeader = (id) => walk(workspaceTable()).find((node) => node.tag === "th" &&
+        walk(node).some((child) => child.attributes["data-fusion-workspace-sort"] === id));
+    const workspaceRows = () => walk(workspaceTable()).find((node) => node.tag === "tbody").children;
+    const workspaceNames = () => workspaceRows().map((row) => text(row.children[0]));
+    const workspaceUnit = (label) => walk(workspaceTable().closest(".panel")).find((node) => node.tag === "button" && text(node) === label);
+    return { ...view, content, table, button, header, rows, agentTable, agentButton, agentHeader, agentRows,
+        modelTable, modelButton, modelHeader, modelRows, modelNames, modelUnit,
+        workspaceTable, workspaceButton, workspaceHeader, workspaceRows, workspaceNames, workspaceUnit, text };
+}
+
+function normalAgentDataset() {
+    return {
+        UsageSessions: 3,
+        UsageIncompleteSessions: 1,
+        ByRoleUsage: [
+            { Key: "main", Sessions: 1, Requests: 4, PremiumRequests: 0.5, AIU: 2, InputTokens: 20,
+                CacheReadTokens: 80, CacheWriteTokens: 2, OutputTokens: 5 },
+            { Key: "subagent", Sessions: 2, Requests: 2, PremiumRequests: 1.5, AIU: 0.5, InputTokens: 10,
+                CacheReadTokens: 20, CacheWriteTokens: 3, OutputTokens: 10 },
+            { Key: "unknown", Sessions: 1, Requests: 0, PremiumRequests: 0, AIU: 0, InputTokens: 0,
+                CacheReadTokens: 0, CacheWriteTokens: 0, OutputTokens: 0 },
+        ],
+    };
+}
+
+function fusionAgentEntry(Key, Sessions, UsageRecords, values) {
+    return {
+        Key, Sessions, UsageRecords,
+        Metrics: Object.fromEntries(Object.entries(values).map(([field, total]) => [
+            field, { Total: total, ObservedRecords: UsageRecords, CompleteRecords: UsageRecords, ExcludedRecords: 0 },
+        ])),
+    };
+}
+
+function fusionAgentEntries() {
+    return [
+        fusionAgentEntry("main", 1, 2, {
+            AIU: 2, PremiumRequests: 0.5, PromptTokens: 100, UncachedInputTokens: 60,
+            CacheReadTokens: 20, CacheWriteTokens: 10, OutputTokens: 50, APIDurationMs: 100,
+        }),
+        fusionAgentEntry("subagent", 2, 4, {
+            AIU: 3, PremiumRequests: 1.5, PromptTokens: 200, UncachedInputTokens: 70,
+            CacheReadTokens: 25, CacheWriteTokens: 15, OutputTokens: 100, APIDurationMs: 200,
+        }),
+    ];
+}
+
+function completeFusionUsage() {
+    const data = projectFusion(fusionDataset());
+    const values = {
+        AIU: 2.000000001, PremiumRequests: 0.5, PromptTokens: 100, CacheReadTokens: 30,
+        CacheWriteTokens: 10, UncachedInputTokens: 60, OutputTokens: 50, APIDurationMs: 0.00000001,
+    };
+    data.FusionUsage.Metrics = fusionAgentEntry("main", 2, 3, values).Metrics;
+    Object.assign(data.FusionUsage.Metrics.PremiumRequests, { ObservedRecords: 2, CompleteRecords: 2, ExcludedRecords: 1 });
+    data.Fusion.AIURecords = 3;
+    return data;
+}
+
+function summaryCards(view) {
+    const container = view.nodes.flatMap(view.walk).find((node) =>
+        node.className === "cards usage-cards" || node.className === "cards fusion-cards");
+    const cards = view.walk(container).filter((node) => node.className === "card");
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    return cards.map((node) => {
+        const find = (name) => view.walk(node).find((child) => child.className === name);
+        return { label: text(find("label")), value: text(find("value")), sub: text(find("sub")), title: node.attributes.title };
+    });
+}
+
+function panelTable(view, title) {
+    const panel = view.panels.find((entry) =>
+        view.walk(entry).some((node) => node.tag === "h2" && node.children[0] === title));
+    return view.walk(panel).find((node) => node.tag === "table");
+}
+
+function tableHeadings(view, table) {
+    const head = view.walk(table).find((node) => node.tag === "thead");
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    return head.children[0].children.map((heading) => {
+        const button = view.walk(heading).find((node) => node.tag === "button");
+        return button ? text(button.children[0]) : undefined;
+    });
+}
+
+function tableCell(view, table, column) {
+    const index = tableHeadings(view, table).indexOf(column);
+    assert.ok(index >= 0, `missing column ${column}`);
+    return view.walk(table).find((node) => node.tag === "tbody").children[0].children[index];
 }
 
 test("the harness warning stays visible only on VS Code, including loading, empty, and failed results", () => {
@@ -192,6 +355,1638 @@ test("CLI clear buttons cover permission filters and directories but not unsuppo
         assert.deepEqual(submitted.at(-1), panelClearPatch(query, "session", expected[title]));
     }
     assert.equal(submitted.length, Object.keys(expected).length);
+});
+
+test("normal Agent usage sorts each column by its displayed raw value", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const columns = vm.runInContext("agentUsageColumns(false)", context);
+    const normalize = vm.runInContext("normalizeAgentUsageView", context);
+    const entries = normalAgentDataset().ByRoleUsage.slice(0, 2).map(context.sessionUsageEntry);
+    const before = structuredClone(entries);
+    const first = ["main", "subagent"];
+    const second = ["subagent", "main"];
+    const ascending = {
+        role: first, sessions: first, requests: second, premium: first, prompt: second,
+        cacheRead: second, cacheWrite: first, uncached: second, output: first, aiu: second,
+        sessionCost: second, requestCost: second, tokenCost: second,
+    };
+    const initial = normalize(undefined, "normal");
+    assert.deepEqual(initial, { sort: "role", direction: "asc" });
+    assert.deepEqual(Array.from(columns, (column) => column.id), Object.keys(ascending));
+    for (const column of columns) {
+        const sorted = (direction) => tableView.sortTableEntries(entries, { sort: column.id, direction }, columns, () => 0).map((entry) => entry.Key);
+        assert.deepEqual(sorted("asc"), ascending[column.id], column.id);
+        assert.deepEqual(sorted("desc"), [...ascending[column.id]].reverse(), `${column.id} reversed`);
+        assert.deepEqual(tableView.toggleTableSort(initial, column.id, columns), { sort: column.id, direction: "desc" });
+    }
+    assert.deepEqual(structuredClone(entries), before);
+    assert.deepEqual(normalize(null, "normal"), initial);
+    assert.deepEqual(normalize({ sort: "invalid", direction: "invalid" }, "normal"), initial);
+    assert.equal(normalize({ sort: "records", direction: "asc" }, "normal").sort, "role");
+    assert.equal(vm.runInContext('agentRoleLabel("toString")', context), "toString");
+});
+
+test("normal Agent usage keeps unavailable subtotals last without hiding recorded zeros", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const columns = vm.runInContext("agentUsageColumns(true)", context);
+    const entries = normalAgentDataset().ByRoleUsage.map(context.sessionUsageEntry);
+    const sorted = (column, direction) =>
+        tableView.sortTableEntries(entries, { sort: column, direction }, columns, () => 0).map((entry) => entry.Key);
+    assert.deepEqual(sorted("requests", "asc"), ["subagent", "main", "unknown"]);
+    assert.deepEqual(sorted("requests", "desc"), ["main", "subagent", "unknown"]);
+    for (const column of ["prompt", "cacheRead", "cacheWrite", "output"]) {
+        assert.equal(sorted(column, "asc").at(-1), "unknown", column);
+        assert.equal(sorted(column, "desc").at(-1), "unknown", column);
+    }
+    assert.equal(sorted("aiu", "asc")[0], "unknown");
+    assert.equal(sorted("premium", "asc")[0], "unknown");
+    entries[0].Requests = 0;
+    assert.deepEqual(sorted("requests", "asc"), ["main", "subagent", "unknown"]);
+    entries[0].Requests = 4;
+    entries[2].Requests = 3;
+    assert.deepEqual(sorted("requests", "asc"), ["subagent", "unknown", "main"]);
+});
+
+test("Fusion-only Agent usage sorts all columns including complete unit costs", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const columns = vm.runInContext("FUSION_AGENT_COLUMNS", context);
+    const normalize = vm.runInContext("normalizeAgentUsageView", context);
+    const entries = fusionAgentEntries();
+    const before = structuredClone(entries);
+    const first = ["main", "subagent"];
+    const second = ["subagent", "main"];
+    const ascending = {
+        role: first, sessions: first, records: first, premium: first, prompt: first,
+        cacheRead: first, cacheWrite: first, uncached: first, output: first, apiTime: first, aiu: first,
+        sessionCost: second, recordCost: second, tokenCost: second,
+    };
+    const initial = normalize(undefined, "fusion");
+    assert.deepEqual(initial, { sort: "aiu", direction: "desc" });
+    assert.deepEqual(Array.from(columns, (column) => column.id), Object.keys(ascending));
+    for (const column of columns) {
+        const sorted = (direction) => tableView.sortTableEntries(entries, { sort: column.id, direction }, columns, () => 0).map((entry) => entry.Key);
+        assert.deepEqual(sorted("asc"), ascending[column.id], column.id);
+        assert.deepEqual(sorted("desc"), [...ascending[column.id]].reverse(), `${column.id} reversed`);
+        const expected = column.id === "role" || column.id === "aiu" ? "asc" : "desc";
+        assert.deepEqual(tableView.toggleTableSort(initial, column.id, columns), { sort: column.id, direction: expected });
+    }
+    assert.deepEqual(entries, before);
+    assert.deepEqual(normalize(false, "fusion"), initial);
+    assert.deepEqual(normalize({ sort: "invalid", direction: "invalid" }, "fusion"), initial);
+    assert.equal(normalize({ sort: "requests", direction: "asc" }, "fusion").sort, "aiu");
+});
+
+test("Fusion-only Agent usage distinguishes missing, excluded, partial, and zero metrics", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const columns = vm.runInContext("FUSION_AGENT_COLUMNS", context);
+    const [main, subagent] = fusionAgentEntries();
+    const absent = structuredClone(main);
+    absent.Key = "absent";
+    absent.Metrics.AIU = { Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 0 };
+    absent.Metrics.PremiumRequests = { Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 2 };
+    const partial = structuredClone(main);
+    partial.Key = "partial";
+    partial.Metrics.AIU = { Total: 1, ObservedRecords: 1, CompleteRecords: 1, ExcludedRecords: 0 };
+    const zero = structuredClone(main);
+    zero.Key = "zero";
+    zero.Metrics.AIU.Total = 0;
+    zero.Metrics.PremiumRequests.Total = 0;
+    const paid = structuredClone(subagent);
+    paid.Key = "paid";
+    const entries = [absent, partial, zero, paid];
+    const sorted = (column, direction) =>
+        tableView.sortTableEntries(entries, { sort: column, direction }, columns, () => 0).map((entry) => entry.Key);
+    assert.deepEqual(sorted("aiu", "asc"), ["zero", "partial", "paid", "absent"]);
+    assert.deepEqual(sorted("aiu", "desc"), ["paid", "partial", "zero", "absent"]);
+    assert.deepEqual(sorted("premium", "asc"), ["zero", "partial", "paid", "absent"]);
+    assert.deepEqual(sorted("premium", "desc"), ["paid", "partial", "zero", "absent"]);
+    for (const column of ["sessionCost", "recordCost", "tokenCost"]) {
+        assert.deepEqual(sorted(column, "asc"), ["zero", "paid", "absent", "partial"], column);
+        assert.deepEqual(sorted(column, "desc"), ["paid", "zero", "absent", "partial"], column);
+    }
+    const unitCost = vm.runInContext("fusionUnitCost", context);
+    const noTokens = structuredClone(zero);
+    noTokens.Metrics.PromptTokens.Total = noTokens.Metrics.OutputTokens.Total = 0;
+    assert.equal(unitCost(noTokens, "mtok"), null);
+    const incompleteTokens = structuredClone(main);
+    incompleteTokens.Metrics.PromptTokens.CompleteRecords = 1;
+    assert.equal(unitCost(incompleteTokens, "mtok"), null);
+    assert.equal(unitCost({ ...paid, Sessions: 0 }, "session"), null);
+
+    const tieFirst = structuredClone(subagent);
+    tieFirst.Metrics.AIU.Total = 2;
+    const ties = [tieFirst, main, absent, { ...absent, Key: "another" }];
+    assert.deepEqual(tableView.sortTableEntries(ties, { sort: "aiu", direction: "desc" }, columns, () => 0).map((entry) => entry.Key),
+        ["subagent", "main", "absent", "another"]);
+});
+
+test("normal Agent usage headings sort locally and preserve focus and both table scroll positions", () => {
+    const data = { ...normalAgentDataset(), Fusion: fusionDataset().Fusion };
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { top: 1 });
+    const ids = ["role", "sessions", "requests", "premium", "prompt", "cacheRead", "cacheWrite", "uncached",
+        "output", "aiu", "sessionCost", "requestCost", "tokenCost"];
+    for (const id of ids) {
+        assert.equal(app.agentButton(id).attributes.type, "button");
+        assert.equal(app.agentHeader(id).attributes.scope, "col");
+        assert.ok(app.agentButton(id).attributes["aria-label"].includes("sort "));
+    }
+    assert.equal(app.agentHeader("role").attributes["aria-sort"], "ascending");
+    assert.deepEqual(app.agentRows(), ["Main agent", "Subagents", "Unknown"]);
+    const unknownRow = app.walk(app.agentTable()).find((node) => node.tag === "tbody").children[2];
+    assert.deepEqual(unknownRow.children.map((cell) => cell.children[0]),
+        ["Unknown", "1", "–", "0", "–", "–", "–", "–", "–", "0", "–", "–", "–"]);
+    app.table().closest(".panel").scrollLeft = 70;
+    app.agentTable().closest(".panel").scrollLeft = 120;
+    const original = app.agentButton("requests");
+    app.context.document.activeElement = original;
+    original.events.click();
+    assert.equal(app.agentHeader("requests").attributes["aria-sort"], "descending");
+    assert.equal(app.context.document.activeElement, app.agentButton("requests"));
+    assert.equal(app.table().closest(".panel").scrollLeft, 70);
+    assert.equal(app.agentTable().closest(".panel").scrollLeft, 120);
+    app.agentButton("requests").events.click();
+    assert.equal(app.agentHeader("requests").attributes["aria-sort"], "ascending");
+    assert.deepEqual(app.agentRows(), ["Subagents", "Main agent", "Unknown"]);
+    const focused = app.context.document.activeElement;
+    vm.runInContext("setState({ ...state });", app.context);
+    assert.notEqual(app.context.document.activeElement, focused);
+    assert.equal(app.context.document.activeElement, app.agentButton("requests"));
+    assert.equal(app.agentTable().closest(".panel").scrollLeft, 120);
+    const other = new Element("input");
+    app.context.document.activeElement = other;
+    vm.runInContext("setState({ ...state });", app.context);
+    assert.equal(app.context.document.activeElement, other);
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+});
+
+test("Agent usage keeps separate sort preferences for normal and Fusion-only modes", () => {
+    const saved = new Map();
+    const storage = {
+        getItem: (key) => saved.get(key) ?? null,
+        setItem: (key, value) => saved.set(key, value),
+    };
+    const data = { ...normalAgentDataset(), Fusion: fusionDataset().Fusion };
+    const app = interactiveFusion(data, { storage });
+    app.agentButton("requests").events.click();
+    app.agentButton("requests").events.click();
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.agentView")), { sort: "requests", direction: "asc" });
+    app.context.nextData = projectFusion(fusionDataset());
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: true };
+        state.results.session.data = nextData;
+        render();
+    `, app.context);
+    const ids = ["role", "sessions", "records", "premium", "prompt", "cacheRead", "cacheWrite", "uncached",
+        "output", "apiTime", "aiu", "sessionCost", "recordCost", "tokenCost"];
+    for (const id of ids) {
+        assert.equal(app.agentButton(id).attributes.type, "button");
+        assert.equal(app.agentHeader(id).attributes.scope, "col");
+        assert.ok(app.agentButton(id).attributes["aria-label"].includes("sort "));
+    }
+    assert.equal(app.agentHeader("aiu").attributes["aria-sort"], "descending");
+    assert.deepEqual(app.agentRows(), ["Main agent", "Subagents"]);
+    app.agentTable().closest(".panel").scrollLeft = 120;
+    app.context.document.activeElement = app.agentButton("records");
+    app.agentButton("records").events.click();
+    assert.equal(app.context.document.activeElement, app.agentButton("records"));
+    assert.equal(app.agentTable().closest(".panel").scrollLeft, 120);
+    app.agentButton("records").events.click();
+    assert.deepEqual(app.agentRows(), ["Subagents", "Main agent"]);
+    vm.runInContext("setState({ ...state });", app.context);
+    assert.equal(app.context.document.activeElement, app.agentButton("records"));
+    assert.equal(app.agentTable().closest(".panel").scrollLeft, 120);
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionAgentView")), { sort: "records", direction: "asc" });
+    const filteredText = app.walk(app.content).flatMap((node) => node.children.filter((child) => typeof child === "string")).join(" ");
+    assert.match(filteredText, /Top selects role groups by recorded AIU before sorting; set Top to 0/);
+    for (const title of ["Models", "Workspaces"]) {
+        const panel = app.walk(app.content).find((node) => node.tag === "section" &&
+            app.walk(node).some((child) => child.tag === "h2" && child.children[0] === title));
+        assert.equal(app.walk(panel).some((node) => Object.hasOwn(node.attributes, "data-agent-sort")), false);
+    }
+    app.context.normalData = data;
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: false };
+        state.results.session.data = normalData;
+        render();
+    `, app.context);
+    assert.equal(app.agentHeader("requests").attributes["aria-sort"], "ascending");
+    assert.deepEqual(app.agentRows(), ["Subagents", "Main agent", "Unknown"]);
+    const reloaded = interactiveFusion(projectFusion(fusionDataset()), { storage, fusionOnly: true });
+    assert.equal(reloaded.agentHeader("records").attributes["aria-sort"], "ascending");
+    assert.deepEqual(reloaded.agentRows(), ["Subagents", "Main agent"]);
+    assert.deepEqual(app.submitted, []);
+});
+
+test("Fusion-only Agent usage sorts only the role groups selected by Top", () => {
+    const data = projectFusion(fusionDataset(1));
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { fusionOnly: true, top: 1 });
+    assert.deepEqual(app.agentRows(), ["Main agent"]);
+    app.agentButton("role").events.click();
+    assert.deepEqual(app.agentRows(), ["Main agent"]);
+    assert.equal(data.FusionUsage.RoleGroups, 2);
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+    const all = interactiveFusion(projectFusion(fusionDataset()), { fusionOnly: true, top: 0 });
+    assert.deepEqual(all.agentRows(), ["Main agent", "Subagents"]);
+});
+
+test("Agent usage sorting works when preferences cannot be loaded or saved", () => {
+    for (const readFailure of ["invalid", "throw"]) {
+        const storage = {
+            getItem: (key) => {
+                if (key !== "attendant-dashboard.agentView" && key !== "attendant-dashboard.fusionAgentView") return null;
+                if (readFailure === "throw") throw new Error("storage unavailable");
+                return "{invalid";
+            },
+            setItem: () => { throw new Error("storage unavailable"); },
+        };
+        for (const fusionOnly of [false, true]) {
+            const data = fusionOnly ? projectFusion(fusionDataset()) : normalAgentDataset();
+            const app = interactiveFusion(data, { storage, fusionOnly });
+            const defaultColumn = fusionOnly ? "aiu" : "role";
+            assert.equal(app.agentHeader(defaultColumn).attributes["aria-sort"], fusionOnly ? "descending" : "ascending");
+            assert.ok(app.warnings.some(([message]) => message.includes("Could not load table view preferences")));
+            app.agentButton(fusionOnly ? "records" : "requests").events.click();
+            assert.ok(app.warnings.some(([message]) => message.includes("Could not save table view preferences")));
+        }
+    }
+});
+
+test("CLI Fusion panel shows recorded pattern and phase coverage without inventing costs", () => {
+    const data = { Fusion: {
+        Sessions: 1, ResolvedTurns: 2, UnidentifiedResolutions: 1, TurnsWithUsage: 1, PhasesWithUsage: 1,
+        UsageRecords: 3, AIU: 0.000000001, AIURecords: 1, MissingFusionIDRecords: 1, MissingPhaseIdentityRecords: 1,
+        ByPattern: [{ Key: "cascade", Sessions: 1, ResolvedTurns: 2, UnidentifiedResolutions: 1 }],
+        ByPhase: [
+            { Pattern: "cascade", Phase: "judge", Role: "judge", Model: "model-a", Sessions: 1,
+                Turns: 1, Phases: 1, UsageRecords: 2, AIU: 0.000000001, AIURecords: 1, MissingPhaseIdentityRecords: 0 },
+            { Pattern: "single", Phase: "primary", Role: "solver", Model: "model-b", Sessions: 1,
+                Turns: 0, Phases: 0, UsageRecords: 1, AIU: 0, AIURecords: 0, MissingPhaseIdentityRecords: 1 },
+        ],
+    } };
+    const { panels, walk } = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const fusion = panels.find((p) => walk(p).some((n) => n.tag === "h2" && n.children[0] === "Copilot Fusion"));
+    assert.ok(fusion);
+    const cards = walk(fusion).find((node) => node.className === "cards fusion-cards");
+    assert.ok(cards);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    const content = text(fusion);
+    for (const value of ["Resolved patterns", "cascade", "judge", "model-a", "Phase usage",
+        "≥ 0", "1 / 3 records report AIU", "–", "checkpoint-only", "lack a complete phase identity",
+        "not an atomic snapshot"]) {
+        assert.ok(content.includes(value), `missing ${value}: ${content}`);
+    }
+    assert.equal(walk(fusion).some((node) => node.attributes["data-clear-filter"]), false);
+});
+
+test("Fusion phase columns sort raw values in both directions without changing the source", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const { columns, normalize, sort, toggle } = vm.runInContext(`({
+        columns: FUSION_PHASE_COLUMNS, normalize: normalizeFusionPhaseView,
+        sort: sortFusionPhases, toggle: toggleFusionPhaseSort,
+    })`, context);
+    const entries = [
+        { Key: "first", Pattern: "zeta", Phase: "alpha", Role: "zeta", Model: "model-a", Sessions: 2,
+            Turns: 1, Phases: 7, UsageRecords: 10, AIU: 9, AIURecords: 2, MissingPhaseIdentityRecords: 3 },
+        { Key: "second", Pattern: "alpha", Phase: "beta", Role: "alpha", Model: "model-z", Sessions: 1,
+            Turns: 2, Phases: 5, UsageRecords: 20, AIU: 2, AIURecords: 10, MissingPhaseIdentityRecords: 4 },
+    ];
+    const before = structuredClone(entries);
+    const first = ["first", "second"];
+    const second = ["second", "first"];
+    const ascending = {
+        pattern: second, phase: first, role: second, model: first, sessions: second, turns: first,
+        phases: second, records: first, aiu: second, coverage: first, missingIdentity: first,
+    };
+    const initial = normalize();
+    assert.deepEqual(initial, { sort: "records", direction: "desc" });
+    assert.deepEqual(Array.from(columns, (column) => column.id), Object.keys(ascending));
+    for (const column of columns) {
+        assert.deepEqual(Array.from(sort(entries, { sort: column.id, direction: "asc" }), (entry) => entry.Key),
+            ascending[column.id], column.id);
+        assert.deepEqual(Array.from(sort(entries, { sort: column.id, direction: "desc" }), (entry) => entry.Key),
+            [...ascending[column.id]].reverse(), `${column.id} reversed`);
+        const next = toggle(initial, column.id);
+        const expected = column.direction === "asc" || column.id === "records" ? "asc" : "desc";
+        assert.deepEqual(next, { sort: column.id, direction: expected });
+        assert.notEqual(toggle(next, column.id).direction, next.direction);
+    }
+    assert.deepEqual(entries, before);
+    for (const saved of [null, false, "invalid", { sort: "invalid", direction: "invalid" }]) {
+        assert.deepEqual(normalize(saved), initial);
+    }
+    assert.deepEqual(normalize(JSON.parse(JSON.stringify({ sort: "coverage", direction: "asc" }))),
+        { sort: "coverage", direction: "asc" });
+});
+
+test("Fusion phase sorting distinguishes missing AIU, zero values, coverage ratios, and stable ties", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
+    const sort = vm.runInContext("sortFusionPhases", context);
+    const names = (entries, column, direction) =>
+        Array.from(sort(entries, { sort: column, direction }), (entry) => entry.Key);
+    const coverage = [
+        { Key: "unknown", UsageRecords: 0, AIURecords: 0 },
+        { Key: "half-a", UsageRecords: 2, AIURecords: 1 },
+        { Key: "tenth", UsageRecords: 10, AIURecords: 1 },
+        { Key: "zero", UsageRecords: 10, AIURecords: 0 },
+        { Key: "half-b", UsageRecords: 4, AIURecords: 2 },
+        { Key: "fifth", UsageRecords: 10, AIURecords: 2 },
+    ];
+    assert.deepEqual(names(coverage, "coverage", "asc"), ["zero", "tenth", "fifth", "half-a", "half-b", "unknown"]);
+    assert.deepEqual(names(coverage, "coverage", "desc"), ["half-a", "half-b", "fifth", "tenth", "zero", "unknown"]);
+    const aiu = [
+        { Key: "unreported", UsageRecords: 1, AIURecords: 0, AIU: 0 },
+        { Key: "partial", UsageRecords: 2, AIURecords: 1, AIU: 0.5 },
+        { Key: "zero", UsageRecords: 1, AIURecords: 1, AIU: 0 },
+        { Key: "complete", UsageRecords: 1, AIURecords: 1, AIU: 1 },
+    ];
+    assert.deepEqual(names(aiu, "aiu", "asc"), ["zero", "partial", "complete", "unreported"]);
+    assert.deepEqual(names(aiu, "aiu", "desc"), ["complete", "partial", "zero", "unreported"]);
+    const models = [
+        { Key: "unknown", Model: "" }, { Key: "zeta", Model: "model-z" }, { Key: "alpha", Model: "model-a" },
+    ];
+    assert.deepEqual(names(models, "model", "asc"), ["alpha", "zeta", "unknown"]);
+    const original = [
+        { Key: "first", Pattern: "alpha", UsageRecords: 4 },
+        { Key: "second", Pattern: "beta", UsageRecords: 4 },
+        { Key: "third", Pattern: "gamma", UsageRecords: 1 },
+    ];
+    assert.deepEqual(names(original, "pattern", "desc"), ["third", "second", "first"]);
+    assert.deepEqual(names(original, "records", "desc"), ["first", "second", "third"]);
+});
+
+test("Fusion phase headings sort both views locally and preserve focus and scroll on updates", () => {
+    const ids = ["pattern", "phase", "role", "model", "sessions", "turns", "phases", "records", "aiu", "coverage", "missingIdentity"];
+    for (const fusionOnly of [false, true]) {
+        const data = fusionOnly ? projectFusion(fusionDataset()) : { Fusion: fusionDataset().Fusion };
+        const before = structuredClone(data);
+        const app = interactiveFusion(data, { fusionOnly });
+        for (const id of ids) {
+            assert.equal(app.button(id).attributes.type, "button");
+            assert.equal(app.header(id).attributes.scope, "col");
+            assert.ok(app.button(id).attributes["aria-label"].includes("sort "));
+        }
+        assert.equal(app.header("records").attributes["aria-sort"], "descending");
+        assert.equal(app.header("aiu").attributes["aria-sort"], "none");
+        assert.deepEqual(app.rows(), ["cascade", "single"]);
+        app.table().closest(".panel").scrollLeft = 120;
+        const originalButton = app.button("aiu");
+        app.context.document.activeElement = originalButton;
+        originalButton.events.click();
+        assert.equal(app.header("aiu").attributes["aria-sort"], "descending");
+        assert.equal(app.button("aiu").attributes["aria-label"], "AIU: sort ascending");
+        assert.equal(app.context.document.activeElement, app.button("aiu"));
+        assert.notEqual(app.context.document.activeElement, originalButton);
+        assert.equal(app.table().closest(".panel").scrollLeft, 120);
+        app.button("aiu").events.click();
+        assert.equal(app.header("aiu").attributes["aria-sort"], "ascending");
+        assert.deepEqual(app.rows(), ["single", "cascade"]);
+        const beforeUpdate = app.context.document.activeElement;
+        vm.runInContext("setState({ ...state });", app.context);
+        assert.notEqual(app.context.document.activeElement, beforeUpdate);
+        assert.equal(app.context.document.activeElement, app.button("aiu"));
+        assert.equal(app.table().closest(".panel").scrollLeft, 120);
+        const movedFocus = new Element("input");
+        app.context.document.activeElement = movedFocus;
+        vm.runInContext("setState({ ...state });", app.context);
+        assert.equal(app.context.document.activeElement, movedFocus);
+        assert.deepEqual(app.submitted, []);
+        assert.deepEqual(data, before);
+        const text = app.walk(app.content).flatMap((node) => node.children.filter((child) => typeof child === "string")).join(" ");
+        assert.match(text, /Top selects phase groups by record count before sorting; set Top to 0/);
+    }
+});
+
+test("Fusion phase sort preferences survive mode changes and reloads", () => {
+    const saved = new Map();
+    const storage = {
+        getItem: (key) => saved.get(key) ?? null,
+        setItem: (key, value) => saved.set(key, value),
+    };
+    const app = interactiveFusion({ Fusion: fusionDataset().Fusion }, { storage });
+    app.button("coverage").events.click();
+    assert.deepEqual(app.rows(), ["single", "cascade"]);
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionPhaseView")), { sort: "coverage", direction: "desc" });
+    app.context.nextData = projectFusion(fusionDataset());
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: true };
+        state.results.session.data = nextData;
+        render();
+    `, app.context);
+    assert.equal(app.header("coverage").attributes["aria-sort"], "descending");
+    assert.deepEqual(app.rows(), ["single", "cascade"]);
+    const reloaded = interactiveFusion(projectFusion(fusionDataset()), { storage, fusionOnly: true });
+    assert.equal(reloaded.header("coverage").attributes["aria-sort"], "descending");
+    assert.deepEqual(reloaded.rows(), ["single", "cascade"]);
+});
+
+test("Fusion phase sorting remains usable when stored preferences cannot be read or written", () => {
+    const storage = {
+        getItem: (key) => key === "attendant-dashboard.fusionPhaseView" ? "{invalid" : null,
+        setItem: () => { throw new Error("storage unavailable"); },
+    };
+    const app = interactiveFusion({ Fusion: fusionDataset().Fusion }, { storage });
+    assert.equal(app.header("records").attributes["aria-sort"], "descending");
+    assert.ok(app.warnings.some(([message]) => message.includes("Could not load table view preferences")));
+    app.button("coverage").events.click();
+    assert.equal(app.header("coverage").attributes["aria-sort"], "descending");
+    assert.deepEqual(app.rows(), ["single", "cascade"]);
+    assert.ok(app.warnings.some(([message]) => message.includes("Could not save table view preferences")));
+});
+
+test("CLI Fusion cards format AIU to two decimal places and retain partial-coverage indicators", () => {
+    const data = { Fusion: {
+        Sessions: 1, UsageRecords: 2, AIU: 1234.123456789, AIURecords: 1,
+        ByPattern: [], ByPhase: [],
+    } };
+    const { panels, walk } = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const fusion = panels.find((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Copilot Fusion"));
+    const card = walk(fusion).find((node) => node.className === "card" &&
+        walk(node).some((child) => child.className === "label" && child.children[0] === "Recorded AIU"));
+    const value = walk(card).find((node) => node.className === "value");
+    assert.equal(value.children[0], "≥ 1,234.12");
+});
+
+test("CLI Fusion panel distinguishes absent support from no recorded events", () => {
+    const query = normalizeQuery({ source: "session" });
+    const title = (panel, walk) => walk(panel).find((node) => node.tag === "h2")?.children[0];
+    for (const data of [{}, { Fusion: null }]) {
+        const { panels, walk } = renderedPanels(query, data);
+        assert.equal(panels.some((panel) => title(panel, walk) === "Copilot Fusion"), false);
+    }
+    const { panels, walk } = renderedPanels(query, { Fusion: {
+        Sessions: 0, ResolvedTurns: 0, UnidentifiedResolutions: 0, TurnsWithUsage: 0, PhasesWithUsage: 0,
+        UsageRecords: 0, AIU: 0, AIURecords: 0, MissingFusionIDRecords: 0, MissingPhaseIdentityRecords: 0,
+        ByPattern: [], ByPhase: [],
+    } });
+    const panel = panels.find((entry) => title(entry, walk) === "Copilot Fusion");
+    assert.ok(panel);
+    assert.ok(walk(panel).some((node) => node.children.some((child) =>
+        typeof child === "string" && child.includes("Older or incomplete logs cannot establish whether Fusion was used"))));
+});
+
+test("Fusion-only rendering includes usage coverage without permission, resolution, or checkpoint data", () => {
+    const query = normalizeQuery({ source: "session", fusionOnly: true });
+    const data = projectFusion(fusionDataset());
+    const { nodes, panels, walk } = renderedPanels(query, data);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    const content = nodes.map(text).join(" ");
+    for (const value of ["Fusion usage", "Usage records", "Models", "Workspaces", "Agent usage", "Phase usage",
+        "≥ 2", "2 / 3 records complete", "2 / 2 records complete · 1 excluded",
+        "<0.01", "not necessarily distinct API calls"]) {
+        assert.ok(content.includes(value), `missing ${value}: ${content}`);
+    }
+    for (const value of ["Resolved patterns", "Resolved turns", "Permission requests", "ordinary-command", "resolution-only"]) {
+        assert.equal(content.includes(value), false, value);
+    }
+    const model = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Models"));
+    const rows = walk(model).filter((node) => node.tag === "tr");
+    const incompleteCells = rows[1].children.map(text);
+    assert.deepEqual(incompleteCells.slice(-2), ["–", ""]);
+    assert.ok(walk(model).some((node) => String(node.attributes.title ?? "").includes("records complete")));
+});
+
+test("Fusion-only model shares compare recorded AIU for the listed models", () => {
+    const data = projectFusion(fusionDataset());
+    const before = structuredClone(data);
+    const { panels, walk } = renderedPanels(normalizeQuery({ fusionOnly: true }), data);
+    const title = (node) => walk(node).find((child) => child.tag === "h2")?.children[0];
+    assert.deepEqual(Array.from(panels.slice(0, 4), title),
+        ["Usage share by model", "Models", "Usage share by workspace", "Workspaces"]);
+    const share = panels[0];
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    assert.match(text(share), /recorded AIU · listed models/);
+    assert.match(text(share), /Missing AIU is excluded, so incomplete coverage can affect proportions/);
+    const segments = walk(share).find((node) => node.className === "bar").children;
+    assert.deepEqual(segments.map((node) => node.attributes.title), [
+        "model-a: ≥ 2 AIU (100%)",
+        "model-b: <0.01 AIU (<0.1%)",
+    ]);
+    assert.match(text(share), /model-a 100%/);
+    assert.match(text(share), /model-b <0\.1%/);
+    assert.deepEqual(data, before);
+
+    const limited = renderedPanels(normalizeQuery({ fusionOnly: true, top: 1 }), projectFusion(fusionDataset(1)));
+    const limitedShare = limited.panels.find((panel) =>
+        limited.walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Usage share by model"));
+    const limitedSegments = limited.walk(limitedShare).find((node) => node.className === "bar").children;
+    assert.deepEqual(limitedSegments.map((node) => node.attributes.title), ["model-a: ≥ 2 AIU (100%)"]);
+});
+
+test("Fusion-only model shares handle unknown models, missing values, zeros, and empty results", () => {
+    const data = projectFusion(fusionDataset());
+    const [first] = data.FusionUsage.ByModel;
+    const unknown = structuredClone(first);
+    unknown.Key = "";
+    unknown.Metrics.AIU.Total = 1;
+    const missing = structuredClone(first);
+    missing.Key = "model-missing";
+    missing.Metrics.AIU = { Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 0 };
+    const partialZero = structuredClone(first);
+    partialZero.Key = "model-zero";
+    partialZero.Metrics.AIU = { Total: 0, ObservedRecords: 1, CompleteRecords: 0, ExcludedRecords: 0 };
+    data.FusionUsage.ByModel = [first, unknown, missing, partialZero];
+    data.FusionUsage.ModelGroups = 4;
+    data.FusionUsage.UsageRecords = data.Fusion.UsageRecords = 8;
+    data.FusionUsage.Metrics.AIU = { Total: 3, ObservedRecords: 3, CompleteRecords: 2, ExcludedRecords: 0 };
+    data.Fusion.AIU = 3;
+    data.Fusion.AIURecords = 3;
+    const view = renderedPanels(normalizeQuery({ fusionOnly: true }), data);
+    const share = view.panels.find((panel) =>
+        view.walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Usage share by model"));
+    const segments = view.walk(share).find((node) => node.className === "bar").children;
+    assert.deepEqual(segments.map((node) => node.attributes.title), [
+        "model-a: ≥ 2 AIU (67%)",
+        "Unknown model: ≥ 1 AIU (33%)",
+    ]);
+    for (const emptyData of [
+        { ...data, FusionUsage: { ...data.FusionUsage, ByModel: [missing, partialZero] } },
+        projectFusion(emptyFusionDataset()),
+    ]) {
+        const empty = renderedPanels(normalizeQuery({ fusionOnly: true }), emptyData);
+        const panel = empty.panels.find((entry) =>
+            empty.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Usage share by model"));
+        assert.ok(panel);
+        assert.equal(empty.walk(panel).some((node) => node.className === "bar"), false);
+        assert.ok(empty.walk(panel).some((node) => node.children.includes("No positive recorded model AIU to compare.")));
+    }
+});
+
+test("Fusion-only workspace shares match model share semantics and retain workspace scope controls", () => {
+    const data = projectFusion(fusionDataset());
+    const before = structuredClone(data);
+    const query = normalizeQuery({ source: "session", fusionOnly: true, scope: "cwd", path: "/fictional/a" });
+    const view = renderedPanels(query, data);
+    const panel = view.panels.find((entry) =>
+        view.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Usage share by workspace"));
+    const bar = view.walk(panel).find((node) => node.className === "bar");
+    assert.deepEqual(bar.children.map((node) => node.attributes.title), [
+        "/fictional/a: ≥ 2 AIU (100%)",
+        "/fictional/b: <0.01 AIU (<0.1%)",
+    ]);
+    const clear = view.walk(panel).find((node) => node.attributes["data-clear-filter"] === "workspace");
+    clear.events.click();
+    assert.deepEqual(JSON.parse(JSON.stringify(view.submitted)), [{ scope: "all", path: "" }]);
+    assert.deepEqual(data, before);
+
+    for (const emptyData of [
+        projectFusion(emptyFusionDataset()),
+        { ...data, FusionUsage: { ...data.FusionUsage, ByCWD: [] } },
+    ]) {
+        const empty = renderedPanels(normalizeQuery({ fusionOnly: true }), emptyData);
+        const share = empty.panels.find((entry) =>
+            empty.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Usage share by workspace"));
+        assert.ok(share);
+        assert.equal(empty.walk(share).some((node) => node.className === "bar"), false);
+        assert.ok(empty.walk(share).some((node) => node.children.includes("No positive recorded workspace AIU to compare.")));
+    }
+});
+
+test("Fusion-only cache metrics remain visible with coverage in cards and model rows", () => {
+    const data = projectFusion(fusionDataset());
+    data.FusionUsage.ByModel[1].Metrics.CacheWriteTokens = {
+        Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 0,
+    };
+    const app = interactiveFusion(data, { fusionOnly: true });
+    const card = (label) => app.walk(app.content).find((node) => node.className === "card" &&
+        app.walk(node).some((child) => child.className === "label" && child.children[0] === label));
+    assert.match(app.text(card("Cache read")), /≥ 30/);
+    assert.match(app.text(card("Cache write")), /≥ 10/);
+    const headings = app.walk(app.modelTable()).find((node) => node.tag === "thead").children[0].children;
+    const index = (name) => headings.findIndex((heading) =>
+        app.walk(heading).some((node) => node.attributes["data-fusion-model-sort"] === name));
+    const read = index("cacheRead");
+    const write = index("cacheWrite");
+    assert.ok(read >= 0 && write >= 0);
+    const rows = app.modelRows();
+    assert.equal(app.text(rows[0].children[read]), "≥ 30");
+    assert.equal(app.text(rows[0].children[write]), "≥ 10");
+    assert.match(rows[0].children[read].attributes.title, /1 \/ 2 records complete/);
+    assert.equal(app.text(rows[1].children[read]), "0");
+    assert.equal(app.text(rows[1].children[write]), "–");
+});
+
+test("Fusion token notation matches normal formatting without overstating partial values", () => {
+    const { context } = renderedPanels(normalizeQuery({ fusionOnly: true }), projectFusion(fusionDataset()));
+    const metric = (total, observed, complete, excluded = 0) => ({
+        Total: total, ObservedRecords: observed, CompleteRecords: complete, ExcludedRecords: excluded,
+    });
+    const format = (value, partial) => context.fusionMetricText(
+        metric(value, partial ? 1 : 2, partial ? 0 : 2), 2, context.tokenCount,
+    );
+    const cases = [
+        [0, "0", "≥ 0"],
+        [9_999, new Intl.NumberFormat().format(9_999), `≥ ${new Intl.NumberFormat().format(9_999)}`],
+        [10_000, "10K", "≥ 10K"],
+        [12_360, "12.4K", "≥ 12.3K"],
+        [999_949, "999.9K", "≥ 999.9K"],
+        [999_950, "1M", "≥ 999.9K"],
+        [999_999, "1M", "≥ 999.9K"],
+        [1_000_000, "1M", "≥ 1M"],
+        [999_949_999, "999.9M", "≥ 999.9M"],
+        [999_950_000, "1B", "≥ 999.9M"],
+        [999_999_999, "1B", "≥ 999.9M"],
+        [1_000_000_000, "1B", "≥ 1B"],
+        [999_949_999_999, "999.9B", "≥ 999.9B"],
+        [999_950_000_000, "1T", "≥ 999.9B"],
+        [999_999_999_999, "1T", "≥ 999.9B"],
+        [1_000_000_000_000, "1T", "≥ 1T"],
+        [999_999_999_999_999, "1000T", "≥ 999.9T"],
+        [Number.MAX_SAFE_INTEGER, "9007.2T", "≥ 9007.1T"],
+    ];
+    for (const [value, complete, partial] of cases) {
+        assert.equal(format(value, false), complete, `complete ${value}`);
+        assert.equal(format(value, false), context.big(value), `normal ${value}`);
+        assert.equal(format(value, true), partial, `partial ${value}`);
+    }
+    assert.equal(context.fusionMetricText(metric(0, 0, 0), 2, context.tokenCount), "–");
+    assert.equal(context.fusionMetricText(metric(0, 1, 1, 1), 2, context.fusionNumber), "0");
+
+    const displayedValue = (text) => {
+        const match = /^≥ ([\d,]+(?:\.\d+)?)([KMBT]?)$/.exec(text);
+        assert.ok(match, text);
+        const [whole, fraction = ""] = match[1].replaceAll(",", "").split(".");
+        const unit = { "": 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[match[2]];
+        return Number(whole) * unit + Number(fraction || 0) * unit / 10 ** fraction.length;
+    };
+    let seed = 0x417ecc;
+    for (const scale of [10_000, 1e6, 1e9, 1e12, 1e15]) {
+        const limit = Math.min(scale * 1_000, Number.MAX_SAFE_INTEGER);
+        for (let i = 0; i < 300; i++) {
+            seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+            const value = Math.floor(seed / 2 ** 32 * limit);
+            if (value < 10_000) continue;
+            const text = format(value, true);
+            assert.ok(displayedValue(text) <= value, `${text} exceeds ${value}`);
+        }
+    }
+});
+
+test("partial Fusion AIU and API time labels never exceed their recorded subtotals", () => {
+    const { context } = renderedPanels(normalizeQuery({ fusionOnly: true }), projectFusion(fusionDataset()));
+    const partial = (total) => ({ Total: total, ObservedRecords: 1, CompleteRecords: 1, ExcludedRecords: 0 });
+    const number = (text) => Number(text.replaceAll(",", ""));
+    const samples = [
+        0, 0.000000000123456, 0.0000000015, 1.2345678906, 9.9999999999,
+        999.99999, 1199.999, 59_999.9, 60_001, 3_599_999, 3_600_001, 12_345_678.99,
+    ];
+    let seed = 0x4127ab;
+    for (const scale of [1e-13, 1e-9, 1, 1000, 60_000, 3_600_000, 1e12]) {
+        for (let i = 0; i < 50; i++) {
+            seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+            samples.push(seed / 2 ** 32 * scale);
+        }
+    }
+    for (const value of samples) {
+        const aiu = context.fusionMetricText(partial(value), 2, context.fusionNumber);
+        assert.ok(aiu.startsWith("≥ "));
+        const formattedAiu = aiu.slice(2);
+        assert.ok(!/[eE]/.test(formattedAiu) && (formattedAiu.split(".")[1]?.length ?? 0) <= 2, aiu);
+        assert.ok(number(formattedAiu) <= value, `${aiu} exceeds ${value}`);
+        const legacyAiu = context.fusionAIU({ AIU: value, AIURecords: 1, UsageRecords: 2 });
+        const formattedLegacy = legacyAiu.slice(2);
+        assert.ok(!/[eE]/.test(formattedLegacy) && (formattedLegacy.split(".")[1]?.length ?? 0) <= 2, legacyAiu);
+        assert.ok(number(formattedLegacy) <= value, `${legacyAiu} exceeds ${value}`);
+        const duration = context.fusionMetricText(partial(value), 2, context.fusionDuration);
+        const match = /^≥ (.+) (ms|s|min|h)$/.exec(duration);
+        assert.ok(match, duration);
+        const scale = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 }[match[2]];
+        assert.ok(number(match[1]) * scale <= value, `${duration} exceeds ${value} ms`);
+    }
+});
+
+test("Fusion token cards and all usage tables show compact values with exact counts and coverage", () => {
+    const metric = (total, observed, complete) => ({
+        Total: total, ObservedRecords: observed, CompleteRecords: complete, ExcludedRecords: 0,
+    });
+    const tokenMetrics = (records) => ({
+        PromptTokens: metric(12_360, records, 0),
+        UncachedInputTokens: metric(12_360, records, records),
+        CacheReadTokens: metric(0, 1, 0),
+        CacheWriteTokens: metric(0, 0, 0),
+        OutputTokens: metric(999_950, records, records),
+    });
+    const otherTokens = {
+        PromptTokens: metric(0, 1, 0),
+        UncachedInputTokens: metric(0, 1, 1),
+        CacheReadTokens: metric(0, 0, 0),
+        CacheWriteTokens: metric(0, 0, 0),
+        OutputTokens: metric(0, 1, 1),
+    };
+    const source = fusionDataset();
+    const usage = source.Fusion.Usage;
+    Object.assign(usage.Metrics, tokenMetrics(3));
+    for (const entries of [usage.ByModel, usage.ByCWD, usage.ByRole]) {
+        Object.assign(entries[0].Metrics, tokenMetrics(2));
+        Object.assign(entries[1].Metrics, otherTokens);
+    }
+    const data = projectFusion(source);
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { fusionOnly: true });
+    const cases = [
+        ["Prompt tokens", "prompt", "PromptTokens", "≥ 12.3K"],
+        ["Uncached input", "uncached", "UncachedInputTokens", "12.4K"],
+        ["Cache read", "cacheRead", "CacheReadTokens", "≥ 0"],
+        ["Cache write", "cacheWrite", "CacheWriteTokens", "–"],
+        ["Output tokens", "output", "OutputTokens", "1M"],
+    ];
+    const tooltip = (value, records) => {
+        const coverage = `${value.CompleteRecords} / ${records} records complete` +
+            (value.ObservedRecords !== value.CompleteRecords
+                ? ` · ${value.ObservedRecords} have partial or complete values` : "");
+        return value.ObservedRecords
+            ? `Recorded: ${new Intl.NumberFormat().format(value.Total)} tokens · ${coverage}` : coverage;
+    };
+    for (const [label, , field, expected] of cases) {
+        const card = app.walk(app.content).find((node) => node.className === "card" &&
+            app.walk(node).some((child) => child.className === "label" && child.children[0] === label));
+        const value = app.walk(card).find((node) => node.className === "value");
+        assert.equal(app.text(value), expected, label);
+        assert.equal(card.attributes.title, tooltip(data.FusionUsage.Metrics[field], 3), label);
+        assert.equal(value.attributes["aria-label"], `${expected}; ${card.attributes.title}`, label);
+    }
+    for (const [table, attribute, entries] of [
+        [app.modelTable(), "data-fusion-model-sort", data.FusionUsage.ByModel],
+        [app.workspaceTable(), "data-fusion-workspace-sort", data.FusionUsage.ByCWD],
+        [app.agentTable(), "data-agent-sort", data.FusionUsage.ByRole],
+    ]) {
+        const headings = app.walk(table).find((node) => node.tag === "thead").children[0].children;
+        const row = app.walk(table).find((node) => node.tag === "tbody").children[0];
+        for (const [, id, field, expected] of cases) {
+            const index = headings.findIndex((heading) =>
+                app.walk(heading).some((node) => node.attributes[attribute] === id));
+            assert.ok(index >= 0, id);
+            assert.equal(app.text(row.children[index]), expected, id);
+            assert.equal(row.children[index].attributes.title, tooltip(entries[0].Metrics[field], 2), id);
+            assert.equal(row.children[index].attributes["aria-label"], `${expected}; ${row.children[index].attributes.title}`, id);
+        }
+    }
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+});
+
+test("normal and complete Fusion summary cards use the same token notation", () => {
+    const normal = {
+        UsageSessions: 1, UsageInputTokens: 12_360, UsageCacheReadTokens: 0,
+        UsageCacheWriteTokens: 0, UsageOutputTokens: 999_950,
+    };
+    const fusion = projectFusion(fusionDataset());
+    for (const [field, total] of [["PromptTokens", 12_360], ["OutputTokens", 999_950]]) {
+        fusion.FusionUsage.Metrics[field] = {
+            Total: total, ObservedRecords: 3, CompleteRecords: 3, ExcludedRecords: 0,
+        };
+    }
+    const value = (view, label) => {
+        const nodes = view.nodes.flatMap(view.walk);
+        const card = nodes.find((node) => node.className === "card" &&
+            view.walk(node).some((child) => child.className === "label" && child.children[0] === label));
+        return view.walk(card).find((node) => node.className === "value").children[0];
+    };
+    const ordinary = renderedPanels(normalizeQuery({ source: "session" }), normal);
+    const filtered = renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), fusion);
+    for (const label of ["Prompt tokens", "Output tokens"]) {
+        assert.equal(value(filtered, label), value(ordinary, label), label);
+    }
+});
+
+test("VS Code summary aligns shared cards and retains activity metrics", () => {
+    const data = {
+        Sessions: 2, Turns: 4, LLMRequests: 6, ToolCalls: 4,
+        ByModel: [{ Key: "model-a", UsageAIU: 1.234, InputTokens: 300, CachedTokens: 100, OutputTokens: 50 }],
+        ByTool: [{ Key: "tool-a", Total: 4, OK: 3, Error: 1 }],
+    };
+    const before = structuredClone(data);
+    const view = renderedPanels(normalizeQuery({ source: "vscode" }), data);
+    assert.deepEqual(summaryCards(view).map(({ label, value, sub }) => [label, value, sub]), [
+        ["Sessions", "2", ""],
+        ["Usage (AIU)", "1.23", ""],
+        ["LLM requests", "6", "1.5 / turn"],
+        ["Input tokens", "300", "33% cached"],
+        ["Output tokens", "50", ""],
+        ["Turns", "4", "2.0 / session"],
+        ["Tool calls", "4", "25% errors (listed tools)"],
+    ]);
+    assert.deepEqual(data, before);
+});
+
+test("usage cards use equal widths and keep titles on one line", () => {
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /\.usage-cards,\s*\.fusion-cards\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(160px,\s*1fr\)\)\s*;[^}]*overflow-x:\s*auto\s*;/);
+    assert.match(css, /\.usage-cards \.card,\s*\.fusion-cards \.card\s*\{[^}]*min-width:\s*0\s*;[^}]*overflow-wrap:\s*anywhere\s*;/);
+    assert.match(css, /\.usage-cards \.label,\s*\.fusion-cards \.label\s*\{[^}]*white-space:\s*nowrap\s*;/);
+});
+
+test("card titles bottom-align while values stay aligned", () => {
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /@supports \(grid-template-rows:\s*subgrid\)\s*\{[^}]*\.card\s*\{[^}]*grid-row:\s*span 3\s*;[^}]*grid-template-rows:\s*subgrid\s*;/);
+    assert.match(css, /\.card \.label\s*\{[^}]*display:\s*flex\s*;[^}]*align-items:\s*flex-end\s*;/);
+    assert.match(css, /\.card \.label\s*\{[^}]*grid-row:\s*1\s*;/);
+    assert.match(css, /\.card \.value\s*\{[^}]*grid-row:\s*2\s*;/);
+    assert.match(css, /\.card \.sub\s*\{[^}]*grid-row:\s*3\s*;/);
+    assert.match(css, /@supports not \(grid-template-rows:\s*subgrid\)\s*\{[^}]*\.card \.label\s*\{[^}]*min-height:\s*2lh\s*;/);
+});
+
+test("normal and Fusion usage cards share order, notation, and supported derived values", () => {
+    const normal = {
+        UsageSessions: 2, UsageIncompleteSessions: 0, UsageAIU: 2.000000001, UsageRequests: 3,
+        UsagePremiumRequests: 0.5, UsageInputTokens: 60, UsageCacheReadTokens: 30,
+        UsageCacheWriteTokens: 10, UsageOutputTokens: 50, UsageAPIDurationMs: 0.00000001,
+    };
+    const fusion = completeFusionUsage();
+    const beforeNormal = structuredClone(normal);
+    const beforeFusion = structuredClone(fusion);
+    const ordinary = summaryCards(renderedPanels(normalizeQuery({ source: "session" }), normal));
+    const filtered = summaryCards(renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), fusion))
+        .slice(0, ordinary.length);
+    assert.deepEqual(ordinary.map((card) => card.label), [
+        "Sessions with usage", "Usage (AIU)", "Recorded API requests", "Premium requests", "Prompt tokens",
+        "Cache read", "Cache write", "Uncached input", "Output tokens", "API time",
+    ]);
+    assert.deepEqual(filtered.map((card) => card.label), [
+        "Sessions with usage", "Usage (AIU)", "Usage records", "Premium requests", "Prompt tokens",
+        "Cache read", "Cache write", "Uncached input", "Output tokens", "API time",
+    ]);
+    assert.deepEqual(filtered.map((card) => card.value), ordinary.map((card) => card.value));
+    for (const label of ["Usage (AIU)", "Premium requests", "Prompt tokens", "Output tokens", "API time"]) {
+        const original = ordinary.find((card) => card.label === label);
+        const projected = filtered.find((card) => card.label === label);
+        assert.ok(projected.sub.startsWith(original.sub), `${label}: ${projected.sub} vs ${original.sub}`);
+    }
+    assert.match(filtered.find((card) => card.label === "Premium requests").sub,
+        /4 AIU \/ premium request · 2 \/ 2 records complete · 1 excluded/);
+    assert.match(filtered.find((card) => card.label === "Prompt tokens").sub, /^30% cache hit/);
+    assert.equal(ordinary.find((card) => card.label === "API time").value, "0.00000001 ms");
+    assert.deepEqual(normal, beforeNormal);
+    assert.deepEqual(fusion, beforeFusion);
+});
+
+test("Fusion summary ratios reject incomplete, excluded-only, zero-denominator and inconsistent inputs", () => {
+    const cases = [
+        ["AIU", (metrics) => Object.assign(metrics.AIU, { ObservedRecords: 2, CompleteRecords: 2 }),
+            [["Usage (AIU)", "– / session"], ["Premium requests", "– AIU / premium request"]]],
+        ["partial premium", (metrics) => { metrics.PremiumRequests.CompleteRecords = 1; },
+            [["Premium requests", "– AIU / premium request"]]],
+        ["excluded premium", (metrics) => Object.assign(metrics.PremiumRequests,
+            { Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 3 }),
+            [["Premium requests", "– AIU / premium request"]]],
+        ["zero premium", (metrics) => { metrics.PremiumRequests.Total = 0; },
+            [["Premium requests", "– AIU / premium request"]]],
+        ["inconsistent cache", (metrics) => { metrics.CacheReadTokens.Total = 101; },
+            [["Prompt tokens", "– cache hit"]]],
+        ["partial cache", (metrics) => { metrics.CacheReadTokens.CompleteRecords = 2; },
+            [["Prompt tokens", "– cache hit"]]],
+        ["partial output", (metrics) => { metrics.OutputTokens.CompleteRecords = 2; },
+            [["Output tokens", "– / session"]]],
+        ["partial duration", (metrics) => { metrics.APIDurationMs.CompleteRecords = 2; },
+            [["API time", "– / session"]]],
+    ];
+    for (const [name, change, expected] of cases) {
+        const data = completeFusionUsage();
+        change(data.FusionUsage.Metrics);
+        const cards = summaryCards(renderedPanels(normalizeQuery({ fusionOnly: true }), data));
+        for (const [label, sub] of expected) {
+            assert.ok(cards.find((card) => card.label === label).sub.startsWith(sub), `${name}: ${label}`);
+        }
+        if (name === "excluded premium") assert.equal(cards.find((card) => card.label === "Premium requests").value, "–");
+        if (name === "zero premium") assert.equal(cards.find((card) => card.label === "Premium requests").value, "0");
+    }
+    const zero = completeFusionUsage();
+    zero.FusionUsage.Metrics.AIU.Total = 0;
+    const cards = summaryCards(renderedPanels(normalizeQuery({ fusionOnly: true }), zero));
+    assert.match(cards.find((card) => card.label === "Premium requests").sub, /^0 AIU \/ premium request/);
+});
+
+test("normal usage cards distinguish unavailable values, recorded zeros and partial prompt totals", () => {
+    const data = {
+        UsageSessions: 1, UsageAIU: 0, UsagePremiumRequests: 0,
+        UsageCacheReadTokens: 12_360, UsageOutputTokens: 0,
+    };
+    const before = structuredClone(data);
+    const view = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const cards = summaryCards(view);
+    const find = (label) => cards.find((card) => card.label === label);
+    assert.equal(find("Usage (AIU)").value, "0");
+    assert.equal(find("Recorded API requests").value, "–");
+    assert.equal(find("Premium requests").sub, "– AIU / premium request");
+    assert.equal(find("Prompt tokens").value, "≥ 12.3K");
+    assert.equal(find("Prompt tokens").sub, "– cache hit");
+    assert.match(find("Prompt tokens").title, /Recorded subtotal: .*12,360 tokens/);
+    assert.equal(find("Cache read").value, "12.4K");
+    assert.equal(find("Cache write").value, "–");
+    assert.equal(find("Uncached input").value, "–");
+    assert.equal(find("Output tokens").value, "0");
+    assert.equal(find("Output tokens").sub, "0 / session");
+    assert.equal(find("API time").value, "–");
+    const missing = summaryCards(renderedPanels(normalizeQuery({ source: "session" }), { UsageSessions: 0 }));
+    assert.equal(missing.find((card) => card.label === "Prompt tokens").value, "–");
+    assert.equal(missing.find((card) => card.label === "Prompt tokens").title, "Token data is unavailable");
+    assert.deepEqual(data, before);
+});
+
+test("CLI, Fusion, and VS Code breakdowns share two-decimal AIU values", () => {
+    const raw = {
+        Key: "model-a", Sessions: 2, Requests: 2, PremiumRequests: 0.00000001, AIU: 0.000000001,
+        InputTokens: 60, CacheReadTokens: 30, CacheWriteTokens: 10, OutputTokens: 50, APIDurationMs: 0.00000001,
+    };
+    const normal = {
+        UsageSessions: 2, UsageIncompleteSessions: 0, ByModelUsage: [raw],
+        ByCWDUsage: [{ ...raw, Key: "/fictional/project" }], ByRoleUsage: [{ ...raw, Key: "main" }],
+    };
+    const fusion = completeFusionUsage();
+    const values = {
+        AIU: raw.AIU, PremiumRequests: raw.PremiumRequests, PromptTokens: 100, CacheReadTokens: raw.CacheReadTokens,
+        CacheWriteTokens: raw.CacheWriteTokens, UncachedInputTokens: raw.InputTokens, OutputTokens: raw.OutputTokens,
+        APIDurationMs: raw.APIDurationMs,
+    };
+    fusion.FusionUsage.ByModel = [fusionAgentEntry(raw.Key, 2, 2, values)];
+    fusion.FusionUsage.ByCWD = [fusionAgentEntry("/fictional/project", 2, 2, values)];
+    fusion.FusionUsage.ByRole = [fusionAgentEntry("main", 2, 2, values)];
+    const beforeNormal = structuredClone(normal);
+    const beforeFusion = structuredClone(fusion);
+    const storage = {
+        getItem: (key) => key === "attendant-dashboard.fusionWorkspaceView"
+            ? JSON.stringify({ unit: "session", sort: "aiu", direction: "desc" }) : null,
+        setItem() {},
+    };
+    const ordinary = renderedPanels(normalizeQuery({ source: "session" }), normal, { storage });
+    const filtered = renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), fusion, { storage });
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    const normalizeLabels = (labels, extraApiTime) => labels
+        .filter((label) => label !== undefined && !(extraApiTime && label === "API time"))
+        .map((label) => ({ "API requests": "Usage count", "Usage records": "Usage count",
+            "AIU / request": "AIU / count", "AIU / record": "AIU / count" })[label] ?? label);
+    for (const title of ["Models", "Workspaces", "Agent usage"]) {
+        const normalTable = panelTable(ordinary, title);
+        const fusionTable = panelTable(filtered, title);
+        assert.deepEqual(normalizeLabels(tableHeadings(ordinary, normalTable), false),
+            normalizeLabels(tableHeadings(filtered, fusionTable), title !== "Workspaces"), title);
+        for (const label of ["Premium req.", "Prompt", "Cache read", "Cache write", "Uncached", "Output", "AIU"]) {
+            assert.equal(text(tableCell(ordinary, normalTable, label)), text(tableCell(filtered, fusionTable, label)), `${title} ${label}`);
+        }
+        for (const label of ["Prompt", "Cache read", "Cache write", "Uncached", "Output"]) {
+            const ordinaryCell = tableCell(ordinary, normalTable, label);
+            const filteredCell = tableCell(filtered, fusionTable, label);
+            assert.ok(filteredCell.attributes.title.startsWith(ordinaryCell.attributes.title), `${title} ${label} tooltip`);
+            assert.match(ordinaryCell.attributes["aria-label"], /Recorded: .* tokens$/);
+        }
+        if (title !== "Agent usage") {
+            assert.equal(text(tableCell(ordinary, normalTable, "Cache hit")), text(tableCell(filtered, fusionTable, "Cache hit")), title);
+            assert.equal(tableCell(ordinary, normalTable, "Tokens").attributes["aria-label"],
+                tableCell(filtered, fusionTable, "Tokens").attributes["aria-label"], `${title} token bar`);
+        }
+        if (title === "Workspaces") {
+            assert.equal(text(tableCell(ordinary, normalTable, "API time")), text(tableCell(filtered, fusionTable, "API time")));
+            assert.equal(text(tableCell(ordinary, normalTable, "AIU / session")), text(tableCell(filtered, fusionTable, "AIU / session")));
+        }
+        if (title === "Agent usage") {
+            assert.equal(text(tableCell(ordinary, normalTable, "AIU / session")), text(tableCell(filtered, fusionTable, "AIU / session")));
+            assert.equal(text(tableCell(ordinary, normalTable, "AIU / 1M tokens")), text(tableCell(filtered, fusionTable, "AIU / 1M tokens")));
+        }
+        assert.equal(text(tableCell(ordinary, normalTable, "AIU")), "<0.01", title);
+        assert.equal(text(tableCell(ordinary, normalTable, "Premium req.")), "<0.01", title);
+    }
+
+    const vscode = renderedPanels(normalizeQuery({ source: "vscode" }), {
+        ByModel: [{ Key: "model-a", Requests: 2, InputTokens: 100, OutputTokens: 50, UsageAIU: 0.04 }],
+    });
+    const vscodeTable = panelTable(vscode, "Models");
+    assert.equal(text(tableCell(vscode, vscodeTable, "AIU")), "0.04");
+    assert.equal(text(tableCell(vscode, vscodeTable, "AIU / request")), "0.02");
+    const vscodeCard = vscode.nodes.flatMap(vscode.walk).find((node) => node.className === "card" &&
+        vscode.walk(node).some((child) => child.className === "label" && child.children[0] === "Usage (AIU)"));
+    assert.equal(vscode.walk(vscodeCard).find((node) => node.className === "value").children[0], "0.04");
+    assert.deepEqual(normal, beforeNormal);
+    assert.deepEqual(fusion, beforeFusion);
+});
+
+test("normal Agent costs validate raw inputs, recorded zeros, and incomplete or legacy breakdowns", () => {
+    const complete = {
+        Key: "complete", Sessions: 2, Requests: 2, PremiumRequests: 0.5, AIU: 2,
+        InputTokens: 60, CacheReadTokens: 30, CacheWriteTokens: 10, OutputTokens: 50,
+    };
+    const missingAIU = { ...complete, Key: "missing-aiu" };
+    const missingRequest = { ...complete, Key: "missing-request" };
+    const missingToken = { ...complete, Key: "missing-token" };
+    delete missingAIU.AIU;
+    delete missingRequest.Requests;
+    delete missingToken.CacheWriteTokens;
+    const data = {
+        UsageSessions: 2, UsageIncompleteSessions: 0,
+        ByRoleUsage: [
+            complete, missingAIU, missingRequest, missingToken,
+            { ...complete, Key: "zero", AIU: 0 },
+            { ...complete, Key: "zero-denominators", Sessions: 0, Requests: 0 },
+            { ...complete, Key: "unsafe-token", InputTokens: Number.MAX_SAFE_INTEGER + 1 },
+        ],
+    };
+    const before = structuredClone(data);
+    const app = interactiveFusion(data);
+    const table = app.agentTable();
+    const headings = app.walk(table).find((node) => node.tag === "thead").children[0].children;
+    const index = (id) => headings.findIndex((heading) =>
+        app.walk(heading).some((node) => node.attributes["data-agent-sort"] === id));
+    const row = (key) => app.walk(table).find((node) => node.tag === "tbody").children
+        .find((entry) => app.text(entry.children[0]) === key);
+    const value = (key, id) => app.text(row(key).children[index(id)]);
+    assert.equal(value("complete", "sessions"), "2");
+    assert.equal(value("complete", "uncached"), "60");
+    assert.equal(value("complete", "sessionCost"), "1");
+    assert.equal(value("complete", "requestCost"), "1");
+    assert.equal(value("complete", "tokenCost"), "13,333.33");
+    for (const id of ["aiu", "sessionCost", "requestCost", "tokenCost"]) assert.equal(value("missing-aiu", id), "–", id);
+    assert.equal(value("missing-request", "requests"), "–");
+    assert.equal(value("missing-request", "requestCost"), "–");
+    assert.equal(value("missing-request", "sessionCost"), "1");
+    assert.equal(value("missing-token", "prompt"), "–");
+    assert.equal(value("missing-token", "cacheWrite"), "–");
+    assert.equal(value("missing-token", "tokenCost"), "–");
+    assert.equal(value("missing-token", "requestCost"), "1");
+    for (const id of ["sessionCost", "requestCost", "tokenCost"]) assert.equal(value("zero", id), "0", id);
+    assert.equal(value("zero-denominators", "sessionCost"), "–");
+    assert.equal(value("zero-denominators", "requestCost"), "–");
+    assert.equal(value("unsafe-token", "tokenCost"), "–");
+    assert.match(row("complete").children[index("prompt")].attributes.title, /Recorded: 100 tokens/);
+    assert.equal(row("complete").children[index("prompt")].attributes["aria-label"], "100; Recorded: 100 tokens");
+    for (const incomplete of [1, undefined]) {
+        const view = interactiveFusion({ ...data, UsageIncompleteSessions: incomplete });
+        const heading = view.agentHeader("sessionCost");
+        const cells = view.walk(view.agentTable()).find((node) => node.tag === "tbody").children;
+        const cellIndex = view.walk(view.agentTable()).find((node) => node.tag === "thead").children[0].children.indexOf(heading);
+        assert.ok(cells.every((entry) => view.text(entry.children[cellIndex]) === "–"));
+    }
+    assert.deepEqual(data, before);
+});
+
+test("normal token tooltips do not claim exact counts for missing or unsafe inputs", () => {
+    const raw = {
+        Key: "model-a", Sessions: 1, Requests: 1, AIU: 1,
+        InputTokens: 10, CacheReadTokens: 0, OutputTokens: 5,
+    };
+    const data = {
+        UsageSessions: 1, UsageCacheReadTokens: Number.MAX_SAFE_INTEGER + 1,
+        ByModelUsage: [raw], ByCWDUsage: [{ ...raw, Key: "/fictional/project" }],
+    };
+    const before = structuredClone(data);
+    const view = renderedPanels(normalizeQuery({ source: "session" }), data);
+    for (const title of ["Models", "Workspaces"]) {
+        const table = panelTable(view, title);
+        for (const column of ["Tokens", "Prompt", "Cache write"]) {
+            const cell = tableCell(view, table, column);
+            assert.equal(cell.attributes.title, undefined, `${title} ${column}`);
+            assert.equal(cell.attributes["aria-label"], undefined, `${title} ${column}`);
+        }
+        assert.equal(tableCell(view, table, "Cache read").attributes.title, "Recorded: 0 tokens");
+        assert.equal(tableCell(view, table, "Uncached").attributes.title, "Recorded: 10 tokens");
+        assert.equal(tableCell(view, table, "Output").attributes.title, "Recorded: 5 tokens");
+    }
+    assert.equal(summaryCards(view).find((card) => card.label === "Cache read").title,
+        "Exact token count exceeds numeric precision");
+    assert.deepEqual(data, before);
+});
+
+test("token tables sort raw Fusion values even when compact labels match", () => {
+    const data = projectFusion(fusionDataset());
+    for (const entries of [data.FusionUsage.ByModel, data.FusionUsage.ByCWD, data.FusionUsage.ByRole]) {
+        for (const [index, total] of [12_360, 12_399].entries()) {
+            entries[index].Metrics.PromptTokens = {
+                Total: total, ObservedRecords: entries[index].UsageRecords,
+                CompleteRecords: entries[index].UsageRecords, ExcludedRecords: 0,
+            };
+        }
+    }
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { fusionOnly: true });
+    for (const [table, attribute] of [
+        [app.modelTable(), "data-fusion-model-sort"],
+        [app.workspaceTable(), "data-fusion-workspace-sort"],
+        [app.agentTable(), "data-agent-sort"],
+    ]) {
+        const headings = app.walk(table).find((node) => node.tag === "thead").children[0].children;
+        const index = headings.findIndex((heading) =>
+            app.walk(heading).some((node) => node.attributes[attribute] === "prompt"));
+        const rows = app.walk(table).find((node) => node.tag === "tbody").children;
+        assert.deepEqual(rows.map((row) => app.text(row.children[index])), ["12.4K", "12.4K"]);
+    }
+    app.modelButton("prompt").events.click();
+    app.workspaceButton("prompt").events.click();
+    app.agentButton("prompt").events.click();
+    assert.deepEqual(app.modelNames(), ["model-b", "model-a"]);
+    assert.deepEqual(app.workspaceNames(), ["/fictional/b", "/fictional/a"]);
+    assert.deepEqual(app.agentRows(), ["Subagents", "Main agent"]);
+    app.modelButton("prompt").events.click();
+    app.workspaceButton("prompt").events.click();
+    app.agentButton("prompt").events.click();
+    assert.deepEqual(app.modelNames(), ["model-a", "model-b"]);
+    assert.deepEqual(app.workspaceNames(), ["/fictional/a", "/fictional/b"]);
+    assert.deepEqual(app.agentRows(), ["Main agent", "Subagents"]);
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+});
+
+test("normal Agent usage also rounds partial token subtotals down", () => {
+    const data = normalAgentDataset();
+    Object.assign(data.ByRoleUsage[2], {
+        InputTokens: 12_360, CacheReadTokens: 0, CacheWriteTokens: 0, OutputTokens: 999_950,
+    });
+    const app = interactiveFusion(data);
+    const table = app.agentTable();
+    const headings = app.walk(table).find((node) => node.tag === "thead").children[0].children;
+    const row = app.walk(table).find((node) => node.tag === "tbody").children
+        .find((entry) => app.text(entry.children[0]) === "Unknown");
+    for (const [id, expected] of [["prompt", "≥ 12.3K"], ["output", "≥ 999.9K"]]) {
+        const index = headings.indexOf(app.agentHeader(id));
+        assert.ok(index >= 0, id);
+        assert.equal(app.text(row.children[index]), expected, id);
+    }
+    assert.deepEqual(app.submitted, []);
+});
+
+test("normal and Fusion-only unit controls use the right-aligned panel layout", () => {
+    const normal = {
+        UsageSessions: 1,
+        ByModelUsage: [{ Key: "model-a", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByCWDUsage: [{ Key: "/fictional/workspace", Sessions: 1, Requests: 1, AIU: 1 }],
+    };
+    for (const [fusionOnly, data] of [[false, normal], [true, projectFusion(fusionDataset())]]) {
+        const { panels, walk } = renderedPanels(normalizeQuery({ fusionOnly }), data);
+        for (const title of ["Models", "Workspaces"]) {
+            const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === title));
+            const controls = walk(panel).find((node) => node.className === "panel-controls");
+            assert.ok(controls, `${title}: ${fusionOnly}`);
+            assert.ok(walk(controls).some((node) => node.className === "controls"));
+            assert.ok(walk(controls).some((node) => node.className === "segmented"));
+        }
+    }
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /\.panel-controls \.controls\s*\{[^}]*margin-left:\s*auto\s*;/);
+});
+
+test("table headings retain full labels and accessible sort controls with two wrap groups", () => {
+    const app = interactiveFusion(projectFusion(fusionDataset()), { fusionOnly: true });
+    for (const [label, parts] of [
+        ["AIU", []],
+        ["Cache hit", ["Cache", "hit"]],
+        ["AIU / turn", ["AIU /", "turn"]],
+        ["AIU / 1M tokens", ["AIU /", "1M tokens"]],
+        ["Missing phase identity", ["Missing phase", "identity"]],
+        ["Other decision timing", ["Other decision", "timing"]],
+    ]) {
+        const heading = app.context.tableHeading(label);
+        assert.equal(app.text(heading), label);
+        assert.deepEqual(app.walk(heading).filter((node) => node.className === "table-heading-part").map(app.text), parts);
+    }
+
+    const button = app.modelButton("unit");
+    const label = app.text(button.children[0]);
+    assert.equal(label, "AIU / record");
+    assert.match(button.attributes["aria-label"], /^AIU \/ record: sort (ascending|descending)$/);
+    assert.equal(button.children[1].attributes["aria-hidden"], "true");
+    assert.equal(app.modelHeader("unit").attributes.scope, "col");
+
+    const toolTable = app.context.toolTable([{ Key: "tool-a", Total: 1, OK: 1, Error: 0 }]);
+    const plainHeading = app.walk(toolTable).find((node) => node.tag === "th" && app.text(node) === "Total time");
+    assert.deepEqual(app.walk(plainHeading).filter((node) => node.className === "table-heading-part").map(app.text), ["Total", "time"]);
+
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /thead th\s*\{[^}]*white-space:\s*normal\s*;/);
+    assert.match(css, /\.table-heading-part\s*\{[^}]*white-space:\s*nowrap\s*;/);
+    assert.match(css, /\.sort-header\s*\{[^}]*white-space:\s*normal\s*;/);
+    assert.match(css, /\.sort-indicator\s*\{[^}]*flex-shrink:\s*0\s*;/);
+    assert.match(css, /th,\s*td\s*\{[^}]*white-space:\s*nowrap\s*;/);
+    assert.match(css, /\.panel\s*\{[^}]*overflow-x:\s*auto\s*;/);
+});
+
+test("Fusion Models and Workspaces render only complete, consistent token bars and valid cache hits", () => {
+    const values = {
+        AIU: 2, PremiumRequests: 0.5, PromptTokens: 100, CacheReadTokens: 30,
+        CacheWriteTokens: 10, UncachedInputTokens: 60, OutputTokens: 50, APIDurationMs: 100,
+    };
+    const good = fusionAgentEntry("good", 1, 2, values);
+    const partial = structuredClone(good);
+    partial.Key = "partial";
+    partial.Metrics.CacheWriteTokens.CompleteRecords = 1;
+    const inconsistent = structuredClone(good);
+    inconsistent.Key = "inconsistent";
+    inconsistent.Metrics.PromptTokens.Total = 101;
+    const overCache = structuredClone(good);
+    overCache.Key = "over-cache";
+    overCache.Metrics.CacheReadTokens.Total = 101;
+    const zero = structuredClone(good);
+    zero.Key = "zero";
+    for (const field of ["PromptTokens", "CacheReadTokens", "CacheWriteTokens", "UncachedInputTokens", "OutputTokens"]) {
+        zero.Metrics[field].Total = 0;
+    }
+    const missing = structuredClone(good);
+    missing.Key = "missing";
+    missing.Metrics.CacheReadTokens = { Total: 0, ObservedRecords: 0, CompleteRecords: 0, ExcludedRecords: 0 };
+    const entries = [good, partial, inconsistent, overCache, zero, missing];
+    const data = projectFusion(fusionDataset());
+    data.FusionUsage.ByModel = structuredClone(entries);
+    data.FusionUsage.ByCWD = entries.map((entry) => ({ ...structuredClone(entry), Key: `/fictional/${entry.Key}` }));
+    data.FusionUsage.ModelGroups = data.FusionUsage.CWDGroups = entries.length;
+    const before = structuredClone(data);
+    const saved = new Map();
+    const storage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+    const app = interactiveFusion(data, { fusionOnly: true, storage });
+    for (const [kind, table, button, header, rows, prefix] of [
+        ["model", app.modelTable, app.modelButton, app.modelHeader, app.modelRows, ""],
+        ["workspace", app.workspaceTable, app.workspaceButton, app.workspaceHeader, app.workspaceRows, "/fictional/"],
+    ]) {
+        const current = table();
+        const headings = app.walk(current).find((node) => node.tag === "thead").children[0].children;
+        const tokenIndex = headings.indexOf(header("tokens"));
+        const hitIndex = headings.indexOf(header("cacheHit"));
+        const row = (key) => rows().find((entry) => app.text(entry.children[0]) === `${prefix}${key}`);
+        const barCell = row("good").children[tokenIndex];
+        const bar = app.walk(barCell).find((node) => node.className === "bar");
+        assert.deepEqual(bar.children.map((segment) => segment.attributes.title), [
+            "Cache read: 30", "Cache write: 10", "Uncached input: 60", "Output: 50",
+        ], kind);
+        assert.equal(barCell.attributes["aria-label"], "Cache read: 30; Cache write: 10; Uncached input: 60; Output: 50");
+        assert.equal(app.text(row("good").children[hitIndex]), "30%");
+        assert.equal(app.text(row("partial").children[hitIndex]), "30%");
+        assert.equal(app.text(row("zero").children[hitIndex]), "–");
+        assert.equal(app.text(row("over-cache").children[hitIndex]), "–");
+        assert.equal(app.text(row("missing").children[hitIndex]), "–");
+        assert.equal(app.walk(row("zero").children[tokenIndex]).find((node) => node.className === "bar").children.length, 0);
+        for (const key of ["partial", "inconsistent", "over-cache", "missing"]) {
+            assert.equal(app.text(row(key).children[tokenIndex]), "–", `${kind} ${key}`);
+            assert.match(row(key).children[tokenIndex].attributes.title, /complete and consistent/);
+        }
+        const panel = current.closest(".panel");
+        for (const label of ["Cache read", "Cache write", "Uncached input", "Output"]) {
+            assert.ok(app.walk(panel).some((node) => node.children.includes(label)), `${kind} legend ${label}`);
+        }
+        panel.scrollLeft = 85;
+        app.context.document.activeElement = button("tokens");
+        button("tokens").events.click();
+        assert.equal(header("tokens").attributes["aria-sort"], "descending");
+        assert.equal(app.context.document.activeElement, button("tokens"));
+        assert.equal(table().closest(".panel").scrollLeft, 85);
+        const keys = () => rows().map((entry) => app.text(entry.children[0]).replace(prefix, ""));
+        assert.deepEqual(keys().slice(0, 2), ["good", "zero"]);
+        button("tokens").events.click();
+        assert.deepEqual(keys().slice(0, 2), ["zero", "good"]);
+        button("cacheHit").events.click();
+        assert.equal(header("cacheHit").attributes["aria-sort"], "descending");
+        assert.deepEqual(keys().slice(-3), ["missing", "over-cache", "zero"]);
+    }
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionModelView")),
+        { unit: "record", sort: "cacheHit", direction: "desc" });
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionWorkspaceView")),
+        { unit: "record", sort: "cacheHit", direction: "desc" });
+    const reloaded = interactiveFusion(data, { fusionOnly: true, storage });
+    assert.equal(reloaded.modelHeader("cacheHit").attributes["aria-sort"], "descending");
+    assert.equal(reloaded.workspaceHeader("cacheHit").attributes["aria-sort"], "descending");
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+});
+
+function fusionModelDataset() {
+    const data = projectFusion(fusionDataset());
+    data.FusionUsage.ByModel = fusionAgentEntries().map((entry, index) => ({
+        ...entry, Key: `model-${index ? "b" : "a"}`, Sessions: index ? 1 : 2,
+    }));
+    return data;
+}
+
+function fusionWorkspaceDataset() {
+    const data = fusionModelDataset();
+    const [first, second] = fusionAgentEntries();
+    first.Key = "/fictional/workspace-a";
+    first.Sessions = 2;
+    first.Metrics.AIU.CompleteRecords = first.UsageRecords;
+    second.Key = "/fictional/workspace-b";
+    second.Sessions = 1;
+    second.Metrics.AIU.Total = 3;
+    second.Metrics.AIU.ObservedRecords = second.Metrics.AIU.CompleteRecords = second.UsageRecords;
+    second.Metrics.PromptTokens.Total = 300;
+    second.Metrics.PromptTokens.ObservedRecords = second.Metrics.PromptTokens.CompleteRecords = second.UsageRecords;
+    second.Metrics.OutputTokens.Total = 0;
+    second.Metrics.OutputTokens.ObservedRecords = second.Metrics.OutputTokens.CompleteRecords = second.UsageRecords;
+    data.FusionUsage.ByCWD = [first, second];
+    return data;
+}
+
+test("Fusion-only Models selects one unit cost with comparison bars and sorts locally by the selected unit", () => {
+    const data = fusionModelDataset();
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { fusionOnly: true });
+    const costs = () => app.modelRows().map((row) => app.text(row.children.at(-2)));
+    const widths = () => app.modelRows().map((row) => row.children.at(-1).children[0].children.map((bar) => bar.style.width));
+    assert.equal(app.modelUnit("Usage record").attributes["aria-pressed"], "true");
+    assert.equal(app.modelUnit("Session").attributes["aria-pressed"], "false");
+    assert.match(app.text(app.modelButton("unit").children[0]), /^AIU \/ record$/);
+    assert.deepEqual(app.modelNames(), ["model-b", "model-a"]);
+    assert.deepEqual(costs(), ["0.75", "1"]);
+    assert.deepEqual(widths(), [["75%"], ["100%"]]);
+    assert.equal(app.walk(app.modelTable()).filter((node) => node.tag === "th" &&
+        app.text(node).startsWith("AIU / ")).length, 1);
+    assert.ok(app.walk(app.modelTable()).some((node) => node.attributes["aria-label"] === "Unit cost comparison"));
+    assert.equal(app.walk(app.modelTable()).some((node) => /API requests/.test(app.text(node))), false);
+    const workspacePanel = app.workspaceTable().closest(".panel");
+    assert.ok(app.walk(workspacePanel).some((node) => node.className === "segmented"));
+    assert.deepEqual(app.walk(app.workspaceTable()).filter((node) => node.tag === "th")
+        .map(app.text).filter((label) => label.startsWith("AIU / ")), ["AIU / record↕"]);
+    assert.deepEqual(app.walk(app.agentTable()).filter((node) => node.tag === "th")
+        .map(app.text).filter((label) => label.startsWith("AIU / ")),
+    ["AIU / session↕", "AIU / record↕", "AIU / 1M tokens↕"]);
+    for (const id of ["model", "sessions", "records", "aiu", "premium", "prompt", "uncached",
+        "cacheRead", "cacheWrite", "output", "apiTime", "unit"]) {
+        assert.equal(app.modelButton(id).attributes.type, "button");
+        assert.equal(app.modelHeader(id).attributes.scope, "col");
+    }
+
+    app.modelTable().closest(".panel").scrollLeft = 90;
+    app.context.document.activeElement = app.modelButton("unit");
+    app.modelButton("unit").events.click();
+    assert.equal(app.modelHeader("unit").attributes["aria-sort"], "descending");
+    assert.deepEqual(app.modelNames(), ["model-a", "model-b"]);
+    assert.equal(app.context.document.activeElement, app.modelButton("unit"));
+    assert.equal(app.modelTable().closest(".panel").scrollLeft, 90);
+    app.modelUnit("Session").events.click();
+    assert.equal(app.text(app.modelButton("unit").children[0]), "AIU / session");
+    assert.deepEqual(app.modelNames(), ["model-b", "model-a"]);
+    assert.deepEqual(costs(), ["3", "1"]);
+    assert.deepEqual(widths()[0], ["100%"]);
+    assert.ok(Math.abs(parseFloat(widths()[1][0]) - 100 / 3) < 1e-10);
+    app.modelUnit("1M tokens").events.click();
+    assert.equal(app.text(app.modelButton("unit").children[0]), "AIU / 1M tokens");
+    assert.deepEqual(app.modelNames(), ["model-a", "model-b"]);
+    assert.deepEqual(costs(), ["13,333.33", "10,000"]);
+    assert.deepEqual(widths(), [["100%"], ["75%"]]);
+    app.modelButton("unit").events.click();
+    assert.deepEqual(app.modelNames(), ["model-b", "model-a"]);
+    assert.equal(app.modelHeader("unit").attributes["aria-sort"], "ascending");
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(data, before);
+});
+
+test("Fusion-only Workspaces selects one unit cost with comparison bars, sorting, and scope filtering", () => {
+    const data = fusionWorkspaceDataset();
+    const before = structuredClone(data);
+    const app = interactiveFusion(data, { fusionOnly: true });
+    const costs = () => app.workspaceRows().map((row) => app.text(row.children.at(-2)));
+    const widths = () => app.workspaceRows().map((row) => row.children.at(-1).children[0].children.map((bar) => bar.style.width));
+    assert.equal(app.workspaceUnit("Usage record").attributes["aria-pressed"], "true");
+    assert.deepEqual(app.workspaceNames(), ["/fictional/workspace-b", "/fictional/workspace-a"]);
+    assert.deepEqual(costs(), ["0.75", "1"]);
+    assert.deepEqual(widths(), [["75%"], ["100%"]]);
+    assert.equal(app.walk(app.workspaceTable()).filter((node) => node.tag === "th" &&
+        app.text(node).startsWith("AIU / ")).length, 1);
+    for (const id of ["workspace", "sessions", "records", "aiu", "premium", "prompt", "uncached",
+        "cacheRead", "cacheWrite", "output", "apiTime", "unit"]) {
+        assert.equal(app.workspaceButton(id).attributes.type, "button");
+        assert.equal(app.workspaceHeader(id).attributes.scope, "col");
+    }
+
+    app.workspaceButton("unit").events.click();
+    assert.deepEqual(app.workspaceNames(), ["/fictional/workspace-a", "/fictional/workspace-b"]);
+    assert.equal(app.workspaceHeader("unit").attributes["aria-sort"], "descending");
+    app.workspaceUnit("Session").events.click();
+    assert.equal(app.text(app.workspaceButton("unit").children[0]), "AIU / session");
+    assert.deepEqual(app.workspaceNames(), ["/fictional/workspace-b", "/fictional/workspace-a"]);
+    assert.deepEqual(costs(), ["3", "1"]);
+    app.workspaceUnit("1M tokens").events.click();
+    assert.equal(app.text(app.workspaceButton("unit").children[0]), "AIU / 1M tokens");
+    assert.deepEqual(app.workspaceNames(), ["/fictional/workspace-a", "/fictional/workspace-b"]);
+    assert.deepEqual(costs(), ["13,333.33", "10,000"]);
+    assert.deepEqual(widths(), [["100%"], ["75%"]]);
+
+    app.workspaceRows()[0].children[0].children[0].events.click();
+    assert.deepEqual(JSON.parse(JSON.stringify(app.submitted)), [{ scope: "cwd", path: "/fictional/workspace-a" }]);
+    assert.deepEqual(data, before);
+});
+
+test("Fusion-only Workspaces preferences persist independently and incomplete costs remain unavailable", () => {
+    const saved = new Map([
+        ["attendant-dashboard.fusionModelView", JSON.stringify({ unit: "session", sort: "requests", direction: "asc" })],
+        ["attendant-dashboard.workspaceView", JSON.stringify({ unit: "mtok", sort: "workspace", direction: "desc" })],
+    ]);
+    const storage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+    const app = interactiveFusion(fusionWorkspaceDataset(), { fusionOnly: true, storage });
+    assert.equal(app.workspaceUnit("Usage record").attributes["aria-pressed"], "true");
+    const modelPreference = saved.get("attendant-dashboard.fusionModelView");
+    const workspacePreference = saved.get("attendant-dashboard.workspaceView");
+    app.workspaceUnit("Session").events.click();
+    app.workspaceButton("unit").events.click();
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionWorkspaceView")),
+        { unit: "session", sort: "unit", direction: "desc" });
+    assert.equal(saved.get("attendant-dashboard.fusionModelView"), modelPreference);
+    assert.equal(saved.get("attendant-dashboard.workspaceView"), workspacePreference);
+    const reloaded = interactiveFusion(fusionWorkspaceDataset(), { fusionOnly: true, storage });
+    assert.equal(reloaded.workspaceUnit("Session").attributes["aria-pressed"], "true");
+    assert.equal(reloaded.workspaceHeader("unit").attributes["aria-sort"], "descending");
+
+    const incomplete = fusionWorkspaceDataset();
+    incomplete.FusionUsage.ByCWD[0].Metrics.AIU.CompleteRecords = 1;
+    const partial = interactiveFusion(incomplete, { fusionOnly: true });
+    const row = partial.workspaceRows().find((entry) => partial.text(entry.children[0]) === "/fictional/workspace-a");
+    assert.equal(partial.text(row.children.at(-2)), "–");
+    assert.equal(row.children.at(-1).children[0].children.length, 0);
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(reloaded.submitted, []);
+});
+
+test("Fusion-only Models keeps incomplete costs unavailable and small or recorded-zero costs accurate", () => {
+    const data = projectFusion(fusionDataset());
+    const zero = structuredClone(data.FusionUsage.ByModel[1]);
+    zero.Key = "";
+    zero.Metrics.AIU.Total = 0;
+    data.FusionUsage.ByModel.push(zero);
+    data.FusionUsage.ModelGroups = 3;
+    const app = interactiveFusion(data, { fusionOnly: true });
+    const row = (key) => app.modelRows().find((entry) => app.text(entry.children[0]) === key);
+    const cost = (key) => app.text(row(key).children.at(-2));
+    const bars = (key) => row(key).children.at(-1).children[0].children;
+    assert.equal(cost("model-a"), "–");
+    assert.equal(bars("model-a").length, 0);
+    assert.equal(cost("model-b"), "<0.01");
+    assert.equal(bars("model-b")[0].style.width, "100%");
+    assert.match(bars("model-b")[0].attributes.title, /AIU \/ record: <0\.01$/);
+    assert.equal(cost("Unknown model"), "0");
+    assert.equal(bars("Unknown model").length, 0);
+    for (const direction of ["desc", "asc"]) {
+        app.modelButton("unit").events.click();
+        assert.equal(app.modelHeader("unit").attributes["aria-sort"], direction === "asc" ? "ascending" : "descending");
+        assert.equal(app.modelNames().at(-1), "model-a");
+    }
+    app.modelUnit("1M tokens").events.click();
+    assert.equal(cost("model-b"), "<0.01");
+    assert.equal(cost("model-a"), "–");
+
+    for (const unavailable of [false, true]) {
+        const only = structuredClone(zero);
+        only.Key = "only-model";
+        if (unavailable) only.Metrics.AIU.ObservedRecords = only.Metrics.AIU.CompleteRecords = 0;
+        const isolated = fusionModelDataset();
+        isolated.FusionUsage.ByModel = [only];
+        const single = interactiveFusion(isolated, { fusionOnly: true });
+        const cells = single.modelRows()[0].children;
+        assert.equal(single.text(cells.at(-2)), unavailable ? "–" : "0");
+        assert.equal(cells.at(-1).children[0].children.length, 0);
+    }
+});
+
+test("Fusion-only Models preferences persist independently of normal Models and respect Top", () => {
+    const saved = new Map([["attendant-dashboard.sessionModelView", JSON.stringify({ unit: "session", sort: "requests", direction: "asc" })]]);
+    const storage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+    const original = saved.get("attendant-dashboard.sessionModelView");
+    const app = interactiveFusion(fusionModelDataset(), { fusionOnly: true, storage });
+    app.modelUnit("1M tokens").events.click();
+    app.modelButton("unit").events.click();
+    assert.deepEqual(JSON.parse(saved.get("attendant-dashboard.fusionModelView")), { unit: "mtok", sort: "unit", direction: "desc" });
+    assert.equal(saved.get("attendant-dashboard.sessionModelView"), original);
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: false };
+        state.results.session.data = { UsageSessions: 1, ByModelUsage: [{ Key: "ordinary", Sessions: 1, Requests: 1, AIU: 1 }] };
+        render();
+    `, app.context);
+    assert.deepEqual(vm.runInContext("modelViews.session", app.context), { unit: "session", sort: "requests", direction: "asc" });
+    assert.equal(saved.get("attendant-dashboard.fusionModelView"), JSON.stringify({ unit: "mtok", sort: "unit", direction: "desc" }));
+    const reloaded = interactiveFusion(fusionModelDataset(), { fusionOnly: true, storage });
+    assert.equal(reloaded.modelUnit("1M tokens").attributes["aria-pressed"], "true");
+    assert.equal(reloaded.modelHeader("unit").attributes["aria-sort"], "descending");
+    assert.deepEqual(reloaded.modelNames(), ["model-a", "model-b"]);
+    const limited = interactiveFusion(projectFusion(fusionDataset(1)), { fusionOnly: true, top: 1 });
+    limited.modelUnit("Session").events.click();
+    limited.modelButton("model").events.click();
+    assert.deepEqual(limited.modelNames(), ["model-a"]);
+    assert.deepEqual(app.submitted, []);
+    assert.deepEqual(reloaded.submitted, []);
+    assert.deepEqual(limited.submitted, []);
+});
+
+test("Fusion-only Models handles empty results and invalid or unavailable preferences", () => {
+    const empty = renderedPanels(normalizeQuery({ fusionOnly: true }), projectFusion(emptyFusionDataset()));
+    const model = empty.panels.find((panel) => empty.walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Models"));
+    assert.equal(empty.walk(model).some((node) => node.tag === "table"), false);
+    assert.ok(empty.walk(model).some((node) => node.children.includes("No Fusion-tagged usage records.")));
+    for (const value of ["{invalid", '{"unit":"request","sort":"invalid","direction":"invalid"}', null]) {
+        const storage = {
+            getItem: (key) => {
+                if (key !== "attendant-dashboard.fusionModelView") return null;
+                if (value === null) throw new Error("storage unavailable");
+                return value;
+            },
+            setItem: () => { throw new Error("storage unavailable"); },
+        };
+        const app = interactiveFusion(fusionModelDataset(), { fusionOnly: true, storage });
+        assert.equal(app.modelUnit("Usage record").attributes["aria-pressed"], "true");
+        assert.equal(app.modelHeader("aiu").attributes["aria-sort"], "descending");
+        app.modelUnit("Session").events.click();
+        assert.equal(app.modelUnit("Session").attributes["aria-pressed"], "true");
+        assert.ok(app.warnings.some(([message]) => message.includes("Could not save table view preferences")));
+        assert.deepEqual(app.submitted, []);
+    }
+});
+
+test("AIU formatting is capped at two decimals while API time retains small values", () => {
+    const { context } = renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), projectFusion(fusionDataset()));
+    const format = (value) => vm.runInContext(`fusionNumber(${value})`, context);
+    for (const [value, expected] of [
+        [0, "0"], [0.0000000000001, "<0.01"], [0.0099, "<0.01"],
+        [0.01, "0.01"], [1, "1"], [12.34567, "12.35"], [1234.567, "1,234.57"],
+    ]) {
+        assert.equal(format(value), expected);
+        assert.ok(!/[eE]/.test(format(value)));
+        const fraction = format(value).split(".")[1];
+        assert.ok(!fraction || fraction.replace(/\D/g, "").length <= 2);
+    }
+    assert.equal(vm.runInContext("fusionLowerBoundNumber(12.349)", context), "12.34");
+    assert.equal(vm.runInContext("fusionLowerBoundNumber(0.009)", context), "0");
+    assert.equal(vm.runInContext("fusionDuration(0.0000000000001)", context), "1.000e-13 ms");
+    assert.equal(vm.runInContext("fusionNumber(0)", context), "0");
+    assert.equal(vm.runInContext("fusionDuration(0)", context), "0 ms");
+});
+
+test("Fusion-only switch disables permission filters and persists across source tabs", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { kind: ["shell"] } } });
+    const { context, submitted, walk } = renderedPanels(query, {});
+    const root = new Element("section");
+    root.replaceChildren = (...children) => { root.children = children; };
+    context.FILTERS = FILTERS;
+    context.document.getElementById = () => root;
+    vm.runInContext('meta = { filters: FILTERS }; renderFilters("session");', context);
+    let toggle = walk(root).find((node) => node.className === "toggle fusion-filter");
+    let checkbox = walk(toggle).find((node) => node.tag === "input");
+    assert.equal(checkbox.attributes.checked, undefined);
+    checkbox.events.change({ target: { checked: true } });
+    assert.equal(submitted.at(-1).fusionOnly, true);
+    assert.deepEqual(Object.keys(submitted.at(-1)), ["fusionOnly"]);
+    vm.runInContext('state.query = { ...state.query, fusionOnly: true }; renderFilters("session");', context);
+    toggle = walk(root).find((node) => node.className === "toggle fusion-filter");
+    checkbox = walk(toggle).find((node) => node.tag === "input");
+    assert.equal(checkbox.attributes.checked, "");
+    const disabled = walk(root).filter((node) => node.tag === "input" && node !== checkbox);
+    assert.ok(disabled.length > 0 && disabled.every((node) => node.attributes.disabled === ""));
+    const remove = walk(root).find((node) => node.attributes["aria-label"] === "Remove shell");
+    assert.equal(remove.attributes.disabled, "");
+    vm.runInContext('state.query.source = "vscode"; renderFilters("vscode");', context);
+    assert.equal(walk(root).some((node) => node.className === "toggle fusion-filter"), false);
+    assert.equal(context.query.fusionOnly, false, "the original query object is not mutated");
+    assert.equal(vm.runInContext("state.query.fusionOnly", context), true);
+});
+
+test("a stale dashboard provider disables the Fusion switch and explains that a reload is needed", () => {
+    const query = normalizeQuery({ source: "session" });
+    const { context, walk } = renderedPanels(query, {});
+    const root = new Element("section");
+    root.replaceChildren = (...children) => { root.children = children; };
+    context.FILTERS = FILTERS;
+    context.document.getElementById = () => root;
+    vm.runInContext('delete state.query.fusionOnly; meta = { filters: FILTERS }; renderFilters("session");', context);
+    const toggle = walk(root).find((node) => node.className === "toggle fusion-filter");
+    const checkbox = walk(toggle).find((node) => node.tag === "input");
+    assert.equal(checkbox.attributes.disabled, "");
+    assert.ok(walk(root).some((node) => node.children.some((child) =>
+        typeof child === "string" && child.includes("Reload the dashboard extension"))));
+});
+
+test("Reset omits the Fusion field for an old provider and clears it for a current provider", () => {
+    for (const source of ["session", "vscode"]) {
+        for (const supported of [false, true]) {
+            const query = normalizeQuery({ source, fusionOnly: true });
+            const { context, submitted } = renderedPanels(query, {});
+            const elements = Object.fromEntries(
+                ["refresh", "reset", "query", "ask-send", "ask-text", "copy"].map((id) => [id, new Element("div")]),
+            );
+            for (const name of ["scope", "path", "period", "since"]) elements.query[name] = new Element("input");
+            context.document.getElementById = (id) => elements[id];
+            context.document.querySelectorAll = () => [];
+            context.FILTERS = FILTERS;
+            vm.runInContext(
+                `meta = { sources: ["session", "vscode"], filters: FILTERS }; ${supported ? "" : "delete state.query.fusionOnly;"} wire();`,
+                context,
+            );
+            elements.reset.events.click();
+            const patch = submitted.at(-1);
+            assert.equal(patch.source, source);
+            assert.equal(patch.scope, "worktree");
+            assert.equal(patch.period, "30d");
+            assert.equal(patch.top, 10);
+            assert.equal(Object.hasOwn(patch, "fusionOnly"), supported);
+            if (supported) assert.equal(patch.fusionOnly, false);
+            for (const [tab, filters] of Object.entries(FILTERS)) {
+                for (const filter of filters) assert.equal(patch.filters[tab][filter].length, 0);
+            }
+        }
+    }
+});
+
+test("CLI usage time guidance matches the supported payload", () => {
+    const query = normalizeQuery({ source: "session" });
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    const legacy = renderedPanels(query, { UsageSessions: 1, ByRoleUsage: [] });
+    assert.match(legacy.nodes.map(text).join(" "), /sessions' lifetime usage/);
+    const current = renderedPanels(query, { UsageSessions: 1, ByRoleUsage: [], Fusion: {} });
+    const content = current.nodes.map(text).join(" ");
+    assert.match(content, /select recorded usage updates/);
+    assert.match(content, /may include usage from before the selected period/);
+    assert.doesNotMatch(content, /sessions' lifetime usage/);
 });
 
 test("unfiltered panels disable Clear, while filters with no matching rows still allow clearing", () => {

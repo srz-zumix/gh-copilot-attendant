@@ -4,6 +4,20 @@ import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, normalizeQuery, Q
 
 test("default query builds the worktree-scoped session command", () => {
     assert.deepEqual(buildArgv(normalizeQuery()), ["session", "stats", "--period=30d", "--top=10", "--format", "json"]);
+    assert.equal(normalizeQuery().fusionOnly, false);
+});
+
+test("Fusion-only is a persistent session projection, not a CLI flag or VS Code filter", () => {
+    const base = normalizeQuery({ fusionOnly: true, filters: { session: { kind: ["shell"] } } });
+    const vscode = normalizeQuery({ source: "vscode" }, base);
+    const back = normalizeQuery({ source: "session" }, vscode);
+    assert.equal(vscode.fusionOnly, true);
+    assert.equal(back.fusionOnly, true);
+    assert.deepEqual(back.filters.session.kind, ["shell"]);
+    assert.deepEqual(buildArgv(base, "session"), buildArgv(normalizeQuery({ fusionOnly: false }, base), "session"));
+    assert.deepEqual(buildArgv(base, "vscode"), buildArgv(normalizeQuery({ fusionOnly: false }, base), "vscode"));
+    assert.throws(() => normalizeQuery({ fusionOnly: "true" }), /fusionOnly must be a boolean/);
+    assert.throws(() => normalizeQuery({ fusionOnly: null }), /fusionOnly must be a boolean/);
 });
 
 test("scopes map to the matching CLI flags", () => {

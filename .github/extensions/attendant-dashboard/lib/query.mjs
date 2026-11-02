@@ -55,6 +55,7 @@ export function defaultQuery() {
         since: "",
         until: "",
         top: 10,
+        fusionOnly: false,
         filters: emptyFilters(),
     };
 }
@@ -217,7 +218,7 @@ export function normalizeQuery(patch = {}, base = defaultQuery()) {
     if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
         throw new QueryError("query must be an object");
     }
-    const known = new Set(["source", "scope", "path", "session", "period", "since", "until", "top", "filters"]);
+    const known = new Set(["source", "scope", "path", "session", "period", "since", "until", "top", "fusionOnly", "filters"]);
     for (const key of Object.keys(patch)) {
         if (!known.has(key)) throw new QueryError(`unknown query field "${key}"`);
     }
@@ -255,6 +256,9 @@ export function normalizeQuery(patch = {}, base = defaultQuery()) {
         throw new QueryError(`top must be an integer between 0 and ${MAX_TOP}`);
     }
     q.top = top;
+
+    if (typeof merged.fusionOnly !== "boolean") throw new QueryError("fusionOnly must be a boolean");
+    q.fusionOnly = merged.fusionOnly;
 
     const baseFilters = base?.filters ?? {};
     for (const source of SOURCES) {

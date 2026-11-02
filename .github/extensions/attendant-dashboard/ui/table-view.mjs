@@ -1,10 +1,10 @@
 export function normalizeTableView(saved, { units, columns, defaultUnit, defaultSort }) {
     const view = saved !== null && typeof saved === "object" ? saved : {};
-    return {
-        unit: Object.hasOwn(units, view.unit) ? view.unit : defaultUnit,
+    const result = {
         sort: columns.some((column) => column.id === view.sort) ? view.sort : defaultSort,
         direction: view.direction === "asc" ? "asc" : "desc",
     };
+    return units ? { unit: Object.hasOwn(units, view.unit) ? view.unit : defaultUnit, ...result } : result;
 }
 
 export function toggleTableSort(view, columnId, columns) {
@@ -15,7 +15,7 @@ export function toggleTableSort(view, columnId, columns) {
     };
 }
 
-export function sortTableEntries(entries, view, columns) {
+export function sortTableEntries(entries, view, columns, tieBreak = (a, b) => String(a.Key).localeCompare(String(b.Key))) {
     const column = columns.find((entry) => entry.id === view.sort);
     const direction = view.direction === "asc" ? 1 : -1;
     return [...entries].sort((a, b) => {
@@ -25,6 +25,6 @@ export function sortTableEntries(entries, view, columns) {
         if (left === null && right !== null) return 1;
         if (right === null && left !== null) return -1;
         const comparison = left === null ? 0 : typeof left === "string" ? left.localeCompare(right) : left - right;
-        return comparison * direction || String(a.Key).localeCompare(String(b.Key));
+        return comparison * direction || tieBreak(a, b);
     });
 }

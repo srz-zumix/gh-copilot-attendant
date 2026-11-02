@@ -174,8 +174,25 @@ request records or `modelMetrics` and appears as `MODEL_USAGE` / `ByModelUsage`.
 metadata; do not infer roles from model names. Checkpoint-only usage may have no model,
 request, or token breakdown. `UsageIncompleteSessions` flags incomplete breakdowns,
 whose request/token counts are recorded subtotals. `UsageRequests` is the API request
-total. Usage time bounds use the latest recorded update for lifetime totals; role usage
-is never truncated by `--top`. See the
+total. Usage time bounds select recorded updates; cumulative snapshots are
+differenced against earlier recorded totals and may include usage before the
+selected period. Role usage is never truncated by `--top`.
+`FUSION` / `Fusion` counts recorded resolved turns by pattern and usage records
+by pattern, phase, role, and usage model. A phase count requires both a Fusion
+ID and phase ID; unidentified records and incomplete AIU coverage are shown
+separately. AIU is a recorded subtotal, not inferred from checkpoints or planned
+phases. A turn or phase can appear in multiple rows. Directory/session scope
+applies, and time bounds select each Fusion event independently; events without
+timestamps are excluded when a time bound is set. Permission filters do not
+apply. `--top` limits Fusion breakdowns, not totals. Older or
+incomplete logs cannot establish non-use of Fusion. Active sessions may change
+while scanning, so shared and Fusion totals are not an atomic snapshot.
+JSON `Fusion.Usage` version 1 contains independently aggregated totals and
+model, workspace, and request-role groups for explicitly tagged usage records.
+Each metric reports observed, complete, and excluded record counts; missing
+values are not zero. Premium requests use multipliers for user or unspecified
+initiators, following the shared collector; other initiators are excluded.
+See the
 [README](../../README.md#session-stats) for the full flag reference.
 
 ### vscode stats
@@ -224,21 +241,80 @@ command is an equivalent CLI command; `fetchCommand` in summaries is the actual 
 Use `refresh` with `force: false` and a query patch to change Agent filters without fetching;
 the action's default `force: true` deliberately refreshes the dataset.
 
-Both tabs have a Models table comparing AIU per session, per API request (default),
+On the Copilot CLI tab, enable **Fusion usage only** or set query
+`fusionOnly: true` to include only usage records explicitly tagged as Fusion,
+not entire sessions. The view and agent-facing data exclude permissions, user
+questions, resolution events, planned phases, and checkpoint-only usage.
+Permission filters are retained but inactive until the switch is off; the
+switch does not affect VS Code. Unknown model/workspace values stay unknown.
+Role groups use request provenance, not Fusion phase roles; missing agent
+provenance remains unknown. Coverage distinguishes
+missing from recorded zero, and usage records are not necessarily distinct API
+calls. Per-session, per-record, and per-1M-token costs require complete inputs.
+Model and workspace share bars compare recorded AIU subtotals for listed groups;
+missing AIU is excluded, so incomplete coverage can affect proportions.
+The cards and Models, Workspaces, and Agent usage tables follow the normal
+view's order and notation where comparable, but usage records are not API
+requests. Both views show cache read, cache write, and uncached input totals.
+AIU and AIU unit costs use at most two decimal places in both CLI and VS Code
+views; positive values below 0.01 display as `<0.01`.
+CLI, Fusion-only, and VS Code summary cards share a compact, responsive,
+equal-width layout and start with sessions, AIU, and a request or record count.
+Usage card titles stay on one line; other content may wrap. Titles are
+bottom-aligned within each card row, and values remain aligned; title height
+grows only when a title wraps. Counts retain source-specific semantics. Table
+column headings can wrap to two lines to reduce horizontal scrolling.
+Fusion model and workspace token bars require complete prompt, cache read,
+cache write, uncached input, and output totals, with prompt equal to the sum
+of its components. Cache hit requires complete prompt and cache-read totals
+and a valid nonzero denominator; otherwise it is unavailable.
+Token counts use the normal view's compact notation. Hover over a token total
+for its exact recorded count and coverage. Partial token, AIU, and API-time
+subtotals are formatted without overstating their `≥` values.
+Top independently limits rows, not totals. Models use the normal view's unit
+selector and cost comparison bars, with per-session, per-usage-record (default),
+or per-1M-token costs. Click a heading to sort; Top selects models by recorded
+AIU before local sorting. Model unit and sort preferences persist separately
+from the normal view. Workspaces also use the per-session, per-usage-record, or
+per-1M-token unit selector and comparison bars, with separate unit and sort
+preferences from Models and the normal view. Sorting applies to workspace
+groups selected by Top.
+Matching cached data is
+projected immediately; scope/time/session/Top changes or Refresh fetch again.
+`get_data`, `get_summary`, and Ask agent share the projection; the permission
+suggestion preset is unavailable. The displayed command fetches unfiltered
+stats, so it is not equivalent to the local Fusion filter. Unsupported CLI
+builds fail explicitly; update the CLI or use the `source` runner.
+
+In the normal view, both tabs have a Models table comparing AIU per session, per API request (default),
 or per 1M tokens. Session units use each model's recorded `Sessions` count, never
 the overall session count. Missing counts or zero denominators show a dash;
 missing counts also display an explanation. Current VS Code statistics do not
 report model session counts.
-Usage panels follow the same order: model AIU share, Models table,
-workspace AIU share, then the Workspaces table, followed by User questions.
-On CLI, User questions precedes Agent usage. The Permissions summary below uses
-the same bordered panel style as the other panels.
+Usage panels in both views follow the same order when data is available: model
+AIU share, Models table, workspace AIU share, then the Workspaces table. In the
+normal CLI view, User questions precedes Agent usage and the Copilot Fusion
+panel; Fusion-only excludes user questions and permissions.
+The Permissions summary below uses the same bordered panel style as the other
+panels.
 The CLI tab also shows Agent usage (main / subagent / unknown) and incomplete-usage
-notices. Refresh reads the latest recorded totals; it does not continuously poll logs.
+notices. Normal-view agent unit costs require available row inputs and no
+reported incomplete session breakdowns; this is not per-record coverage.
+Fusion-only costs require complete record coverage. Fusion-only model and agent
+tables include recorded API time; the normal model and agent tables omit it
+because comparable per-record time coverage is unavailable. The normal
+collector does not expose Fusion's per-metric record coverage. Click any Agent
+usage heading to sort and click again to reverse. The
+normal view defaults to role ascending and ignores Top. The Fusion-only view
+defaults to recorded AIU descending; Top selects role groups by recorded AIU
+before sorting, so set Top to 0 for all groups. Unavailable values sort last
+and partial values use their recorded subtotal. Sort preferences persist across
+reloads independently for the normal and Fusion-only views. Refresh reads the
+latest recorded totals; it does not continuously poll logs.
 Click any column heading to sort the listed models, and click again to reverse
 the order. Set Top to 0 to include all models in the comparison.
 
-Both Workspaces tables compare AIU per session, per API request, or per 1M tokens
+In the normal view, both Workspaces tables compare AIU per session, per API request, or per 1M tokens
 (default: session), with comparison bars and clickable metric headings. The default
 sort is AIU descending; missing metrics and zero denominators show a dash and sort
 last. Set Top to 0 to include all workspaces. Preferences are independent per tab
@@ -246,8 +322,9 @@ and per table.
 Filterable panels have a Clear button that clears only their corresponding filter
 group. Workspaces, workspace shares, and Working directories clear scope to all
 workspaces. Other filter groups, period/time bounds, session, and Top are preserved.
-Buttons are disabled when no matching condition is active. CLI model and role usage
-panels have no Clear button because those axes do not support filtering.
+Buttons are disabled when no matching condition is active. CLI model, role
+usage, and Fusion panels have no Clear button because those axes do not support
+filtering.
 
 CLI workspace request counts use `ByCWDUsage.Requests`, never permission or premium
 requests. VS Code workspace sessions use `ByWorkspace.Sessions`, and API request
@@ -259,6 +336,18 @@ may have usage totals without a model breakdown. CLI prompt tokens include uncac
 input plus cache reads and writes; VS Code input already includes cached tokens.
 Model session counts can overlap, and AIU shares cover listed models only.
 CLI model names cannot be used as filters (`session stats` has no `--model` flag).
+
+The CLI Copilot Fusion panel and agent summaries use the `Fusion` object from
+`session stats`. They distinguish resolved turns from turns and phases with
+recorded usage, show AIU record coverage and incomplete identifiers, and do not
+infer missing activity. Rows may share turns or phases. Click a Phase usage
+column heading to sort and click again to reverse; record count descending is
+the default. AIU coverage sorts by the fraction of records reporting AIU;
+unavailable AIU and undefined coverage stay last. Sorting applies to the rows
+selected by Top, which ranks phase groups by record count. Set Top to 0 for all
+groups. The preference persists across reloads and is shared between normal and
+Fusion-only views. Older CLI builds omit the panel; use an updated CLI or the
+canvas `source` runner to view it.
 
 CLI `session stats` also reports `ASK_USER` (`AskUser` in JSON), and the CLI canvas shows
 a User questions panel. Start/completion events are paired by session, agent, and tool

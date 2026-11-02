@@ -129,6 +129,9 @@ export async function startServer({ dashboard, ask, host = "127.0.0.1" }) {
             if (body.preset) {
                 const preset = PROMPT_PRESETS[body.preset];
                 if (!preset) throw new HttpError(400, "unknown preset");
+                if (source === "session" && dashboard.query.fusionOnly && body.preset === "permissions") {
+                    throw new HttpError(400, "permission suggestions are unavailable in Fusion-only mode");
+                }
                 text = text ? `${preset.text}\n\n${text}` : preset.text;
             }
             if (!text) throw new HttpError(400, "text or preset is required");
