@@ -6,6 +6,8 @@ import (
 
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/spf13/cobra"
+	localrender "github.com/srz-zumix/gh-copilot-attendant/pkg/render"
+	"github.com/srz-zumix/gh-copilot-attendant/pkg/sessionstats"
 	"github.com/srz-zumix/go-gh-extension/pkg/copilotext"
 	"github.com/srz-zumix/go-gh-extension/pkg/parser"
 	"github.com/srz-zumix/go-gh-extension/pkg/render"
@@ -42,6 +44,13 @@ use request records or "modelMetrics"; checkpoint-only usage may have no model o
 breakdown. Unattributed usage is reported as unknown, never inferred from model names.
 Model request counts are API requests, not permission requests.
 
+Fusion statistics count recorded resolved turns by pattern and recorded usage by pattern,
+phase, role, and model. They include only explicitly attributed usage records, not planned
+phases or checkpoint-only usage. Missing AIU and identifiers are shown as incomplete.
+Time bounds select individual Fusion events; permission filters do not apply. --top limits
+each Fusion breakdown, but not its totals. Phase and model rows can share turns or phases.
+Active sessions may change while scanning; shared and Fusion totals are not an atomic snapshot.
+
 Permission request-to-completion intervals report total, average, and maximum wait.
 Confirmed human_response waits are separate from non-human and unknown-source decisions;
 older logs without decisionSource are not inferred to be human responses. Invalid timing
@@ -72,9 +81,9 @@ outcomes whose recorded decision source matches exactly (e.g. human_response,
 unattended_fallback, or unknown when no decision source was recorded, including older CLI
 versions and unresolved requests without a recorded outcome). Each of these
 flags may be repeated to match any of multiple values. --since, --until, and --period also
-bound which sessions' lifetime usage totals are counted, by their latest recorded usage
-update time (not individual API request times). The role breakdown is never truncated by
---top. Missing breakdowns are marked as incomplete;
+select usage updates by their recorded timestamps. Earlier recorded totals are subtracted
+from cumulative snapshots; a snapshot delta may include usage before the selected period.
+The role breakdown is never truncated by --top. Missing breakdowns are marked as incomplete;
 --operation, --kind, --decision-source, --command, --path, and --url do not affect usage
 totals, since usage is not recorded per permission request.`,
 		Args: cobra.NoArgs,
@@ -119,14 +128,14 @@ totals, since usage is not recorded per permission request.`,
 			opts.Path = paths
 			opts.URL = urls
 
-			stats, err := copilotext.CollectPermissionStats(opts)
+			stats, err := sessionstats.Collect(opts)
 			if err != nil {
-				return fmt.Errorf("collect permission stats: %w", err)
+				return fmt.Errorf("collect session stats: %w", err)
 			}
 
 			r := render.NewRenderer(exporter)
-			if err := r.RenderCopilotPermissionStats(stats); err != nil {
-				return fmt.Errorf("render permission stats: %w", err)
+			if err := localrender.RenderCopilotSessionStats(r, stats); err != nil {
+				return fmt.Errorf("render session stats: %w", err)
 			}
 			return nil
 		},

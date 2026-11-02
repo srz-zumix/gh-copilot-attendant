@@ -3,8 +3,9 @@
 // from the server is inserted with textContent (never innerHTML) because keys
 // come from local logs.
 
-import { MODEL_UNITS, modelColumns, normalizeModelView, promptTokens, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "./model-view.mjs";
+import { MODEL_UNITS, modelColumns, normalizeModelView, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "./model-view.mjs";
 import { WORKSPACE_UNITS, hasWorkspaceUsage, normalizeWorkspaceView, sortWorkspaces, toggleWorkspaceSort, workspaceColumns, workspaceEntry, workspaceUnitCost } from "./workspace-view.mjs";
+import { normalizeTableView, sortTableEntries, toggleTableSort } from "./table-view.mjs";
 import { panelClearPatch } from "./filter-view.mjs";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
@@ -61,10 +62,11 @@ function num(n) {
     return fmt.format(Math.round(n ?? 0));
 }
 
-const aiuFmt = new Intl.NumberFormat("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const aiuFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
 function aiu(n) {
-    return aiuFmt.format(n ?? 0);
+    const value = n ?? 0;
+    return value > 0 && value < 0.01 ? "<0.01" : aiuFmt.format(value);
 }
 
 // Premium requests can be fractional (model multipliers such as 0.5x).
@@ -76,6 +78,14 @@ function decimal(n) {
 
 function big(n) {
     return Math.abs(n ?? 0) >= 10_000 ? compact.format(n) : num(n);
+}
+
+function tokenCount(n, partial = false) {
+    if (!partial || n < 10_000) return big(n);
+    const unit = n >= 1e12 ? 1e12 : n >= 1e9 ? 1e9 : n >= 1e6 ? 1e6 : 1e3;
+    const step = unit / 10;
+    // A compact lower bound must not round above the recorded subtotal.
+    return big(n - (n % step));
 }
 
 function pct(part, whole) {
@@ -200,6 +210,11 @@ function showError(message, kind = "result") {
 
 function render() {
     if (!state || !meta) return;
+    const tableStates = ["data-fusion-phase-sort", "data-agent-sort", "data-fusion-model-sort", "data-fusion-workspace-sort"].map((attribute) => ({
+        attribute,
+        focus: document.activeElement?.getAttribute(attribute),
+        scrollLeft: document.querySelector(`[${attribute}]`)?.closest(".panel")?.scrollLeft,
+    }));
     const source = activeSource();
     const result = state.results[source];
     $("vscode-harness-warning").hidden = source !== "vscode";
@@ -229,9 +244,20 @@ function render() {
     );
     $("refresh").disabled = false;
     $("command").textContent = `gh copilot-attendant ${result.command.map(shellQuote).join(" ")}`;
-    $("command-label").textContent = result.localFiltering ? "Equivalent command" : "Command";
-    $("command").title = result.fetchArgv ? `Data fetch: gh copilot-attendant ${result.fetchArgv.map(shellQuote).join(" ")}` : "";
+    $("command-label").textContent = source === "session" && state.query.fusionOnly
+        ? "Fetch command · Fusion filter applied locally"
+        : result.localFiltering ? "Equivalent command" : "Command";
+    $("command").title = source === "session" && state.query.fusionOnly
+        ? "The command fetches all session statistics; the dashboard applies the Fusion-only filter locally."
+        : result.fetchArgv ? `Data fetch: gh copilot-attendant ${result.fetchArgv.map(shellQuote).join(" ")}` : "";
     renderPresets(source, result);
+    for (const { attribute, focus, scrollLeft } of tableStates) {
+        if (scrollLeft != null) {
+            const panel = document.querySelector(`[${attribute}]`)?.closest(".panel");
+            if (panel) panel.scrollLeft = scrollLeft;
+        }
+        if (focus) document.querySelector(`[${attribute}="${focus}"]`)?.focus({ preventScroll: true });
+    }
 }
 
 function renderStatus(result) {
@@ -277,8 +303,10 @@ function renderWarnings(result) {
 
 function renderFilters(source) {
     const filters = state.query.filters[source];
+    const supportsFusionOnly = typeof state.query.fusionOnly === "boolean";
+    const fusionOnly = source === "session" && state.query.fusionOnly === true;
     // Rebuilding would discard text the user is typing, so only do it on change.
-    const key = JSON.stringify([source, filters]);
+    const key = JSON.stringify([source, filters, fusionOnly, supportsFusionOnly]);
     if (key === filtersKey) return;
     filtersKey = key;
     const groups = meta.filters[source].map((name) => {
@@ -295,6 +323,7 @@ function renderFilters(source) {
                         h("input", {
                             type: "checkbox",
                             checked: values.includes(op),
+                            disabled: fusionOnly,
                             onchange: (e) => (e.target.checked ? addFilter(name, op) : removeFilter(name, op)),
                         }),
                         op,
@@ -305,6 +334,7 @@ function renderFilters(source) {
         const input = h("input", {
             type: "text",
             spellcheck: "false",
+            disabled: fusionOnly,
             placeholder: EXACT_FILTERS.has(name) ? "exact value" : "regex",
             "aria-label": `Add ${LABELS.filters[name]} filter`,
             onkeydown: (e) => {
@@ -323,17 +353,61 @@ function renderFilters(source) {
                     "span",
                     { class: "chip", title: value },
                     h("span", null, value),
-                    h("button", { type: "button", "aria-label": `Remove ${value}`, onclick: () => removeFilter(name, value) }, "×"),
+                    h("button", { type: "button", disabled: fusionOnly, "aria-label": `Remove ${value}`, onclick: () => removeFilter(name, value) }, "×"),
                 ),
             ),
             input,
         );
     });
-    $("filters").replaceChildren(...groups);
+    if (source === "session") {
+        groups.unshift(
+            h("label", { class: "toggle fusion-filter" },
+                h("input", {
+                    type: "checkbox", checked: fusionOnly, disabled: !supportsFusionOnly,
+                    onchange: (e) => patchQuery({ fusionOnly: e.target.checked }),
+                }),
+                "Fusion usage only"),
+            !supportsFusionOnly ? h("span", { class: "muted small" }, "Reload the dashboard extension to enable Fusion-only filtering.")
+                : fusionOnly ? h("span", { class: "muted small" }, "Permission filters are inactive in Fusion-only mode.") : null,
+        );
+    }
+    $("filters").replaceChildren(...groups.filter(Boolean));
 }
 
-function card(label, value, sub) {
-    return h("div", { class: "card" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), sub ? h("div", { class: "sub" }, sub) : null);
+function card(label, value, sub, title) {
+    return h("div", { class: "card", title },
+        h("div", { class: "label" }, label),
+        h("div", { class: "value", "aria-label": title ? `${value}; ${title}` : null }, value),
+        sub ? h("div", { class: "sub" }, sub) : null);
+}
+
+function availableNumber(value) {
+    return Number.isFinite(value) && value >= 0;
+}
+
+function perUsageSession(value, sessions, format) {
+    const result = availableNumber(value) && availableNumber(sessions) && sessions > 0 ? value / sessions : null;
+    return availableNumber(result) ? `${format(result)} / session` : "– / session";
+}
+
+function premiumUnitText(aiuValue, premium) {
+    const result = availableNumber(aiuValue) && availableNumber(premium) && premium > 0 ? aiuValue / premium : null;
+    return availableNumber(result) ? `${fusionNumber(result)} AIU / premium request` : "– AIU / premium request";
+}
+
+function cacheHitText(cacheRead, prompt) {
+    return availableNumber(cacheRead) && availableNumber(prompt) && prompt > 0 && cacheRead <= prompt
+        ? `${pct(cacheRead, prompt)} cache hit` : "– cache hit";
+}
+
+function recordedTokenCard(label, value, sub, partial = false) {
+    const recorded = availableNumber(value);
+    const text = recorded ? `${partial ? "≥ " : ""}${tokenCount(value, partial)}` : "–";
+    const title = recorded
+        ? Number.isSafeInteger(value) ? `Recorded${partial ? " subtotal" : ""}: ${num(value)} tokens`
+            : "Exact token count exceeds numeric precision"
+        : "Token data is unavailable";
+    return card(label, text, sub, title);
 }
 
 function legend(items) {
@@ -423,6 +497,15 @@ const USAGE_TOKEN_COLORS = [
     ["Output", "var(--c-output)", "OutputTokens"],
 ];
 
+const CLI_TOKEN_FIELDS = {
+    tokens: ["InputTokens", "CacheReadTokens", "CacheWriteTokens", "OutputTokens"],
+    input: ["InputTokens", "CacheReadTokens", "CacheWriteTokens"],
+    cached: ["CacheReadTokens"],
+    cacheWrite: ["CacheWriteTokens"],
+    uncached: ["InputTokens"],
+    output: ["OutputTokens"],
+};
+
 function sectionHead(title, hint) {
     return h("div", { class: "section-head" }, h("h2", null, title), hint ? h("span", { class: "hint" }, hint) : null);
 }
@@ -431,39 +514,47 @@ function renderSessionUsage(data) {
     // Older CLI builds do not report usage; keep the permission-only layout for them.
     if (data.UsageSessions === undefined) return [];
     const sessions = data.UsageSessions ?? 0;
-    const total = data.UsageAIU ?? 0;
-    const premium = data.UsagePremiumRequests ?? 0;
-    const prompt = promptTokens({ InputTokens: data.UsageInputTokens, CacheReadTokens: data.UsageCacheReadTokens, CacheWriteTokens: data.UsageCacheWriteTokens });
-    const perSession = (value, format) => (sessions ? `${format(value / sessions)} / session` : null);
+    const total = data.UsageAIU;
+    const premium = data.UsagePremiumRequests;
+    const components = [data.UsageInputTokens, data.UsageCacheReadTokens, data.UsageCacheWriteTokens];
+    const recordedComponents = components.filter(availableNumber);
+    const prompt = recordedComponents.length ? recordedComponents.reduce((sum, value) => sum + value, 0) : null;
+    const partialPrompt = recordedComponents.length !== components.length;
     const filtered = Object.values(state.query.filters.session ?? {}).some((values) => values.length);
     const hints = [
-        data.ByRoleUsage !== undefined ? "latest recorded usage · includes unfinished sessions" : "from session.shutdown events",
+        data.ByRoleUsage !== undefined ? "recorded usage · includes unfinished sessions" : "from session.shutdown events",
         filtered ? "permission filters do not apply" : null,
     ].filter(Boolean).join(" · ");
 
     return [
         sectionHead("Usage", hints),
         data.ByRoleUsage !== undefined
-            ? h("p", { class: "muted small" }, "Time filters select sessions by their latest recorded usage update. Totals cover those sessions' lifetime usage, not only requests made within the selected period.")
+            ? h("p", { class: "muted small" }, data.Fusion != null
+                ? "Time filters select recorded usage updates. Cumulative snapshots are differenced against earlier recorded totals and may include usage from before the selected period."
+                : "Time filters select sessions by their latest recorded usage update. Totals cover those sessions' lifetime usage, not only requests made within the selected period.")
             : null,
         data.UsageIncompleteSessions > 0
             ? h("p", { class: "muted small" }, `${num(data.UsageIncompleteSessions)} sessions have incomplete model, request, or token breakdowns. Checkpoint totals are included; missing details are not inferred. Request and token counts are recorded subtotals.`)
             : null,
         h(
             "div",
-            { class: "cards" },
+            { class: "cards usage-cards" },
             card("Sessions with usage", num(sessions)),
-            card("Usage (AIU)", aiu(total), perSession(total, aiu)),
-            data.UsageRequests !== undefined ? card("Recorded API requests", num(data.UsageRequests)) : null,
-            card("Premium requests", decimal(premium), premium ? `${aiu(total / premium)} AIU / request` : null),
-            card("Prompt tokens", big(prompt), `${pct(data.UsageCacheReadTokens, prompt)} cache hit`),
-            card("Output tokens", big(data.UsageOutputTokens), perSession(data.UsageOutputTokens ?? 0, big)),
-            card("API time", duration(data.UsageAPIDurationMs), perSession(data.UsageAPIDurationMs ?? 0, duration)),
+            card("Usage (AIU)", availableNumber(total) ? fusionNumber(total) : "–", perUsageSession(total, sessions, fusionNumber)),
+            card("Recorded API requests", availableNumber(data.UsageRequests) ? num(data.UsageRequests) : "–"),
+            card("Premium requests", availableNumber(premium) ? fusionNumber(premium) : "–", premiumUnitText(total, premium)),
+            recordedTokenCard("Prompt tokens", prompt, cacheHitText(partialPrompt ? null : data.UsageCacheReadTokens, prompt), partialPrompt),
+            recordedTokenCard("Cache read", data.UsageCacheReadTokens),
+            recordedTokenCard("Cache write", data.UsageCacheWriteTokens),
+            recordedTokenCard("Uncached input", data.UsageInputTokens),
+            recordedTokenCard("Output tokens", data.UsageOutputTokens, perUsageSession(data.UsageOutputTokens, sessions, big)),
+            card("API time", availableNumber(data.UsageAPIDurationMs) ? fusionDuration(data.UsageAPIDurationMs) : "–",
+                perUsageSession(data.UsageAPIDurationMs, sessions, fusionDuration)),
         ),
         h(
             "div",
             { class: "grid" },
-            ...(data.ByModelUsage !== undefined ? modelPanels((data.ByModelUsage ?? []).map(sessionModelEntry), "session") : []),
+            ...(data.ByModelUsage !== undefined ? modelPanels((data.ByModelUsage ?? []).map(sessionUsageEntry), "session") : []),
             ...workspacePanels(data.ByCWDUsage ?? [], "session"),
             data.AskUser != null ? askUserPanel(data.AskUser) : null,
             data.ByRoleUsage !== undefined ? agentUsagePanel(data) : null,
@@ -471,33 +562,486 @@ function renderSessionUsage(data) {
     ];
 }
 
+const AGENT_ROLE_LABELS = { main: "Main agent", subagent: "Subagents", unknown: "Unknown" };
+
+function agentRoleLabel(key) {
+    return Object.hasOwn(AGENT_ROLE_LABELS, key) ? AGENT_ROLE_LABELS[key] : key;
+}
+
+function agentSubtotalValue(entry, value, incomplete) {
+    const numeric = value ?? 0;
+    return entry.Key === "unknown" && incomplete && !(numeric > 0) ? null : numeric;
+}
+
+function sessionUsageEntry(entry) {
+    return { ...sessionModelEntry(entry), _rawUsage: entry };
+}
+
+function agentHasFields(entry, fields) {
+    return fields.every((field) => availableNumber(entry._rawUsage?.[field]));
+}
+
+function normalAgentUnitCost(entry, unit, uncertain) {
+    if (uncertain || !agentHasFields(entry, ["AIU"])) return null;
+    const fields = unit === "session" ? ["Sessions"] : unit === "request" ? ["Requests"]
+        : CLI_TOKEN_FIELDS.tokens;
+    if (!fields.every((field) => Number.isSafeInteger(entry._rawUsage?.[field]) && entry._rawUsage[field] >= 0)) return null;
+    if (unit === "mtok" && !Number.isSafeInteger(entry.InputTokens + entry.OutputTokens)) return null;
+    const value = unitCost(entry, unit);
+    return value !== null && Number.isFinite(value) ? value : null;
+}
+
+function agentUsageColumns(incomplete = false, unitUncertain = incomplete) {
+    const subtotal = (field, fields) => (entry) =>
+        agentHasFields(entry, fields) ? agentSubtotalValue(entry, entry[field], incomplete) : null;
+    return [
+        { id: "role", label: "Role", value: (e) => String(agentRoleLabel(e.Key) ?? ""), direction: "asc" },
+        { id: "sessions", label: "Sessions", value: (e) => agentHasFields(e, ["Sessions"]) ? e.Sessions : null },
+        { id: "requests", label: "API requests", value: subtotal("Requests", ["Requests"]) },
+        { id: "premium", label: "Premium req.", value: (e) => agentHasFields(e, ["PremiumRequests"]) ? e.PremiumRequests : null },
+        { id: "prompt", label: "Prompt", value: subtotal("InputTokens", ["InputTokens", "CacheReadTokens", "CacheWriteTokens"]) },
+        { id: "cacheRead", label: "Cache read", value: subtotal("CachedTokens", ["CacheReadTokens"]) },
+        { id: "cacheWrite", label: "Cache write", value: subtotal("CacheWriteTokens", ["CacheWriteTokens"]) },
+        { id: "uncached", label: "Uncached", value: subtotal("UncachedInputTokens", ["InputTokens"]) },
+        { id: "output", label: "Output", value: subtotal("OutputTokens", ["OutputTokens"]) },
+        { id: "aiu", label: "AIU", value: (e) => agentHasFields(e, ["AIU"]) ? e.UsageAIU : null },
+        { id: "sessionCost", label: "AIU / session", value: (e) => normalAgentUnitCost(e, "session", unitUncertain) },
+        { id: "requestCost", label: "AIU / request", value: (e) => normalAgentUnitCost(e, "request", unitUncertain) },
+        { id: "tokenCost", label: "AIU / 1M tokens", value: (e) => normalAgentUnitCost(e, "mtok", unitUncertain) },
+    ];
+}
+
+function normalizeAgentUsageView(saved, mode) {
+    const fusionOnly = mode === "fusion";
+    const columns = fusionOnly ? FUSION_AGENT_COLUMNS : agentUsageColumns();
+    const view = normalizeTableView(saved, { columns, defaultSort: fusionOnly ? "aiu" : "role" });
+    if (saved?.direction !== "asc" && saved?.direction !== "desc") view.direction = fusionOnly ? "desc" : "asc";
+    return view;
+}
+
 function agentUsagePanel(data) {
-    const labels = { main: "Main agent", subagent: "Subagents", unknown: "Unknown" };
-    const entries = (data.ByRoleUsage ?? []).map(sessionModelEntry);
-    const subtotal = (entry, value, format) => {
-        if (entry.Key !== "unknown" || !data.UsageIncompleteSessions) return format(value);
-        return value > 0 ? `≥ ${format(value)}` : "–";
+    const incomplete = Boolean(data.UsageIncompleteSessions);
+    const unitUncertain = !availableNumber(data.UsageIncompleteSessions) || incomplete;
+    const columns = agentUsageColumns(incomplete, unitUncertain);
+    const entries = sortTableEntries((data.ByRoleUsage ?? []).map(sessionUsageEntry), agentViews.normal, columns, () => 0);
+    const cell = (entry, column) => {
+        const value = column.value(entry);
+        if (value === null) return h("td", null, "–");
+        if (column.id === "role") return h("td", { class: "key" }, value);
+        const partial = entry.Key === "unknown" && incomplete;
+        if (column.id === "requests") return h("td", null, `${partial ? "≥ " : ""}${num(value)}`);
+        if (["prompt", "cacheRead", "cacheWrite", "uncached", "output"].includes(column.id)) {
+            const text = `${partial ? "≥ " : ""}${tokenCount(value, partial)}`;
+            const title = Number.isSafeInteger(value) ? `Recorded${partial ? " subtotal" : ""}: ${num(value)} tokens` : null;
+            return h("td", { title, "aria-label": title ? `${text}; ${title}` : null }, text);
+        }
+        return h("td", null, column.id === "sessions" ? num(value) : fusionNumber(value));
     };
     return panel("Agent usage", "main / subagent / unknown", [
-        h("p", { class: "muted small" }, "Attribution uses recorded request metadata, not model names. Unknown includes usage that cannot be attributed. For incomplete breakdowns, ≥ marks a recorded subtotal and – means unavailable."),
+        h("p", { class: "muted small" }, "Attribution uses recorded request metadata, not model names. Unknown includes usage that cannot be attributed. For incomplete breakdowns, ≥ marks a recorded subtotal and – means unavailable. Unit costs use recorded totals and require available inputs with no reported incomplete session breakdowns. Click a heading to sort."),
         entries.length
             ? h("table", null,
                   h("thead", null, h("tr", null,
-                      ["Role", "API requests", "Premium req.", "AIU", "Prompt", "Cache read", "Cache write", "Output"].map((label) => h("th", { scope: "col" }, label)))),
+                      columns.map((column) => agentUsageHeader(column, "normal", columns)))),
                   h("tbody", null, entries.map((entry) => h("tr", null,
-                      h("td", { class: "key" }, labels[entry.Key] ?? entry.Key),
-                      h("td", null, subtotal(entry, entry.Requests, num)),
-                      h("td", null, decimal(entry.PremiumRequests)),
-                      h("td", null, aiu(entry.UsageAIU)),
-                      h("td", null, subtotal(entry, entry.InputTokens, big)),
-                      h("td", null, subtotal(entry, entry.CachedTokens, big)),
-                      h("td", null, subtotal(entry, entry.CacheWriteTokens, big)),
-                      h("td", null, subtotal(entry, entry.OutputTokens, big))))))
+                      columns.map((column) => cell(entry, column))))))
             : h("div", { class: "muted small" }, "No recorded agent usage."),
     ], { wide: true });
 }
 
+const FUSION_PHASE_COLUMNS = [
+    { id: "pattern", label: "Pattern", value: (e) => e.Pattern ?? "", direction: "asc" },
+    { id: "phase", label: "Phase", value: (e) => e.Phase ?? "", direction: "asc" },
+    { id: "role", label: "Role", value: (e) => e.Role ?? "", direction: "asc" },
+    { id: "model", label: "Usage model", value: (e) => e.Model || "Unknown model", direction: "asc" },
+    { id: "sessions", label: "Sessions", value: (e) => e.Sessions ?? 0 },
+    { id: "turns", label: "Turns", value: (e) => e.Turns ?? 0 },
+    { id: "phases", label: "Phases", value: (e) => e.Phases ?? 0 },
+    { id: "records", label: "Records", value: (e) => e.UsageRecords ?? 0 },
+    { id: "aiu", label: "AIU", value: (e) => e.AIURecords > 0 && Number.isFinite(e.AIU) ? e.AIU : null },
+    { id: "coverage", label: "AIU coverage", value: (e) => e.UsageRecords > 0 && Number.isFinite(e.AIURecords) ? e.AIURecords / e.UsageRecords : null },
+    { id: "missingIdentity", label: "Missing phase identity", value: (e) => e.MissingPhaseIdentityRecords ?? 0 },
+];
+
+function normalizeFusionPhaseView(saved) {
+    return normalizeTableView(saved, { columns: FUSION_PHASE_COLUMNS, defaultSort: "records" });
+}
+
+function toggleFusionPhaseSort(view, columnId) {
+    return toggleTableSort(view, columnId, FUSION_PHASE_COLUMNS);
+}
+
+function sortFusionPhases(entries, view) {
+    // Equal values retain the CLI's original phase order.
+    return sortTableEntries(entries, view, FUSION_PHASE_COLUMNS, () => 0);
+}
+
+function fusionNumber(value) {
+    return aiu(value);
+}
+
+function fusionLowerBoundNumber(value) {
+    const scaled = value * 100;
+    const lowerBound = Number.isFinite(scaled) ? Math.floor(scaled + Number.EPSILON * Math.abs(scaled)) / 100 : value;
+    const formatted = aiuFmt.format(lowerBound);
+    return Number(formatted.replaceAll(",", "")) > value ? aiuFmt.format(Math.max(0, lowerBound - 0.01)) : formatted;
+}
+
+const fusionDurationFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 9 });
+
+function fusionDurationNumber(value) {
+    return value !== 0 && Math.abs(value) < 1e-9 ? value.toExponential(3) : fusionDurationFmt.format(value);
+}
+
+function fusionLowerBoundDurationNumber(value) {
+    const formatted = fusionDurationNumber(value);
+    return Number(formatted.replaceAll(",", "")) > value ? String(value) : formatted;
+}
+
+function fusionDuration(ms, partial = false) {
+    if (partial) {
+        if (ms < 1) return `${fusionLowerBoundDurationNumber(ms)} ms`;
+        if (ms < 1000) return `${Math.floor(ms)} ms`;
+        const [scale, unit] = ms < 60_000 ? [1000, "s"] : ms < 3_600_000 ? [60_000, "min"] : [3_600_000, "h"];
+        const value = Math.floor(ms / scale * 10) / 10;
+        return Number.isFinite(value) && value * scale <= ms
+            ? `${value.toFixed(1)} ${unit}` : `${fusionLowerBoundDurationNumber(ms)} ms`;
+    }
+    return ms > 0 && ms < 1 ? `${fusionDurationNumber(ms)} ms` : duration(ms);
+}
+
+function fusionAIU(entry) {
+    if (!(entry.AIURecords > 0)) return "–";
+    const partial = entry.AIURecords < entry.UsageRecords;
+    return `${partial ? "≥ " : ""}${partial ? fusionLowerBoundNumber(entry.AIU) : fusionNumber(entry.AIU)}`;
+}
+
+function fusionPanel(fusion, usageOnly = false) {
+    const patterns = fusion.ByPattern ?? [];
+    const phases = sortFusionPhases(fusion.ByPhase ?? [], fusionPhaseView);
+    return panel("Copilot Fusion", usageOnly ? "tagged usage only" : "recorded events only", [
+        h("p", { class: "muted small" }, usageOnly
+            ? "Only explicitly Fusion-tagged usage records are included. Phase/model rows may share turns or phases; Top limits rows, not totals."
+            : "Resolution and usage timestamps are filtered separately. Permission filters do not apply; Top limits rows, not totals. Planned phases and checkpoint-only usage are not attributed. Phase/model rows may share turns or phases. Active sessions can change during scanning, so totals are not an atomic snapshot."),
+        h("div", { class: "cards fusion-cards" },
+            card(usageOnly ? "Sessions with usage" : "Sessions with records", num(fusion.Sessions)),
+            usageOnly ? null : card("Resolved turns", num(fusion.ResolvedTurns), fusion.UnidentifiedResolutions ? `${num(fusion.UnidentifiedResolutions)} resolutions without an ID` : null),
+            card("Turns with usage", num(fusion.TurnsWithUsage)),
+            card("Phases with usage", num(fusion.PhasesWithUsage)),
+            card("Usage records", num(fusion.UsageRecords)),
+            card("Recorded AIU", fusionAIU(fusion), `${num(fusion.AIURecords)} / ${num(fusion.UsageRecords)} records report AIU`)),
+        fusion.MissingFusionIDRecords || fusion.MissingPhaseIdentityRecords
+            ? h("p", { class: "muted small" }, `${num(fusion.MissingFusionIDRecords)} usage records lack a Fusion ID; ${num(fusion.MissingPhaseIdentityRecords)} lack a complete phase identity. They are excluded from distinct turn or phase counts as applicable.`)
+            : null,
+        !fusion.Sessions ? h("p", { class: "muted small" }, usageOnly
+            ? "No Fusion-tagged usage records were found in the selected window. Missing tags cannot establish whether Fusion was used."
+            : "No Fusion metadata was recorded in the selected window. Older or incomplete logs cannot establish whether Fusion was used.") : null,
+        usageOnly ? null : h("h3", null, "Resolved patterns"),
+        usageOnly ? null : patterns.length
+            ? h("table", null,
+                  h("thead", null, h("tr", null, ["Pattern", "Sessions", "Resolved turns", "Without ID"].map((label) => h("th", { scope: "col" }, tableHeading(label))))),
+                  h("tbody", null, patterns.map((entry) => h("tr", null,
+                      h("td", { class: "key" }, entry.Key), h("td", null, num(entry.Sessions)),
+                      h("td", null, num(entry.ResolvedTurns)), h("td", null, num(entry.UnidentifiedResolutions))))))
+            : h("div", { class: "muted small" }, "No recorded pattern resolutions."),
+        h("h3", null, "Phase usage"),
+        phases.length
+            ? h("p", { class: "muted small" }, "Click a heading to sort the listed rows. Top selects phase groups by record count before sorting; set Top to 0 for all groups. AIU coverage sorts by the fraction of records reporting AIU.")
+            : null,
+        phases.length
+            ? h("table", null,
+                  h("thead", null, h("tr", null,
+                      FUSION_PHASE_COLUMNS.map(fusionPhaseHeader))),
+                  h("tbody", null, phases.map((entry) => h("tr", null,
+                      h("td", { class: "key" }, entry.Pattern), h("td", null, entry.Phase),
+                      h("td", null, entry.Role), h("td", null, entry.Model || "Unknown model"),
+                      h("td", null, num(entry.Sessions)), h("td", null, num(entry.Turns)),
+                      h("td", null, num(entry.Phases)), h("td", null, num(entry.UsageRecords)),
+                      h("td", null, fusionAIU(entry)),
+                      h("td", null, `${num(entry.AIURecords)} / ${num(entry.UsageRecords)}`),
+                      h("td", null, num(entry.MissingPhaseIdentityRecords))))))
+            : h("div", { class: "muted small" }, "No recorded Fusion usage."),
+    ], { wide: true });
+}
+
+function fusionMetricText(metric, records, format) {
+    if (!metric.ObservedRecords) return "–";
+    const partial = metric.CompleteRecords + metric.ExcludedRecords < records;
+    const value = partial && format === fusionNumber ? fusionLowerBoundNumber(metric.Total) : format(metric.Total, partial);
+    return `${partial ? "≥ " : ""}${value}`;
+}
+
+function fusionMetricCoverage(metric, records) {
+    const applicable = records - metric.ExcludedRecords;
+    const complete = `${num(metric.CompleteRecords)} / ${num(applicable)} records complete` +
+        (metric.ExcludedRecords ? ` · ${num(metric.ExcludedRecords)} excluded` : "");
+    return metric.ObservedRecords !== metric.CompleteRecords
+        ? `${complete} · ${num(metric.ObservedRecords)} have partial or complete values`
+        : complete;
+}
+
+function fusionMetricTooltip(metric, records, format) {
+    const coverage = fusionMetricCoverage(metric, records);
+    return format === tokenCount && metric.ObservedRecords
+        ? `Recorded: ${num(metric.Total)} tokens · ${coverage}`
+        : coverage;
+}
+
+function fusionMetricCard(label, metric, records, format, detail) {
+    const sub = [detail, fusionMetricCoverage(metric, records)].filter(Boolean).join(" · ");
+    return card(label, fusionMetricText(metric, records, format), sub,
+        format === tokenCount ? fusionMetricTooltip(metric, records, format) : null);
+}
+
+function fusionMetricComplete(metric, records) {
+    return records > 0 && metric.ObservedRecords > 0 && metric.CompleteRecords + metric.ExcludedRecords === records;
+}
+
+function fusionUnitCost(entry, unit) {
+    const metrics = entry.Metrics;
+    const records = entry.UsageRecords;
+    const complete = (metric) => fusionMetricComplete(metric, records);
+    if (!complete(metrics.AIU)) return null;
+    let value;
+    if (unit === "session") value = entry.Sessions > 0 ? metrics.AIU.Total / entry.Sessions : null;
+    else if (unit === "record") value = metrics.AIU.Total / records;
+    else {
+        if (!complete(metrics.PromptTokens) || !complete(metrics.OutputTokens)) return null;
+        const tokens = metrics.PromptTokens.Total + metrics.OutputTokens.Total;
+        value = Number.isSafeInteger(tokens) && tokens > 0 ? (metrics.AIU.Total / tokens) * 1e6 : null;
+    }
+    return availableNumber(value) ? value : null;
+}
+
+function fusionTokenBreakdown(entry) {
+    const { Metrics: metrics, UsageRecords: records } = entry;
+    const fields = ["CacheReadTokens", "CacheWriteTokens", "UncachedInputTokens", "OutputTokens"];
+    if (!fusionMetricComplete(metrics.PromptTokens, records) ||
+        !fields.every((field) => fusionMetricComplete(metrics[field], records))) return null;
+    const values = fields.map((field) => metrics[field].Total);
+    const prompt = values[0] + values[1] + values[2];
+    const total = metrics.PromptTokens.Total + values[3];
+    if (!Number.isSafeInteger(prompt) || prompt !== metrics.PromptTokens.Total || !Number.isSafeInteger(total)) return null;
+    return { values, total };
+}
+
+function fusionCacheHit(entry) {
+    const { Metrics: metrics, UsageRecords: records } = entry;
+    const prompt = metrics.PromptTokens;
+    const cache = metrics.CacheReadTokens;
+    if (!fusionMetricComplete(prompt, records) || !fusionMetricComplete(cache, records) ||
+        !prompt.Total || cache.Total > prompt.Total) return null;
+    return cache.Total / prompt.Total;
+}
+
+const FUSION_USAGE_METRICS = [
+    { id: "premium", label: "Premium req.", field: "PremiumRequests", format: fusionNumber },
+    { id: "prompt", label: "Prompt", field: "PromptTokens", format: tokenCount },
+    { id: "cacheRead", label: "Cache read", field: "CacheReadTokens", format: tokenCount },
+    { id: "cacheWrite", label: "Cache write", field: "CacheWriteTokens", format: tokenCount },
+    { id: "uncached", label: "Uncached", field: "UncachedInputTokens", format: tokenCount },
+    { id: "output", label: "Output", field: "OutputTokens", format: tokenCount },
+    { id: "apiTime", label: "API time", field: "APIDurationMs", format: fusionDuration },
+    { id: "aiu", label: "AIU", field: "AIU", format: fusionNumber },
+];
+
+const FUSION_MODEL_UNITS = {
+    session: { label: "Session", header: "AIU / session" },
+    record: { label: "Usage record", header: "AIU / record" },
+    mtok: { label: "1M tokens", header: "AIU / 1M tokens" },
+};
+
+const FUSION_METRIC_COLUMNS = Object.fromEntries(FUSION_USAGE_METRICS.map((metric) => [
+    metric.id,
+    { ...metric, value: (e) => e.Metrics[metric.field].ObservedRecords > 0 ? e.Metrics[metric.field].Total : null },
+]));
+
+function fusionUsageColumns(breakdown) {
+    return [
+        { id: "sessions", label: "Sessions", value: (e) => e.Sessions },
+        { id: "records", label: "Usage records", value: (e) => e.UsageRecords },
+        FUSION_METRIC_COLUMNS.premium,
+        ...(breakdown ? [{ id: "tokens", label: "Tokens", value: (e) => fusionTokenBreakdown(e)?.total ?? null }] : []),
+        FUSION_METRIC_COLUMNS.prompt,
+        FUSION_METRIC_COLUMNS.cacheRead,
+        FUSION_METRIC_COLUMNS.cacheWrite,
+        FUSION_METRIC_COLUMNS.uncached,
+        FUSION_METRIC_COLUMNS.output,
+        ...(breakdown ? [{ id: "cacheHit", label: "Cache hit", value: fusionCacheHit }] : []),
+        FUSION_METRIC_COLUMNS.apiTime,
+        FUSION_METRIC_COLUMNS.aiu,
+    ];
+}
+
+const FUSION_MODEL_COLUMNS = [
+    { id: "model", label: "Model", value: (e) => e.Key || "Unknown model", direction: "asc" },
+    ...fusionUsageColumns(true),
+    { id: "unit", label: "Unit cost", value: (e, unit) => fusionUnitCost(e, unit) },
+];
+
+const FUSION_WORKSPACE_COLUMNS = [
+    { id: "workspace", label: "Workspace", value: (e) => e.Key || "Unknown workspace", direction: "asc" },
+    ...fusionUsageColumns(true),
+    { id: "unit", label: "Unit cost", value: (e, unit) => fusionUnitCost(e, unit) },
+];
+
+function normalizeFusionModelView(saved) {
+    return normalizeTableView(saved, {
+        units: FUSION_MODEL_UNITS, columns: FUSION_MODEL_COLUMNS, defaultUnit: "record", defaultSort: "aiu",
+    });
+}
+
+function normalizeFusionWorkspaceView(saved) {
+    return normalizeTableView(saved, {
+        units: FUSION_MODEL_UNITS, columns: FUSION_WORKSPACE_COLUMNS, defaultUnit: "record", defaultSort: "aiu",
+    });
+}
+
+const FUSION_AGENT_COLUMNS = [
+    { id: "role", label: "Role", value: (e) => String(agentRoleLabel(e.Key) || "(empty)"), direction: "asc" },
+    ...fusionUsageColumns(false),
+    { id: "sessionCost", label: "AIU / session", value: (e) => fusionUnitCost(e, "session") },
+    { id: "recordCost", label: "AIU / record", value: (e) => fusionUnitCost(e, "record") },
+    { id: "tokenCost", label: "AIU / 1M tokens", value: (e) => fusionUnitCost(e, "mtok") },
+];
+
+function fusionUsageTable(entries, kind) {
+    if (!entries.length) return h("div", { class: "muted small" }, "No Fusion-tagged usage records.");
+    const roles = kind === "role";
+    const models = kind === "model";
+    const workspaces = kind === "workspace";
+    const view = roles ? agentViews.fusion : models ? fusionModelView : fusionWorkspaceView;
+    const columns = roles ? FUSION_AGENT_COLUMNS : models ? FUSION_MODEL_COLUMNS : FUSION_WORKSPACE_COLUMNS;
+    const rows = roles ? sortTableEntries(entries, view, columns, () => 0) : sortTableEntries(entries, view, columns);
+    const maxUnit = models || workspaces ? Math.max(...rows.map((entry) => fusionUnitCost(entry, view.unit) ?? 0), Number.MIN_VALUE) : null;
+    const maxTokens = rows.reduce((max, entry) => Math.max(max, fusionTokenBreakdown(entry)?.total ?? 0), 1);
+    const headers = roles
+        ? FUSION_AGENT_COLUMNS.map((column) => agentUsageHeader(column, "fusion", FUSION_AGENT_COLUMNS))
+        : [
+            ...columns.map((column) => fusionUsageHeader(column, kind)),
+            h("th", { scope: "col", "aria-label": "Unit cost comparison" }),
+        ];
+    return h("table", null,
+        h("thead", null, h("tr", null, headers)),
+        h("tbody", null, rows.map((entry) => {
+            const display = workspaces ? (entry.Key ? shortPath(entry.Key) : "Unknown workspace")
+                : roles ? agentRoleLabel(entry.Key) : (entry.Key || "Unknown model");
+            const onPick = workspaces && entry.Key ? (key) => patchQuery({ scope: "cwd", path: key }) : null;
+            const cell = (column) => {
+                if (["model", "workspace", "role"].includes(column.id)) {
+                    return h("td", { class: "key" }, keyCell(entry.Key, onPick, "Show only this directory", display));
+                }
+                const value = column.value(entry, view.unit);
+                if (column.id === "tokens") {
+                    const breakdown = fusionTokenBreakdown(entry);
+                    if (!breakdown) {
+                        const title = "Token breakdown requires complete and consistent prompt, cache, uncached input, and output totals.";
+                        return h("td", { title, "aria-label": `Unavailable; ${title}` }, "–");
+                    }
+                    const descriptions = USAGE_TOKEN_COLORS.map(([label], index) => `${label}: ${num(breakdown.values[index])}`);
+                    const segments = USAGE_TOKEN_COLORS.map(([, color], index) => [breakdown.values[index], color, descriptions[index]]);
+                    return h("td", { title: descriptions.join(" · "), "aria-label": descriptions.join("; ") }, stackedBar(segments, maxTokens));
+                }
+                if (column.id === "cacheHit") {
+                    const title = value === null
+                        ? "Cache hit requires complete and consistent cache read and prompt totals."
+                        : `${num(entry.Metrics.CacheReadTokens.Total)} / ${num(entry.Metrics.PromptTokens.Total)} prompt tokens`;
+                    return h("td", { title }, value === null ? "–" : pct(value, 1));
+                }
+                if (column.field) {
+                    const metric = entry.Metrics[column.field];
+                    const text = fusionMetricText(metric, entry.UsageRecords, column.format);
+                    const title = fusionMetricTooltip(metric, entry.UsageRecords, column.format);
+                    return h("td", { title, "aria-label": column.format === tokenCount ? `${text}; ${title}` : null }, text);
+                }
+                if (value === null) return h("td", null, "–");
+                return h("td", null, ["sessions", "records"].includes(column.id) ? num(value) : fusionNumber(value));
+            };
+            return h("tr", null,
+                columns.map(cell),
+                models || workspaces ? h("td", null, unitCostBar(
+                    fusionUnitCost(entry, view.unit),
+                    FUSION_MODEL_UNITS[view.unit].header, maxUnit, fusionNumber,
+                )) : null);
+        })));
+}
+
+function fusionUsageBreakdown(title, entries, total, kind) {
+    const hint = entries.length < total ? `${num(entries.length)} of ${num(total)} groups` : `${num(total)} groups`;
+    return panel(title, hint, [
+        h("p", { class: "muted small" }, "≥ marks a recorded subtotal; – means unavailable. Unit costs require complete inputs. Hover over a metric for coverage and exact token counts."),
+        kind === "role" && entries.length
+            ? h("p", { class: "muted small" }, "Click a heading to sort the listed rows. Top selects role groups by recorded AIU before sorting; set Top to 0 for all groups.")
+            : null,
+        kind === "model" || kind === "workspace" ? [
+            h("p", { class: "muted small" }, "Token bars require complete, consistent component totals; cache hit requires complete prompt and cache-read totals."),
+            h("p", { class: "muted small" }, kind === "model"
+                ? "Select a unit cost to compare models. Usage records are not API requests. Click a heading to sort; Top selects models by recorded AIU before sorting. Set Top to 0 for all models."
+                : "Select a unit cost to compare workspaces. Usage records are not API requests. Click a heading to sort; Top selects workspaces by recorded AIU before sorting. Set Top to 0 for all workspaces."),
+            h("div", { class: "panel-controls" },
+                legend(USAGE_TOKEN_COLORS.map(([label, color]) => [label, color])),
+                unitCostControls(FUSION_MODEL_UNITS, kind === "model" ? fusionModelView : fusionWorkspaceView,
+                    (patch) => kind === "model"
+                        ? updateView(fusionModelView, FUSION_MODEL_VIEW_KEY, patch)
+                        : updateView(fusionWorkspaceView, FUSION_WORKSPACE_VIEW_KEY, patch))),
+        ] : null,
+        fusionUsageTable(entries, kind),
+    ], { wide: true, ...(kind === "workspace" ? { filter: "workspace" } : {}) });
+}
+
+function renderFusionOnly(data) {
+    const usage = data.FusionUsage;
+    const metrics = usage.Metrics;
+    const records = usage.UsageRecords;
+    const completeValue = (metric) => fusionMetricComplete(metric, records) ? metric.Total : null;
+    const usageShare = (entries, label) => shareBar(
+        entries,
+        (entry) => entry.Metrics.AIU.ObservedRecords ? entry.Metrics.AIU.Total : 0,
+        label,
+        {
+            formatValue: (_value, entry) => fusionMetricText(entry.Metrics.AIU, entry.UsageRecords, fusionNumber),
+            formatShare: usageSharePercent,
+        },
+    );
+    const modelShare = usageShare(usage.ByModel, (entry) => entry.Key || "Unknown model");
+    const workspaceShare = usageShare(usage.ByCWD, (entry) => entry.Key ? shortPath(entry.Key) : "Unknown workspace");
+    return [
+        sectionHead("Fusion usage", "explicitly tagged records only"),
+        h("p", { class: "muted small" }, "Usage records are not necessarily distinct API calls. Resolution events, permission data, and checkpoint-only usage are excluded. ≥ marks a recorded subtotal; – means unavailable. Hover over token totals for exact recorded counts. Premium requests sum cost multipliers for user or unspecified initiators; other initiators are excluded, following the shared collector."),
+        h("div", { class: "cards fusion-cards" },
+            card("Sessions with usage", num(usage.Sessions)),
+            fusionMetricCard("Usage (AIU)", metrics.AIU, records, fusionNumber,
+                perUsageSession(completeValue(metrics.AIU), usage.Sessions, fusionNumber)),
+            card("Usage records", num(records)),
+            fusionMetricCard("Premium requests", metrics.PremiumRequests, records, fusionNumber,
+                premiumUnitText(completeValue(metrics.AIU), completeValue(metrics.PremiumRequests))),
+            fusionMetricCard("Prompt tokens", metrics.PromptTokens, records, tokenCount,
+                cacheHitText(completeValue(metrics.CacheReadTokens), completeValue(metrics.PromptTokens))),
+            fusionMetricCard("Cache read", metrics.CacheReadTokens, records, tokenCount),
+            fusionMetricCard("Cache write", metrics.CacheWriteTokens, records, tokenCount),
+            fusionMetricCard("Uncached input", metrics.UncachedInputTokens, records, tokenCount),
+            fusionMetricCard("Output tokens", metrics.OutputTokens, records, tokenCount,
+                perUsageSession(completeValue(metrics.OutputTokens), usage.Sessions, big)),
+            fusionMetricCard("API time", metrics.APIDurationMs, records, fusionDuration,
+                perUsageSession(completeValue(metrics.APIDurationMs), usage.Sessions, fusionDuration))),
+        h("div", { class: "grid" },
+            panel("Usage share by model", "recorded AIU · listed models", [
+                h("p", { class: "muted small" }, "Shares compare recorded AIU subtotals for listed models. Missing AIU is excluded, so incomplete coverage can affect proportions."),
+                modelShare ?? h("div", { class: "muted small" }, "No positive recorded model AIU to compare."),
+            ], { wide: true }),
+            fusionUsageBreakdown("Models", usage.ByModel, usage.ModelGroups, "model"),
+            panel("Usage share by workspace", "recorded AIU · listed workspaces", [
+                h("p", { class: "muted small" }, "Shares compare recorded AIU subtotals for listed workspaces. Missing AIU is excluded, so incomplete coverage can affect proportions."),
+                workspaceShare ?? h("div", { class: "muted small" }, "No positive recorded workspace AIU to compare."),
+            ], { wide: true, filter: "workspace" }),
+            fusionUsageBreakdown("Workspaces", usage.ByCWD, usage.CWDGroups, "workspace"),
+            fusionUsageBreakdown("Agent usage", usage.ByRole, usage.RoleGroups, "role"),
+            fusionPanel(data.Fusion, true)),
+    ];
+}
+
 function renderSession(data) {
+    if (data.FusionOnly) return renderFusionOnly(data);
     const totals = { Approved: 0, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 };
     for (const e of data.ByKind ?? []) for (const k of Object.keys(totals)) totals[k] += e[k] ?? 0;
     const approved = totals.Approved + totals.ApprovedForLocation;
@@ -509,6 +1053,7 @@ function renderSession(data) {
 
     return [
         ...renderSessionUsage(data),
+        data.Fusion != null ? h("div", { class: "grid" }, fusionPanel(data.Fusion)) : null,
         data.UsageSessions === undefined && data.AskUser != null
             ? h("div", { class: "grid" }, askUserPanel(data.AskUser))
             : null,
@@ -561,7 +1106,7 @@ function permissionWaitDetails(wait) {
         h("table", null,
             h("thead", null, h("tr", null,
                 ["Other decision timing", "Completed", "Timed", "Untimed", "Total", "Average", "Longest"]
-                    .map((label) => h("th", { scope: "col" }, label)))),
+                    .map((label) => h("th", { scope: "col" }, tableHeading(label))))),
             h("tbody", null, [
                 ["Other recorded sources", wait.NonHumanDecisions],
                 ["Unknown source", wait.UnknownSourceDecisions],
@@ -622,7 +1167,7 @@ function toolTable(entries) {
     return h(
         "table",
         null,
-        h("thead", null, h("tr", null, h("th", null, "Tool"), h("th", null, "Calls"), h("th", null, ""), h("th", null, "Errors"), h("th", null, "Avg"), h("th", null, "Total time"))),
+        h("thead", null, h("tr", null, h("th", null, "Tool"), h("th", null, "Calls"), h("th", null, ""), h("th", null, "Errors"), h("th", null, "Avg"), h("th", null, tableHeading("Total time")))),
         h(
             "tbody",
             null,
@@ -650,6 +1195,13 @@ const WORKSPACE_VIEW_KEYS = {
     vscode: "attendant-dashboard.workspaceView",
     session: "attendant-dashboard.sessionWorkspaceView",
 };
+const AGENT_VIEW_KEYS = {
+    normal: "attendant-dashboard.agentView",
+    fusion: "attendant-dashboard.fusionAgentView",
+};
+const FUSION_PHASE_VIEW_KEY = "attendant-dashboard.fusionPhaseView";
+const FUSION_MODEL_VIEW_KEY = "attendant-dashboard.fusionModelView";
+const FUSION_WORKSPACE_VIEW_KEY = "attendant-dashboard.fusionWorkspaceView";
 
 // Panel-local view state; persisted per browser profile so the choice survives reloads.
 function loadView(key, normalize, source) {
@@ -664,6 +1216,10 @@ function loadView(key, normalize, source) {
 
 const modelViews = Object.fromEntries(Object.entries(MODEL_VIEW_KEYS).map(([source, key]) => [source, loadView(key, normalizeModelView, source)]));
 const workspaceViews = Object.fromEntries(Object.entries(WORKSPACE_VIEW_KEYS).map(([source, key]) => [source, loadView(key, normalizeWorkspaceView, source)]));
+const agentViews = Object.fromEntries(Object.entries(AGENT_VIEW_KEYS).map(([mode, key]) => [mode, loadView(key, normalizeAgentUsageView, mode)]));
+const fusionPhaseView = loadView(FUSION_PHASE_VIEW_KEY, normalizeFusionPhaseView);
+const fusionModelView = loadView(FUSION_MODEL_VIEW_KEY, normalizeFusionModelView);
+const fusionWorkspaceView = loadView(FUSION_WORKSPACE_VIEW_KEY, normalizeFusionWorkspaceView);
 
 function updateView(view, key, patch) {
     Object.assign(view, patch);
@@ -684,10 +1240,11 @@ function setWorkspaceView(source, patch) {
 }
 
 function unitCostText(value) {
-    if (value === null) return "–";
-    if (value === 0) return "0";
-    // aiu() keeps a single decimal, so anything under 0.05 would render as "0.0".
-    return Math.abs(value) < 0.05 ? value.toPrecision(2) : aiu(value);
+    return value === null ? "–" : aiu(value);
+}
+
+function unitCostBar(value, label, max, format = unitCostText) {
+    return stackedBar([[value ?? 0, "var(--c-unit-cost)", `${label}: ${value === null ? "–" : format(value)}`]], max);
 }
 
 function segmented(label, options, value, onChange) {
@@ -710,12 +1267,14 @@ function usageControls(source, units, view, onChange) {
         "div",
         { class: "panel-controls" },
         legend(source === "session" ? USAGE_TOKEN_COLORS.map(([label, color]) => [label, color]) : VSCODE_TOKEN_COLORS),
-        h(
-            "div",
-            { class: "controls" },
-            segmented("Unit cost per", Object.fromEntries(Object.entries(units).map(([k, u]) => [k, u.label])), view.unit, (unit) => onChange({ unit })),
-        ),
+        unitCostControls(units, view, onChange),
     );
+}
+
+function unitCostControls(units, view, onChange) {
+    return h("div", { class: "controls" },
+        segmented("Unit cost per", Object.fromEntries(Object.entries(units).map(([key, unit]) => [key, unit.label])),
+            view.unit, (unit) => onChange({ unit })));
 }
 
 function modelHeader(column, source) {
@@ -723,6 +1282,45 @@ function modelHeader(column, source) {
     const label = column.id === "unit" ? MODEL_UNITS[view.unit].header : column.label;
     const next = toggleModelSort(view, column.id, source);
     return sortableHeader(column, { view, label, next, attribute: "data-model-sort", onChange: (patch) => setModelView(source, patch) });
+}
+
+function fusionPhaseHeader(column) {
+    return sortableHeader(column, {
+        view: fusionPhaseView, label: column.label, next: toggleFusionPhaseSort(fusionPhaseView, column.id),
+        attribute: "data-fusion-phase-sort", onChange: (patch) => updateView(fusionPhaseView, FUSION_PHASE_VIEW_KEY, patch),
+    });
+}
+
+function fusionUsageHeader(column, kind) {
+    const model = kind === "model";
+    const view = model ? fusionModelView : fusionWorkspaceView;
+    const key = model ? FUSION_MODEL_VIEW_KEY : FUSION_WORKSPACE_VIEW_KEY;
+    const columns = model ? FUSION_MODEL_COLUMNS : FUSION_WORKSPACE_COLUMNS;
+    const attribute = model ? "data-fusion-model-sort" : "data-fusion-workspace-sort";
+    const label = column.id === "unit" ? FUSION_MODEL_UNITS[view.unit].header : column.label;
+    return sortableHeader(column, {
+        view, label, next: toggleTableSort(view, column.id, columns),
+        attribute, onChange: (patch) => updateView(view, key, patch),
+    });
+}
+
+function agentUsageHeader(column, mode, columns) {
+    const view = agentViews[mode];
+    return sortableHeader(column, {
+        view, label: column.label, next: toggleTableSort(view, column.id, columns),
+        attribute: "data-agent-sort", onChange: (patch) => updateView(view, AGENT_VIEW_KEYS[mode], patch),
+    });
+}
+
+function tableHeading(label) {
+    const words = label.split(" ");
+    if (words.length < 2) return label;
+    // Two unbroken phrases allow at most one line break without truncating labels.
+    const split = Math.ceil(words.length / 2);
+    return h("span", { class: "table-heading" },
+        h("span", { class: "table-heading-part" }, words.slice(0, split).join(" ")),
+        " ",
+        h("span", { class: "table-heading-part" }, words.slice(split).join(" ")));
 }
 
 function sortableHeader(column, { view, label, next, attribute, onChange }) {
@@ -743,14 +1341,16 @@ function sortableHeader(column, { view, label, next, attribute, onChange }) {
                     document.querySelector(`[${attribute}="${column.id}"]`)?.focus({ preventScroll: true });
                 },
             },
-            label,
+            tableHeading(label),
             h("span", { class: "sort-indicator", "aria-hidden": "true" }, selected ? (view.direction === "asc" ? "▲" : "▼") : "↕"),
         ),
     );
 }
 
 function modelPanels(entries, source) {
-    const share = aiuShare(entries);
+    const share = source === "session"
+        ? shareBar(entries, (entry) => entry.UsageAIU ?? 0, undefined, { formatValue: fusionNumber, formatShare: usageSharePercent })
+        : aiuShare(entries);
     const session = source === "session";
     const note = session
         ? "Recorded modelMetrics and request usage are included; checkpoints may lack a model breakdown. Shares cover listed models. A session may use multiple models. Permission filters do not apply."
@@ -770,7 +1370,7 @@ function modelPanels(entries, source) {
 function usageTokenSegments(e, source) {
     if (source !== "session") return vscodeTokenSegments(e);
     const fields = ["CachedTokens", "CacheWriteTokens", "UncachedInputTokens", "OutputTokens"];
-    return USAGE_TOKEN_COLORS.map(([label, color], index) => [e[fields[index]], color, `${label}: ${big(e[fields[index]])}`]);
+    return USAGE_TOKEN_COLORS.map(([label, color], index) => [e[fields[index]], color, `${label}: ${num(e[fields[index]])}`]);
 }
 
 function modelTable(entries, source) {
@@ -789,6 +1389,9 @@ function metricsTable(entries, source, { view, columns, units, costOf, header, p
     const max = Math.max(...entries.map((e) => (e.InputTokens ?? 0) + (e.OutputTokens ?? 0)), 1);
     const maxUnit = Math.max(...entries.map((e) => costOf(e, view.unit) ?? 0), Number.MIN_VALUE);
     const unit = units[view.unit];
+    const recordedTokens = (entry, id, value) =>
+        Number.isSafeInteger(value) && CLI_TOKEN_FIELDS[id].every((field) =>
+            Number.isSafeInteger(entry._rawUsage?.[field]) && entry._rawUsage[field] >= 0);
     const cell = (column, entry, cost) => {
         const value = column.value(entry, view.unit);
         if (value === null) return h("td", null, "–");
@@ -796,25 +1399,33 @@ function metricsTable(entries, source, { view, columns, units, costOf, header, p
             case "model":
             case "workspace":
                 return h("td", { class: "key" }, keyCell(entry.Key, pick, pickTitle, displayKey ? displayKey(entry.Key) : entry.Key));
-            case "tokens":
-                return h("td", null, stackedBar(usageTokenSegments(entry, source), max));
+            case "tokens": {
+                const segments = usageTokenSegments(entry, source);
+                const descriptions = segments.map((segment) => segment[2]);
+                return h("td", source === "session" && recordedTokens(entry, column.id, value)
+                    ? { title: descriptions.join(" · "), "aria-label": descriptions.join("; ") } : null,
+                stackedBar(segments, max));
+            }
             case "input":
             case "cached":
             case "cacheWrite":
             case "uncached":
-            case "output":
-                return h("td", null, big(value));
+            case "output": {
+                const text = big(value);
+                const title = source === "session" && recordedTokens(entry, column.id, value) ? `Recorded: ${num(value)} tokens` : null;
+                return h("td", { title, "aria-label": title ? `${text}; ${title}` : null }, text);
+            }
             case "cacheHit":
                 return h("td", null, pct(entry.CachedTokens, entry.InputTokens));
             case "ttft":
             case "apiDuration":
-                return h("td", null, duration(value));
+                return h("td", null, source === "session" ? fusionDuration(value) : duration(value));
             case "aiu":
-                return h("td", null, aiu(value));
+                return h("td", null, source === "session" ? fusionNumber(value) : aiu(value));
             case "premium":
-                return h("td", null, decimal(value));
+                return h("td", null, source === "session" ? fusionNumber(value) : decimal(value));
             case "unit":
-                return h("td", null, unitCostText(cost));
+                return h("td", null, source === "session" ? fusionNumber(cost) : unitCostText(cost));
             case "turnCost":
                 return h("td", null, unitCostText(value));
             default:
@@ -843,7 +1454,7 @@ function metricsTable(entries, source, { view, columns, units, costOf, header, p
                     "tr",
                     null,
                     columns.map((column) => cell(column, e, cost)),
-                    h("td", null, stackedBar([[cost ?? 0, "var(--c-unit-cost)", `${unit.header}: ${unitCostText(cost)}`]], maxUnit)),
+                    h("td", null, unitCostBar(cost, unit.header, maxUnit, source === "session" ? fusionNumber : unitCostText)),
                 );
             }),
         ),
@@ -876,9 +1487,13 @@ function workspaceHeader(column, source, usage) {
 }
 
 function workspacePanels(rawEntries, source, topNote = state.query.top ? `top ${state.query.top}` : null) {
-    const entries = rawEntries.map((e) => workspaceEntry(e, source));
+    const entries = rawEntries.map((e) => {
+        const entry = workspaceEntry(e, source);
+        return source === "session" ? { ...entry, _rawUsage: e } : entry;
+    });
     const usage = source === "session" || hasWorkspaceUsage(entries);
-    const share = usage ? shareBar(entries, (e) => e.UsageAIU ?? 0, (e) => shortPath(e.Key)) : null;
+    const share = usage ? shareBar(entries, (e) => e.UsageAIU ?? 0, (e) => shortPath(e.Key),
+        source === "session" ? { formatValue: fusionNumber, formatShare: usageSharePercent } : {}) : null;
     const notes = [];
     if (!usage && entries.length) notes.push("Workspace usage is not reported by this CLI build; update gh copilot-attendant to compare AIU.");
     if (usage && entries.some((e) => e.Requests === undefined)) notes.push("Request counts are not reported for some workspaces; their AIU / request is unavailable.");
@@ -935,16 +1550,20 @@ function workspaceTable(entries, source, usage) {
 
 const SHARE_COLORS = ["var(--c-input)", "var(--c-output)", "var(--c-cached)", "var(--c-unresolved)", "var(--c-denied)", "var(--text-color-muted, #59636e)"];
 
+function usageSharePercent(value, total) {
+    return value / total < 0.001 ? "<0.1%" : pct(value, total);
+}
+
 /** Renders a proportional share bar and legend for entries with a positive value. */
-function shareBar(entries, value, label = (e) => e.Key) {
+function shareBar(entries, value, label = (e) => e.Key, { formatValue = aiu, formatShare = pct } = {}) {
     const withValue = (entries ?? []).filter((e) => value(e) > 0);
     const total = withValue.reduce((n, e) => n + value(e), 0);
     if (!total) return null;
     const color = (i) => SHARE_COLORS[i % SHARE_COLORS.length];
-    const segments = withValue.map((e, i) => [value(e), color(i), `${label(e)}: ${aiu(value(e))} AIU (${pct(value(e), total)})`]);
+    const segments = withValue.map((e, i) => [value(e), color(i), `${label(e)}: ${formatValue(value(e), e)} AIU (${formatShare(value(e), total)})`]);
     const bar = stackedBar(segments, total);
     bar.classList.add("share");
-    return [bar, legend(withValue.map((e, i) => [`${label(e)} ${pct(value(e), total)}`, color(i)]))];
+    return [bar, legend(withValue.map((e, i) => [`${label(e)} ${formatShare(value(e), total)}`, color(i)]))];
 }
 
 function aiuShare(models) {
@@ -972,14 +1591,14 @@ function renderVscode(data) {
             : null,
         h(
             "div",
-            { class: "cards" },
+            { class: "cards usage-cards" },
             card("Sessions", num(data.Sessions)),
-            card("Turns", num(data.Turns), data.Sessions ? `${(data.Turns / data.Sessions).toFixed(1)} / session` : null),
+            card("Usage (AIU)", aiu(sum("UsageAIU")), modelNote ? modelNote.slice(3) : null),
             card("LLM requests", num(data.LLMRequests), data.Turns ? `${(data.LLMRequests / data.Turns).toFixed(1)} / turn` : null),
-            card("Tool calls", num(data.ToolCalls), toolTotal ? `${pct(toolErrors, toolTotal)} errors (listed tools)` : null),
             card("Input tokens", big(input), `${pct(cached, input)} cached${modelNote}`),
             card("Output tokens", big(sum("OutputTokens")), modelNote ? modelNote.slice(3) : null),
-            card("Usage (AIU)", aiu(sum("UsageAIU")), modelNote ? modelNote.slice(3) : null),
+            card("Turns", num(data.Turns), data.Sessions ? `${(data.Turns / data.Sessions).toFixed(1)} / session` : null),
+            card("Tool calls", num(data.ToolCalls), toolTotal ? `${pct(toolErrors, toolTotal)} errors (listed tools)` : null),
         ),
         h(
             "div",
@@ -996,7 +1615,8 @@ function renderVscode(data) {
 // ---------------------------------------------------------------- ask agent
 
 function renderPresets(source, result) {
-    const presets = meta.presets.filter((p) => p.sources.includes(source));
+    const presets = meta.presets.filter((p) => p.sources.includes(source) &&
+        !(source === "session" && state.query.fusionOnly && p.id === "permissions"));
     const disabled = !(result.data && result.status === "ok" && result.fresh);
     $("presets").replaceChildren(
         ...presets.map((p) => h("button", { type: "button", class: "btn small", disabled, onclick: () => ask({ preset: p.id }) }, p.label)),
@@ -1066,6 +1686,7 @@ function wire() {
             since: "",
             until: "",
             top: 10,
+            ...(typeof state.query.fusionOnly === "boolean" ? { fusionOnly: false } : {}),
             filters: Object.fromEntries(meta.sources.map((s) => [s, Object.fromEntries(meta.filters[s].map((f) => [f, []]))])),
         });
     });

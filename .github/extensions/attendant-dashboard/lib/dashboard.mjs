@@ -4,6 +4,7 @@
 import { buildArgv, normalizeQuery, SOURCES } from "./query.mjs";
 import { resolveRunner, runStats, RUNNERS } from "./runner.mjs";
 import { summarize } from "./summary.mjs";
+import { projectFusion } from "./fusion-data.mjs";
 import { projectVscode, vscodeFetchArgv } from "./vscode-data.mjs";
 
 function idleResult() {
@@ -36,6 +37,7 @@ export class Dashboard {
         this.pending = {};
         this.listeners = new Set();
         this.closed = false;
+        this.sessionCache = null;
         this.vscodeCache = null;
     }
 
@@ -58,8 +60,55 @@ export class Dashboard {
     /** Whether the stored result was produced by the current query. */
     isFresh(source) {
         const result = this.results[source];
-        return Boolean(result.argv) && result.argv.join("\0") === buildArgv(this.query, source).join("\0") &&
-            (source !== "vscode" || this.hasVscodeCache());
+        if (!result.argv || result.argv.join("\0") !== buildArgv(this.query, source).join("\0")) return false;
+        if (source === "vscode") return this.hasVscodeCache();
+        return result.runnerMode === this.runnerMode && result.projection === (this.query.fusionOnly ? "fusion" : "all");
+    }
+
+    hasSessionCache() {
+        return this.sessionCache?.runnerMode === this.runnerMode &&
+            this.sessionCache.argv.join("\0") === buildArgv(this.query, "session").join("\0");
+    }
+
+    projectCachedSession() {
+        const previous = this.results.session;
+        const projection = this.query.fusionOnly ? "fusion" : "all";
+        if (!this.hasSessionCache()) {
+            if (projection === "fusion" || previous.projection !== projection) {
+                this.results.session = {
+                    ...previous, data: null, projection, localFiltering: projection === "fusion",
+                    fetchArgv: undefined,
+                    ...(previous.errorKind === "projection" ? { status: "idle", error: null, errorKind: null } : {}),
+                };
+            }
+            return;
+        }
+        const cache = this.sessionCache;
+        const common = {
+            argv: cache.argv, runnerMode: cache.runnerMode, projection,
+            ranAt: cache.ranAt, durationMs: cache.durationMs, warnings: cache.warnings,
+            fetchArgv: projection === "fusion" ? cache.argv : undefined,
+            localFiltering: projection === "fusion",
+        };
+        const pending = previous.status === "loading" && previous.loadingRunnerMode === this.runnerMode &&
+            previous.loadingArgv?.join("\0") === this.fetchArgv("session").join("\0");
+        try {
+            const data = projection === "fusion" ? projectFusion(cache.data) : cache.data;
+            this.results.session = {
+                ...previous, ...common, data,
+                ...(!pending && cache.fetchError !== undefined
+                    ? { status: "error", error: cache.fetchError, errorKind: "fetch" }
+                    : previous.errorKind === "projection" ? { status: "ok", error: null, errorKind: null } : {}),
+            };
+        } catch (error) {
+            this.results.session = {
+                ...previous, ...common, data: null,
+                status: pending ? "loading" : "error",
+                error: pending ? null : cache.fetchError !== undefined
+                    ? `${error.message}; last refresh failed: ${cache.fetchError}` : error.message,
+                errorKind: pending ? null : "projection",
+            };
+        }
     }
 
     hasVscodeCache() {
@@ -114,6 +163,7 @@ export class Dashboard {
         this.runnerMode = mode;
         this.runnerPromise = null;
         this.runnerInfo = { mode, label: null, error: null };
+        this.projectCachedSession();
     }
 
     /**
@@ -129,6 +179,7 @@ export class Dashboard {
     /** Validates and stores a query patch synchronously; throws QueryError. */
     applyQuery(patch) {
         this.query = normalizeQuery(patch, this.query);
+        this.projectCachedSession();
         this.projectCachedVscode();
         this.persist(this.query);
         this.emit();
@@ -140,6 +191,9 @@ export class Dashboard {
         const source = this.query.source;
         if (!force && this.isFresh(source) && this.results[source].status === "ok") return this.results[source];
         if (!force && source === "vscode" && this.hasVscodeCache() && this.results[source].status === "error") {
+            return this.results[source];
+        }
+        if (!force && source === "session" && this.hasSessionCache() && this.results[source].status === "error") {
             return this.results[source];
         }
         if (!force && this.results[source].status === "loading" && this.pending[source]) {
@@ -184,6 +238,7 @@ export class Dashboard {
             ...previous,
             status: "loading",
             error: null,
+            errorKind: null,
             loadingArgv: argv,
             loadingRunnerMode: runnerMode,
             startedAt: new Date().toISOString(),
@@ -202,31 +257,53 @@ export class Dashboard {
                 const ranAt = new Date().toISOString();
                 let projected = data;
                 let equivalentArgv = argv;
-                if (source === "vscode") {
+                if (source === "session") {
+                    this.sessionCache = { data, argv, ranAt, durationMs, warnings, runnerMode };
+                    this.results.session = {
+                        status: "ok",
+                        data: this.query.fusionOnly ? null : data,
+                        argv,
+                        runnerMode,
+                        projection: this.query.fusionOnly ? "fusion" : "all",
+                        localFiltering: this.query.fusionOnly,
+                        ranAt,
+                        durationMs,
+                        warnings,
+                        error: null,
+                    };
+                    this.projectCachedSession();
+                } else {
                     projectVscode(data, { ...query, filters: { ...query.filters, vscode: { ...query.filters.vscode, agent: [] } } });
                     const current = argv.join("\0") === this.fetchArgv(source).join("\0") ? this.query : query;
                     projected = projectVscode(data, current);
                     equivalentArgv = buildArgv(current, source);
                     this.vscodeCache = { data, argv, ranAt, durationMs, warnings, runnerMode };
+                    this.results[source] = {
+                        status: "ok",
+                        data: projected,
+                        argv: equivalentArgv,
+                        fetchArgv: argv,
+                        localFiltering: true,
+                        ranAt,
+                        durationMs,
+                        warnings,
+                        error: null,
+                    };
                 }
-                this.results[source] = {
-                    status: "ok",
-                    data: projected,
-                    argv: equivalentArgv,
-                    ...(source === "vscode" ? { fetchArgv: argv, localFiltering: true } : {}),
-                    ranAt,
-                    durationMs,
-                    warnings,
-                    error: null,
-                };
             } catch (error) {
                 if (generation !== this.generation[source] || this.closed || error.aborted) return;
                 this.log(`attendant-dashboard: ${source} stats failed: ${error.message}`, "warning");
+                if (source === "session" && this.sessionCache?.runnerMode === runnerMode &&
+                    this.sessionCache.argv.join("\0") === argv.join("\0")) {
+                    this.sessionCache = { ...this.sessionCache, fetchError: error.message };
+                }
                 this.results[source] = {
                     ...this.results[source],
                     status: "error",
                     error: error.message,
+                    errorKind: "fetch",
                 };
+                if (source === "session") this.projectCachedSession();
             } finally {
                 if (generation === this.generation[source]) {
                     delete this.aborters[source];

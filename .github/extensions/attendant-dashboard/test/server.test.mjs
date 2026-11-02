@@ -4,6 +4,7 @@ import { request } from "node:http";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { normalizeQuery } from "../lib/query.mjs";
 import { startServer } from "../lib/server.mjs";
+import { fusionDataset } from "./fixtures/fusion.mjs";
 import { vscodeDataset } from "./fixtures/vscode.mjs";
 
 function call(url, { method = "GET", headers = {}, body } = {}) {
@@ -163,6 +164,7 @@ test("HTTP Agent changes use cached data for state and Ask agent without launchi
         calls++;
         return { data: vscodeDataset(), warnings: [], durationMs: 10 };
     });
+
     t.after(() => server.close());
     await dashboard.setQuery({ source: "vscode" });
     const ranAt = dashboard.results.vscode.ranAt;
@@ -186,5 +188,37 @@ test("HTTP Agent changes use cached data for state and Ask agent without launchi
     assert.equal(ask.status, 200);
     assert.equal(asked[0].summary.summary.llmRequests, 4);
     assert.equal(asked[0].summary.ranAt, ranAt);
+    assert.equal(calls, 1);
+});
+
+test("HTTP Fusion-only selection projects state and Ask agent without exposing permissions", async (t) => {
+    let calls = 0;
+    const { server, json, dashboard, asked, auth } = await setup(async () => {
+        calls++;
+        return { data: fusionDataset(), warnings: [], durationMs: 1 };
+    });
+    t.after(() => server.close());
+    await dashboard.ensureFresh();
+    const response = await call(`${server.origin}/api/query`, {
+        method: "POST", headers: json, body: JSON.stringify({ query: { fusionOnly: true } }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.json.results.session.data.FusionOnly, true);
+    assert.equal("Requests" in response.json.results.session.data, false);
+    assert.equal(response.json.results.session.fresh, true);
+    const state = await call(`${server.origin}/api/state`, { headers: auth });
+    assert.deepEqual(state.json.results.session.data, response.json.results.session.data);
+    const disallowed = await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ preset: "permissions" }),
+    });
+    assert.equal(disallowed.status, 400);
+    assert.match(disallowed.json.error, /unavailable in Fusion-only mode/);
+    const ask = await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ preset: "summarize" }),
+    });
+    assert.equal(ask.status, 200);
+    assert.equal(asked[0].summary.summary.usage.usageRecords, 3);
+    assert.equal("requests" in asked[0].summary.summary, false);
+    assert.equal("resolvedTurns" in asked[0].summary.summary.fusion, false);
     assert.equal(calls, 1);
 });

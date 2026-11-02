@@ -356,9 +356,11 @@ limit as working-directory usage. `--all`,
 only sessions whose recorded working directory is inside the current git worktree are
 counted. `--session` restricts to a single session ID. `--since` and `--until` accept
 RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as `7d`/`24h`/`30m`, and
-default to no bound (lifetime usage totals are bound by each session's latest recorded usage
-update time, not individual API request times). `--period` is shorthand for `--since` using a coarser
-window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `--operation`
+default to no bound. Usage updates are selected by their recorded timestamps,
+with an inclusive lower and exclusive upper bound. Earlier recorded totals are
+subtracted from cumulative snapshots; a snapshot delta may include usage before
+the selected period. `--period` is shorthand for `--since` using a window such
+as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `--operation`
 restricts to non-mutating (`read`) or mutating (`write`) requests. `--kind` restricts to an
 exact tool kind (e.g. `shell`, `read`, `write`); `--decision-source` restricts to permission
 outcomes with an exact decision source (e.g. `human_response`, `unattended_fallback`, or `unknown`
@@ -370,6 +372,34 @@ regular expression). `--operation`, `--kind`, `--decision-source`, `--command`, 
 entries per statistic (default `10`; `0` keeps every entry).
 `--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
 `--format json`, results are printed as tables.
+
+`FUSION` (`Fusion` in JSON) reports Copilot Fusion activity from recorded
+events. `FUSION_PATTERN` counts distinct resolved turns by pattern;
+`FUSION_PHASE` groups deduplicated usage records by pattern, phase, role, and
+the recorded usage model. Sessions and identified turns and phases are counted
+distinctly; a phase requires both a Fusion ID and a phase ID. Resolutions and
+usage records lacking these identifiers are reported separately. A turn or
+phase can appear in more than one phase/model row. AIU is a subtotal from usage
+records with a recorded `totalNanoAiu`; the record count with AIU exposes
+coverage, and partial subtotals are marked `>=` in tables. Missing AIU is
+`n/a`, not zero. Checkpoints, planned phases, and missing Fusion metadata are
+not attributed or inferred, so older or incomplete logs cannot prove that
+Fusion was not used. Usage record counts are not necessarily distinct API calls.
+JSON also includes the versioned `Fusion.Usage` dataset: totals and independent
+model, working-directory, and main/subagent/unknown-role breakdowns use only
+explicitly tagged usage records. Each metric records its observed, complete,
+and excluded record counts, so missing values are not treated as zero.
+Premium requests use cost multipliers for user or unspecified initiators, as
+in the shared collector; other initiators are excluded from that metric.
+Unknown models, working directories, and agent provenance remain unidentified.
+
+Directory and session scope apply to Fusion; `--since` and `--until` select
+each resolution or usage record by its own timestamp, with an inclusive lower
+and exclusive upper bound. Events without timestamps are excluded when a time
+bound is set. Replayed records are deduplicated before time filtering.
+Permission filters do not apply. `--top` limits each Fusion
+breakdown but not its totals. Active sessions can be updated while scanning,
+so shared and Fusion totals are not an atomic snapshot.
 
 `ASK_USER` (`AskUser` in JSON) reports sessions with questions, question counts, and
 answered/cancelled/failed/unresolved/unknown outcomes from paired `ask_user` tool events.
@@ -490,6 +520,14 @@ Copilot CLI tab. This distinction depends on the harness, not the VS Code versio
 The VS Code canvas fetches log details once and processes Agent and Top changes locally,
 without re-running gh. Refresh, scope/time/session changes, and tool/model filter changes
 fetch a new dataset. Filtered display, summaries, and Ask agent use the same projected data.
+On the Copilot CLI tab, **Fusion usage only** restricts the dashboard to usage
+records explicitly tagged as Fusion, excluding permission data, resolution
+events, and checkpoint-only usage. The switch applies locally to matching
+cached data; scope, time, session, and Top changes fetch new data. Metric
+coverage distinguishes missing values from zero, and record counts are not
+necessarily distinct API calls. The fetch command shown in this mode returns
+the unfiltered CLI result; filtering is applied by the dashboard. Use an
+updated CLI or the canvas `source` runner if Fusion-only details are unavailable.
 Filterable panels have a Clear button that removes only that panel's conditions.
 Workspaces and Working directories clear the directory scope back to all workspaces.
 Other filters, the time window, session selection, and Top remain unchanged.

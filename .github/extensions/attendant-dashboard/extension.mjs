@@ -32,6 +32,10 @@ const QUERY_SCHEMA = {
         since: { type: "string", description: "RFC3339, YYYY-MM-DD, or relative duration; clears period" },
         until: { type: "string", description: "RFC3339, YYYY-MM-DD, or relative duration" },
         top: { type: "integer", minimum: 0, maximum: MAX_TOP, description: "Top N entries per statistic (0 = all)" },
+        fusionOnly: {
+            type: "boolean",
+            description: "On the Copilot CLI tab, show only explicitly Fusion-tagged usage records (default false)",
+        },
         filters: {
             type: "object",
             additionalProperties: false,
@@ -160,13 +164,13 @@ const canvas = createCanvas({
         {
             name: "refresh",
             description:
-                "Optionally update the query and return a compact summary; force defaults to true. With force false, VS Code Agent/Top changes reuse cached data.",
+                "Optionally update the query and return a compact summary; force defaults to true. With force false, VS Code Agent/Top and CLI Fusion-only changes reuse matching cached data.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,
                 properties: {
                     query: QUERY_SCHEMA,
-                    force: { type: "boolean", description: "Default true; false reuses matching results and projects VS Code Agent/Top changes locally" },
+                    force: { type: "boolean", description: "Default true; false reuses matching results for VS Code Agent/Top and CLI Fusion-only projections" },
                 },
             },
             handler: async (ctx) => {
@@ -181,7 +185,7 @@ const canvas = createCanvas({
         },
         {
             name: "get_data",
-            description: "Return the full JSON result last loaded for a source (defaults to the active tab).",
+            description: "Return the current JSON result for a source (defaults to the active tab), including any local Fusion-only projection.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,
@@ -199,6 +203,7 @@ const canvas = createCanvas({
                     ranAt: result.ranAt,
                     warnings: result.warnings?.slice(0, 20) ?? [],
                     error: result.error,
+                    localFiltering: Boolean(result.localFiltering),
                     data: result.data,
                 };
             },
