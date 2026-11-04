@@ -3,8 +3,16 @@ import assert from "node:assert/strict";
 import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, normalizeQuery, QueryError } from "../lib/query.mjs";
 
 test("default query builds the worktree-scoped session command", () => {
-    assert.deepEqual(buildArgv(normalizeQuery()), ["session", "stats", "--period=30d", "--top=10", "--format", "json"]);
+    assert.deepEqual(buildArgv(normalizeQuery()), ["session", "stats", "--period=30d", "--top=20", "--format", "json"]);
     assert.equal(normalizeQuery().fusionOnly, false);
+});
+
+test("Top defaults to 20 without replacing explicit or saved values", () => {
+    for (const top of ["", undefined, null]) assert.equal(normalizeQuery({ top }).top, 20);
+    for (const top of [0, 10, 25]) {
+        assert.equal(normalizeQuery({ top }).top, top);
+        assert.equal(normalizeQuery({}, normalizeQuery({ top })).top, top);
+    }
 });
 
 test("Fusion-only is a persistent session projection, not a CLI flag or VS Code filter", () => {
@@ -80,6 +88,16 @@ test("period and since clear each other when patched individually", () => {
     const withPeriod = normalizeQuery({ period: "7d" }, withSince);
     assert.equal(withPeriod.since, "");
     assert.throws(() => normalizeQuery({ period: "7d", since: "2026-01-01" }), /mutually exclusive/);
+});
+
+test("a rolling period clears inherited until but preserves explicit upper bounds", () => {
+    const base = normalizeQuery({ period: "", since: "2026-01-01", until: "2026-02-01" });
+    const next = normalizeQuery({ period: "7d" }, base);
+    assert.equal(next.since, "");
+    assert.equal(next.until, "");
+    assert.equal(normalizeQuery({ period: "7d", until: "2026-03-01" }, base).until, "2026-03-01");
+    assert.equal(normalizeQuery({ top: 5 }, base).until, base.until);
+    assert.equal(normalizeQuery({ period: "" }, base).until, base.until);
 });
 
 test("rejects invalid values", () => {

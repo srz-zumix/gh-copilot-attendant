@@ -162,6 +162,43 @@ activity. Use `--output-dir` for multiple formats.
 `--repo` (public repositories need `--allow-public`); artifacts with the same
 name are updated. Artifact names replace unsupported characters with spaces
 to meet GitHub's naming restrictions; issue titles are unchanged.
+
+`--pages --format html` publishes HTML and a history index to an existing
+Organization-owned private/internal project repository on GitHub Enterprise
+Cloud. `--repo` is optional and defaults to the current repository; the
+destination must have an initial commit and cannot be an Organization site
+(`<org>.github.io`). Pages publication cannot be combined with `--create-issue`,
+`--issue`, or `--allow-public`. It does not create the repository.
+
+If the destination has no Pages site, `--pages` initializes it: the CLI creates
+an isolated `copilot-metrics-pages` branch with no inherited files, or reuses
+it only when it already holds a valid managed history (so re-running resumes an
+interrupted setup). It verifies private visibility before enabling the branch
+source and checks the managed site before fetching metrics; an empty or
+placeholder site may briefly be public during setup. Unrelated existing sites
+and unmanaged branches are rejected, not overwritten. Failed initialization may
+leave resources to inspect before retrying.
+Initialization needs repository administration access and Pages write
+permission; publication needs Contents write and Pages read permission.
+Organization policies, SSO authorization, and branch rules still apply.
+
+Only repository readers can view the private site; internal repositories can
+have a wider Enterprise audience. Reports may include repository and team names
+by default and login names with the user section. Keep visibility and publishing
+settings restricted: pre-commit checks cannot prevent later administrator
+changes. History keeps one entry per source host, Organization/Enterprise, and
+date range; reruns update that entry without a tool-imposed history limit.
+Previous contents remain in Git history, and GitHub's limits still apply.
+Pages with multiple formats requires `--output-dir` to retain Markdown locally.
+Success reports the source URL/branch/commit, not verified deployment; check
+Pages separately. A workflow's `GITHUB_TOKEN` does not trigger branch-based
+Pages builds.
+
+```sh
+gh copilot-attendant metrics report --org example-org --format html --rich \
+  --pages --repo example-org/private-reports
+```
+
 Per-user data may be sensitive, so confirm before requesting
 `--section user`, `--section all`, or publishing. See the
 [usage guide](../../docs/usage.md#metrics-report) for the full flag reference.
@@ -224,10 +261,19 @@ not `vscode stats`. The source depends on the harness, not the VS Code version.
 
 ## Dashboard canvas
 
+The dashboard defaults Top to 20; Reset and an empty Top field also use 20.
+Previously saved Top values are preserved.
+
 In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
 `.github/extensions/attendant-dashboard` in this repository) visualizes the same
 `session stats` and `vscode stats` results. See its
 [README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.
+
+Period offers This month and Last month using the browser's local calendar
+boundaries. This month runs from month start to now; Last month ends exclusively
+at this month's start. Apply saves concrete Since/Until timestamps, not a rolling
+calendar preset. Editing either bound clears the calendar selection; choosing a
+rolling period clears both bounds, while None preserves them.
 
 The VS Code tab always displays a harness warning, even while loading or without
 data. It reads Copilot Chat debug logs from the Local harness. Locally recorded

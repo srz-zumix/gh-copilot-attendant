@@ -31,6 +31,7 @@ func NewReportCmd() *cobra.Command {
 	var title string
 	var labels []string
 	var allowPublic bool
+	var pages bool
 
 	cmd := &cobra.Command{
 		Use:   "report",
@@ -68,7 +69,18 @@ report.md and report.html.
 is a short overview, and --issue uses an existing issue instead. Each rendered report is
 attached to the issue as an issue artifact (Markdown as generic, HTML as embedded_html).
 An artifact with the same name, which identifies the source, window, and format, is
-updated instead of duplicated. Publishing to a public repository requires --allow-public.`,
+updated instead of duplicated. Publishing to a public repository requires --allow-public.
+
+--pages publishes HTML and a report-history index to a dedicated private GitHub Pages
+site in --repo and requires --format html. The destination must be an organization-owned
+private/internal project repository on GitHub Enterprise Cloud with an initial commit.
+If the repository has no Pages site, the dedicated copilot-metrics-pages branch is created
+(or reused when it already holds a managed history) and the site is initialized. Only a
+harmless placeholder may be public during setup, and metrics are not fetched until privacy
+is verified. Existing unrelated sites or branches are never overwritten.
+Pages cannot be combined with issue publication or --allow-public. Multiple formats with
+Pages require --output-dir. Source updates do not confirm deployment: Pages deploys
+asynchronously, and commits made with a workflow's GITHUB_TOKEN do not trigger branch builds.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -93,6 +105,7 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 				Title:       title,
 				Labels:      labels,
 				AllowPublic: allowPublic,
+				Pages:       pages,
 			}
 			if err := publishOpts.Validate(); err != nil {
 				return fmt.Errorf("validate publish options: %w", err)
@@ -116,6 +129,8 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 			}
 
 			var publisher *copilotmetrics.GitHubIssuePublisher
+			var pagesPublisher *copilotmetrics.PagesPublisher
+			var pagesTarget *copilotmetrics.PagesTarget
 			if publishOpts.Enabled() {
 				destRepo, err := parser.Repository(parser.RepositoryInput(repo))
 				if err != nil {
@@ -125,9 +140,22 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 				if err != nil {
 					return fmt.Errorf("create GitHub client for %s: %w", parser.GetRepositoryFullNameWithHost(destRepo), err)
 				}
-				publisher = copilotmetrics.NewGitHubIssuePublisher(destClient, destRepo)
-				if err := copilotmetrics.CheckPublishTarget(ctx, publisher, publishOpts); err != nil {
-					return fmt.Errorf("check destination %s: %w", parser.GetRepositoryFullName(destRepo), err)
+				if publishOpts.Pages {
+					pagesPublisher = copilotmetrics.NewGitHubPagesPublisher(destClient, destRepo)
+					pagesTarget, err = pagesPublisher.Prepare(ctx)
+					if err != nil {
+						return fmt.Errorf("prepare Pages destination %s: %w", parser.GetRepositoryFullName(destRepo), err)
+					}
+					if pagesTarget.Initialized() {
+						if _, err := fmt.Fprintf(stderr, "Initialized private Pages site %s from branch %s\n", pagesTarget.URL(), pagesTarget.Branch()); err != nil {
+							return fmt.Errorf("write progress message to stderr: %w", err)
+						}
+					}
+				} else {
+					publisher = copilotmetrics.NewGitHubIssuePublisher(destClient, destRepo)
+					if err := copilotmetrics.CheckPublishTarget(ctx, publisher, publishOpts); err != nil {
+						return fmt.Errorf("check destination %s: %w", parser.GetRepositoryFullName(destRepo), err)
+					}
 				}
 			}
 
@@ -176,6 +204,16 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 				}
 			}
 
+			if pagesPublisher != nil {
+				result, err := pagesPublisher.Publish(ctx, pagesTarget, source, summary, reports[copilotmetrics.FormatHTML])
+				if err != nil {
+					return fmt.Errorf("publish usage metrics report to Pages: %w", err)
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pages source updated: %s\nBranch: %s\nCommit: %s\nDeployment: not verified (GitHub Pages deploys asynchronously)\n", result.URL, result.Branch, result.CommitSHA); err != nil {
+					return fmt.Errorf("write Pages result to stdout: %w", err)
+				}
+				return nil
+			}
 			if publisher == nil {
 				return nil
 			}
@@ -223,7 +261,8 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 	f.StringSliceVar(&labels, "label", nil, "label to add to the created issue; may be repeated; requires --create-issue")
 	f.StringVar(&org, "org", "", "organization to report on, as [HOST/]ORG")
 	f.StringVar(&outputDir, "output-dir", "", "write report.md and/or report.html to this directory instead of stdout")
-	f.StringVarP(&repo, "repo", "R", "", "repository to publish the issue to, as [HOST/]OWNER/REPO (defaults to the current repository)")
+	f.BoolVar(&pages, "pages", false, "publish HTML and report history to a dedicated private GitHub Pages site; requires --format html")
+	f.StringVarP(&repo, "repo", "R", "", "repository to publish to, as [HOST/]OWNER/REPO (defaults to the current repository)")
 	f.BoolVar(&rich, "rich", false, "add dashboard-style KPI cards and breakdown charts to HTML; requires --format html")
 	f.StringSliceVar(&sections, "section", nil, "sections to include: "+strings.Join(copilotmetrics.SectionNames(), ", ")+", or all (default: all except user); may be repeated or comma separated")
 	f.StringVar(&since, "since", "", "first day of a range of 1-day reports (YYYY-MM-DD, RFC3339, or a relative duration like 7d)")
@@ -234,6 +273,9 @@ updated instead of duplicated. Publishing to a public repository requires --allo
 	cmd.MarkFlagsMutuallyExclusive("org", "enterprise")
 	cmd.MarkFlagsOneRequired("org", "enterprise")
 	cmd.MarkFlagsMutuallyExclusive("create-issue", "issue")
+	cmd.MarkFlagsMutuallyExclusive("pages", "create-issue")
+	cmd.MarkFlagsMutuallyExclusive("pages", "issue")
+	cmd.MarkFlagsMutuallyExclusive("pages", "allow-public")
 	cmd.MarkFlagsMutuallyExclusive("day", "since")
 	cmd.MarkFlagsMutuallyExclusive("day", "until")
 	_ = cmd.RegisterFlagCompletionFunc("section", cobra.FixedCompletions(append(copilotmetrics.SectionNames(), "all"), cobra.ShellCompDirectiveNoFileComp))

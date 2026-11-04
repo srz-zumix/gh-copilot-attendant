@@ -117,6 +117,7 @@ func TestWriteReports(t *testing.T) {
 func TestCheckPublishTarget(t *testing.T) {
 	ctx := t.Context()
 	assert.NoError(t, CheckPublishTarget(ctx, &fakePublisher{public: true}, PublishOptions{}), "nothing is checked when publishing is disabled")
+	assert.NoError(t, CheckPublishTarget(ctx, &fakePublisher{publicErr: errors.New("must not be called")}, PublishOptions{Pages: true}), "Pages uses its own target checks")
 
 	err := CheckPublishTarget(ctx, &fakePublisher{public: true}, PublishOptions{CreateIssue: true})
 	require.Error(t, err)

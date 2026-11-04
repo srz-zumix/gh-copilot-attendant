@@ -91,7 +91,7 @@ type IssuePublisher interface {
 // CheckPublishTarget verifies the destination before any data is fetched or written: public
 // repositories require AllowPublic and an existing issue must exist.
 func CheckPublishTarget(ctx context.Context, p IssuePublisher, opts PublishOptions) error {
-	if !opts.Enabled() {
+	if !opts.IssueEnabled() {
 		return nil
 	}
 	public, err := p.IsPublic(ctx)

@@ -156,6 +156,26 @@ function removeFilter(name, value) {
     patchQuery({ filters: { [source]: { [name]: current.filter((v) => v !== value) } } });
 }
 
+function calendarPeriodBounds(period, now = new Date()) {
+    if (period !== "this-month" && period !== "last-month") return null;
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    return {
+        period: "",
+        since: new Date(year, month - (period === "last-month" ? 1 : 0), 1).toISOString(),
+        until: period === "last-month" ? new Date(year, month, 1).toISOString() : "",
+    };
+}
+
+function periodSelection(query, now = new Date()) {
+    if (query.period) return query.period;
+    for (const period of ["this-month", "last-month"]) {
+        const bounds = calendarPeriodBounds(period, now);
+        if (query.since === bounds.since && query.until === bounds.until) return period;
+    }
+    return "";
+}
+
 function readForm() {
     const form = $("query");
     const data = new FormData(form);
@@ -166,14 +186,15 @@ function readForm() {
         since: String(data.get("since") ?? "").trim(),
         until: String(data.get("until") ?? "").trim(),
         session: String(data.get("session") ?? "").trim(),
-        top: data.get("top") === "" ? 10 : Number(data.get("top")),
+        top: data.get("top") === "" ? 20 : Number(data.get("top")),
     };
-    if (patch.since) patch.period = "";
+    if (patch.since || calendarPeriodBounds(patch.period)) patch.period = "";
     return patch;
 }
 
 function fillForm(query) {
-    const key = JSON.stringify([query.scope, query.path, query.period, query.since, query.until, query.session, query.top]);
+    const selection = periodSelection(query);
+    const key = JSON.stringify([query.scope, query.path, query.period, query.since, query.until, query.session, query.top, selection]);
     if (key === formQueryKey) return;
     formQueryKey = key;
     const form = $("query");
@@ -185,7 +206,7 @@ function fillForm(query) {
     if (query.period && ![...period.options].some((o) => o.value === query.period)) {
         period.append(h("option", { value: query.period }, query.period));
     }
-    period.value = query.period;
+    period.value = selection;
     form.since.value = query.since;
     form.until.value = query.until;
     form.session.value = query.session;
@@ -1685,7 +1706,7 @@ function wire() {
             period: "30d",
             since: "",
             until: "",
-            top: 10,
+            top: 20,
             ...(typeof state.query.fusionOnly === "boolean" ? { fusionOnly: false } : {}),
             filters: Object.fromEntries(meta.sources.map((s) => [s, Object.fromEntries(meta.filters[s].map((f) => [f, []]))])),
         });
@@ -1700,10 +1721,20 @@ function wire() {
         if (form.scope.value === "cwd" && !form.path.value) form.path.focus();
     });
     form.period.addEventListener("change", () => {
-        if (form.period.value) form.since.value = "";
+        const bounds = calendarPeriodBounds(form.period.value);
+        if (bounds) {
+            form.since.value = bounds.since;
+            form.until.value = bounds.until;
+        } else if (form.period.value) {
+            form.since.value = "";
+            form.until.value = "";
+        }
     });
     form.since.addEventListener("input", () => {
-        if (form.since.value.trim()) form.period.value = "";
+        if (form.since.value.trim() || calendarPeriodBounds(form.period.value)) form.period.value = "";
+    });
+    form.until.addEventListener("input", () => {
+        if (calendarPeriodBounds(form.period.value)) form.period.value = "";
     });
     $("ask-send").addEventListener("click", () => ask());
     $("ask-text").addEventListener("keydown", (e) => {
