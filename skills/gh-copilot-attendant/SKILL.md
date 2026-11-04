@@ -6,14 +6,18 @@ allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh co
 
 # gh-copilot-attendant
 
-This is a minimal skill bundle for `gh-copilot-attendant`.
+Use `gh-copilot-attendant` to inspect local Copilot usage, explore the interactive
+dashboard, and generate shareable organization or enterprise metrics reports.
+The [README](../../README.md) provides the overview and quick start; the
+[usage guide](../../docs/usage.md) contains detailed commands, defaults, and
+accounting semantics.
 
 ## Commands
 
 ### copilot extension install / update / uninstall / list / status
 
 Manages the bundled Copilot CLI canvas extension (`attendant-dashboard`). See the
-[README](../../README.md#copilot-extension-install) for the full flag reference.
+[usage guide](../../docs/usage.md#copilot-extension-install) for the full flag reference.
 
 ### metrics report
 
@@ -160,7 +164,7 @@ name are updated. Artifact names replace unsupported characters with spaces
 to meet GitHub's naming restrictions; issue titles are unchanged.
 Per-user data may be sensitive, so confirm before requesting
 `--section user`, `--section all`, or publishing. See the
-[README](../../README.md#metrics-report) for the full flag reference.
+[usage guide](../../docs/usage.md#metrics-report) for the full flag reference.
 
 ### session stats
 
@@ -193,7 +197,7 @@ Each metric reports observed, complete, and excluded record counts; missing
 values are not zero. Premium requests use multipliers for user or unspecified
 initiators, following the shared collector; other initiators are excluded.
 See the
-[README](../../README.md#session-stats) for the full flag reference.
+[usage guide](../../docs/usage.md#session-stats) for the full flag reference.
 
 ### vscode stats
 
@@ -211,7 +215,7 @@ Missing child logs produce warnings without dropping recorded matching invocatio
 `--include-log-stats` (optional, default false; incompatible with `--agent`) exports
 versioned, untruncated normalized per-log metrics and parent/invocation identities in JSON.
 No raw events or conversation content are exported.
-See the [README](../../README.md#vscode-stats)
+See the [usage guide](../../docs/usage.md#vscode-stats)
 for the full flag reference.
 
 VS Code Copilot harness (Agent Host) sessions recorded locally under
