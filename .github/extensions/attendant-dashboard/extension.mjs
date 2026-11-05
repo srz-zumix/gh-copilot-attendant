@@ -223,7 +223,7 @@ const canvas = createCanvas({
         },
         {
             name: "reset_query",
-            description: "Reset the query to defaults (current worktree, last 30 days, top 10, no filters) and refresh.",
+            description: "Reset the query to defaults (current worktree, last 30 days, top 20, no filters) and refresh.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,

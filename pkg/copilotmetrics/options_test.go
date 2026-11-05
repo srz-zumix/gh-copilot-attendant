@@ -105,6 +105,12 @@ func TestPublishOptionsValidate(t *testing.T) {
 		{"label without create", PublishOptions{Labels: []string{"a"}}, true},
 		{"repo without publish", PublishOptions{Repo: "octo/reports"}, true},
 		{"allow-public without publish", PublishOptions{AllowPublic: true}, true},
+		{"pages", PublishOptions{Pages: true, Repo: "example-org/reports"}, false},
+		{"pages and create", PublishOptions{Pages: true, CreateIssue: true}, true},
+		{"pages and issue", PublishOptions{Pages: true, Issue: 3}, true},
+		{"pages and public override", PublishOptions{Pages: true, AllowPublic: true}, true},
+		{"pages with issue title", PublishOptions{Pages: true, Title: "fictional"}, true},
+		{"pages with issue label", PublishOptions{Pages: true, Labels: []string{"fictional"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,4 +134,9 @@ func TestOutputOptionsValidate(t *testing.T) {
 	assert.True(t, OutputOptions{Formats: []Format{FormatMarkdown}}.WritesStdout(PublishOptions{}))
 	assert.False(t, OutputOptions{Formats: []Format{FormatMarkdown}}.WritesStdout(PublishOptions{Issue: 1}))
 	assert.False(t, OutputOptions{OutputDir: "out"}.WritesStdout(PublishOptions{}))
+	assert.ErrorContains(t, OutputOptions{Formats: []Format{FormatMarkdown}}.Validate(PublishOptions{Pages: true}), "--pages requires --format html")
+	assert.NoError(t, OutputOptions{Formats: []Format{FormatHTML}}.Validate(PublishOptions{Pages: true}))
+	assert.Error(t, OutputOptions{Formats: both}.Validate(PublishOptions{Pages: true}))
+	assert.NoError(t, OutputOptions{Formats: both, OutputDir: "out"}.Validate(PublishOptions{Pages: true}))
+	assert.False(t, OutputOptions{Formats: []Format{FormatHTML}}.WritesStdout(PublishOptions{Pages: true}))
 }

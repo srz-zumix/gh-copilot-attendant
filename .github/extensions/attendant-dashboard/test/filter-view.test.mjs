@@ -1946,6 +1946,109 @@ test("a stale dashboard provider disables the Fusion switch and explains that a 
         typeof child === "string" && child.includes("Reload the dashboard extension"))));
 });
 
+function periodForm() {
+    const view = renderedPanels(normalizeQuery(), {});
+    const elements = Object.fromEntries(
+        ["refresh", "reset", "query", "ask-send", "ask-text", "copy"].map((id) => [id, new Element("div")]),
+    );
+    const form = elements.query;
+    for (const name of ["scope", "path", "period", "since", "until", "session", "top"]) {
+        form[name] = new Element("input");
+        form[name].value = "";
+    }
+    form.scope.value = "all";
+    form.top.value = "10";
+    form.period.options = ["", "this-month", "last-month", "7d", "30d"].map((value) => ({ value }));
+    view.context.document.getElementById = (id) => elements[id];
+    view.context.document.querySelectorAll = () => [];
+    view.context.FormData = class {
+        get(name) { return form[name].value; }
+    };
+    vm.runInContext("wire();", view.context);
+    return { ...view, form };
+}
+
+test("calendar presets use local calendar boundaries, including leap years and year rollover", () => {
+    const { context } = periodForm();
+    for (const [year, month] of [[2026, 0], [2024, 2], [2026, 10], [2026, 11]]) {
+        const now = new Date(year, month, 15, 12);
+        const start = new Date(year, month, 1).toISOString();
+        const previous = new Date(year, month - 1, 1).toISOString();
+        const current = context.calendarPeriodBounds("this-month", now);
+        const last = context.calendarPeriodBounds("last-month", now);
+        assert.equal(current.period, "");
+        assert.equal(current.since, start);
+        assert.equal(current.until, "");
+        assert.equal(last.since, previous);
+        assert.equal(last.until, start, "Until is the exclusive start of this month");
+        assert.equal(context.periodSelection(current, now), "this-month");
+        assert.equal(context.periodSelection(last, now), "last-month");
+        assert.equal(context.periodSelection(last, new Date(year, month + 1, 15)), "");
+        const args = normalizeQuery({ ...last });
+        assert.equal(args.since, previous);
+        assert.equal(args.until, start);
+    }
+    assert.equal(context.calendarPeriodBounds("7d"), null);
+});
+
+test("Period changes clear stale bounds and manual edits leave calendar presets", () => {
+    const { form, context } = periodForm();
+    for (const period of ["7d", "30d"]) {
+        form.since.value = "2026-01-01";
+        form.until.value = "2026-02-01";
+        form.period.value = period;
+        form.period.events.change();
+        assert.equal(form.since.value, "");
+        assert.equal(form.until.value, "");
+        assert.equal(context.readForm().period, period);
+    }
+    form.until.value = "2026-03-01";
+    form.until.events.input();
+    assert.equal(form.period.value, "30d", "explicit Until remains compatible with rolling periods");
+    form.period.value = "";
+    form.period.events.change();
+    assert.equal(form.until.value, "2026-03-01", "None preserves manual bounds");
+    for (const period of ["this-month", "last-month"]) {
+        form.period.value = period;
+        form.period.events.change();
+        assert.ok(form.since.value.endsWith("Z"));
+        assert.equal(Boolean(form.until.value), period === "last-month");
+        const submitted = context.readForm();
+        assert.equal(submitted.period, "", "UI presets never reach CLI --period");
+        assert.equal(submitted.since, form.since.value);
+        assert.equal(submitted.until, form.until.value);
+        for (const name of ["since", "until"]) {
+            form.period.value = period;
+            form.period.events.change();
+            form[name].value = "";
+            form[name].events.input();
+            assert.equal(form.period.value, "", `deleting ${name} exits the preset`);
+        }
+    }
+});
+
+test("fillForm restores calendar selections and invalidates their labels across month rollover", () => {
+    const { form, context } = periodForm();
+    const setNow = (year, month) => {
+        context.Date = class extends Date {
+            constructor(...args) { super(...(args.length ? args : [new Date(year, month, 15).getTime()])); }
+        };
+    };
+    setNow(2026, 10);
+    const bounds = context.calendarPeriodBounds("this-month");
+    const query = normalizeQuery({ ...bounds });
+    context.fillForm(query);
+    assert.equal(form.period.value, "this-month");
+    setNow(2026, 11);
+    context.fillForm(query);
+    assert.equal(form.period.value, "", "expired This month label is not cached");
+    assert.equal(form.since.value, bounds.since, "saved dates do not silently move forward");
+    assert.equal(context.readForm().since, bounds.since);
+    context.fillForm(normalizeQuery({ period: "7d" }));
+    assert.equal(form.period.value, "7d");
+    assert.equal(form.until.value, "");
+});
+
 test("Reset omits the Fusion field for an old provider and clears it for a current provider", () => {
     for (const source of ["session", "vscode"]) {
         for (const supported of [false, true]) {
@@ -1954,7 +2057,7 @@ test("Reset omits the Fusion field for an old provider and clears it for a curre
             const elements = Object.fromEntries(
                 ["refresh", "reset", "query", "ask-send", "ask-text", "copy"].map((id) => [id, new Element("div")]),
             );
-            for (const name of ["scope", "path", "period", "since"]) elements.query[name] = new Element("input");
+            for (const name of ["scope", "path", "period", "since", "until"]) elements.query[name] = new Element("input");
             context.document.getElementById = (id) => elements[id];
             context.document.querySelectorAll = () => [];
             context.FILTERS = FILTERS;
@@ -1967,7 +2070,7 @@ test("Reset omits the Fusion field for an old provider and clears it for a curre
             assert.equal(patch.source, source);
             assert.equal(patch.scope, "worktree");
             assert.equal(patch.period, "30d");
-            assert.equal(patch.top, 10);
+            assert.equal(patch.top, 20);
             assert.equal(Object.hasOwn(patch, "fusionOnly"), supported);
             if (supported) assert.equal(patch.fusionOnly, false);
             for (const [tab, filters] of Object.entries(FILTERS)) {

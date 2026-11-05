@@ -69,6 +69,19 @@ Replace `example-org` with your organization to write a rich HTML report to
 and excludes the per-user ranking. Enterprise reports use `--enterprise`
 instead of `--org`.
 
+To publish the report and maintain a history on a private or internal Pages
+site, add `--pages` and specify an existing destination repository:
+
+```sh
+gh copilot-attendant metrics report --org example-org --format html --rich \
+  --pages --repo example-org/private-reports
+```
+
+Pages publication requires an Organization-owned private or internal project
+repository on GitHub Enterprise Cloud. It cannot be combined with issue
+publication. See the [agent skill](skills/gh-copilot-attendant/SKILL.md) for
+initialization, permissions, and privacy details.
+
 ### session
 
 ```sh

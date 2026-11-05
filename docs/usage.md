@@ -81,7 +81,7 @@ the installed one. Fails if an extension is not installed yet. `--scope` default
 ```sh
 gh copilot-attendant metrics report \
   (--org [HOST/]ORG | --enterprise [HOST/]ENTERPRISE) \
-  [--allow-public] [--create-issue | --issue <number>] \
+  [--allow-public] [--create-issue | --issue <number> | --pages] \
   [--day <YYYY-MM-DD> | --since <time> [--until <time>]] \
   [--format <md|html>]... [--label <label>]... [--output-dir <dir>] \
   [--repo [HOST/]OWNER/REPO | -R [HOST/]OWNER/REPO] [--rich] \
@@ -133,17 +133,31 @@ Exactly one of `--org` or `--enterprise` is required.
   Each chart's **Chart values** disclosure lists its full values.
   With JavaScript enabled, printing temporarily expands all sections and tables
   and then restores their screen state. May be repeated or comma separated.
-  Multiple formats require `--output-dir`, `--create-issue`, or `--issue`.
+  Multiple formats require `--output-dir`, `--create-issue`, or `--issue`;
+  with `--pages`, they require `--output-dir`.
 - `--issue`: attach the rendered reports as artifacts to this existing issue
   (optional).
 - `--label`: label to add to the created issue (optional, may be repeated).
   Requires `--create-issue`.
 - `--org`: organization to report on, as `[HOST/]ORG`.
+- `--pages`: publish the HTML report and a report-history index to a
+  dedicated private GitHub Pages site in `--repo` (optional, default `false`).
+  Requires `--format html`. The destination must be an organization-owned
+  private or internal repository on GitHub Enterprise Cloud with an initial
+  commit. If the repository has no Pages site, the dedicated
+  `copilot-metrics-pages` branch is created (or reused when it already holds a
+  managed history) and the site is initialized; metrics are not fetched until
+  privacy is verified, and existing unrelated sites or branches are never
+  overwritten. Mutually exclusive with `--create-issue`, `--issue`, and
+  `--allow-public`. Source updates do not confirm deployment: Pages deploys
+  asynchronously, and commits made with a workflow's `GITHUB_TOKEN` do not
+  trigger branch builds.
 - `--output-dir`: write `report.md` and/or `report.html` to this directory
   (optional). Without it, a single format is written to stdout unless the report
   is published.
 - `--repo` / `-R`: repository to publish to, as `[HOST/]OWNER/REPO` (optional,
-  defaults to the current repository). Requires `--create-issue` or `--issue`.
+  defaults to the current repository). Requires `--create-issue`, `--issue`, or
+  `--pages`.
   It may be on a different host than the metrics source.
 - `--rich`: add dashboard-style KPI cards and breakdown charts to the HTML
   report (optional, default `false`). KPI cards sit side by side when space

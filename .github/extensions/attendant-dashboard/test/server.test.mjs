@@ -53,6 +53,8 @@ test("index.html embeds the token and sets a CSP", async (t) => {
     assert.ok(res.text.includes(server.token));
     assert.ok(!res.text.includes("__DASHBOARD_TOKEN__"));
     assert.match(res.headers["content-security-policy"], /script-src 'self'/);
+    assert.match(res.text, /<option value="this-month">This month<\/option>/);
+    assert.match(res.text, /<option value="last-month">Last month<\/option>/);
 });
 
 test("index.html explains harness-based tab routing without implying a VS Code version cutoff", async (t) => {

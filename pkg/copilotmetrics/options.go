@@ -1,5 +1,5 @@
 // Package copilotmetrics collects GitHub Copilot usage metrics reports for an organization or
-// enterprise, aggregates them into a shareable summary, and publishes rendered reports to issues.
+// enterprise, aggregates them into a shareable summary, and publishes rendered reports.
 package copilotmetrics
 
 import (
@@ -249,7 +249,7 @@ func ParseFormats(values []string) ([]Format, error) {
 	return formats, nil
 }
 
-// PublishOptions controls issue publication.
+// PublishOptions controls issue or private Pages publication.
 type PublishOptions struct {
 	Repo        string
 	CreateIssue bool
@@ -257,14 +257,20 @@ type PublishOptions struct {
 	Title       string
 	Labels      []string
 	AllowPublic bool
+	Pages       bool
 }
 
-// Enabled reports whether the report is published to an issue.
+// Enabled reports whether the report is published.
 func (o PublishOptions) Enabled() bool {
+	return o.IssueEnabled() || o.Pages
+}
+
+// IssueEnabled reports whether the report is published to an issue.
+func (o PublishOptions) IssueEnabled() bool {
 	return o.CreateIssue || o.Issue > 0
 }
 
-// Validate checks flag combinations for issue publication.
+// Validate checks flag combinations for publication.
 func (o PublishOptions) Validate() error {
 	if o.Issue < 0 {
 		return fmt.Errorf("--issue must be a positive issue number")
@@ -275,8 +281,14 @@ func (o PublishOptions) Validate() error {
 	if !o.CreateIssue && (o.Title != "" || len(o.Labels) > 0) {
 		return fmt.Errorf("--title and --label require --create-issue")
 	}
-	if !o.Enabled() && (o.Repo != "" || o.AllowPublic) {
-		return fmt.Errorf("--repo and --allow-public require --create-issue or --issue")
+	if o.Pages && o.IssueEnabled() {
+		return fmt.Errorf("--pages cannot be combined with --create-issue or --issue")
+	}
+	if o.AllowPublic && !o.IssueEnabled() {
+		return fmt.Errorf("--allow-public requires --create-issue or --issue and cannot be used with --pages")
+	}
+	if !o.Enabled() && o.Repo != "" {
+		return fmt.Errorf("--repo requires --create-issue, --issue, or --pages")
 	}
 	return nil
 }
@@ -294,7 +306,10 @@ func (o OutputOptions) Validate(publish PublishOptions) error {
 	if o.Rich && !containsFormat(o.Formats, FormatHTML) {
 		return fmt.Errorf("--rich requires --format html")
 	}
-	if len(o.Formats) > 1 && o.OutputDir == "" && !publish.Enabled() {
+	if publish.Pages && !containsFormat(o.Formats, FormatHTML) {
+		return fmt.Errorf("--pages requires --format html")
+	}
+	if len(o.Formats) > 1 && o.OutputDir == "" && (!publish.Enabled() || publish.Pages) {
 		return fmt.Errorf("multiple --format values require --output-dir")
 	}
 	return nil

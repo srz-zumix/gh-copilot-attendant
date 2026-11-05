@@ -54,7 +54,7 @@ export function defaultQuery() {
         period: "30d",
         since: "",
         until: "",
-        top: 10,
+        top: 20,
         fusionOnly: false,
         filters: emptyFilters(),
     };
@@ -208,7 +208,9 @@ function checkFilterShape(filters) {
  *
  * Filter arrays in a patch replace only the arrays they name; unspecified
  * filters are kept from `base`. Setting one of the mutually exclusive `period`
- * / `since` bounds clears the other. Throws {@link QueryError} on invalid input.
+ * / `since` bounds clears the other. A nonempty period also clears an inherited
+ * `until`; an explicitly supplied `until` is preserved. Throws {@link QueryError}
+ * on invalid input.
  *
  * @param {object} [patch]
  * @param {object} [base]
@@ -242,6 +244,7 @@ export function normalizeQuery(patch = {}, base = defaultQuery()) {
     q.until = checkString("until", merged.until);
     if ("since" in patch && q.since && !("period" in patch)) q.period = "";
     if ("period" in patch && q.period && !("since" in patch)) q.since = "";
+    if ("period" in patch && q.period && !("until" in patch)) q.until = "";
     if (q.period && q.since) throw new QueryError("period and since are mutually exclusive");
     if (q.period && !PERIOD_RE.test(q.period)) throw new QueryError("period must look like 7d, 3w, 6m, or 1y");
     if (q.since && !TIME_RE.test(q.since)) {
@@ -251,7 +254,7 @@ export function normalizeQuery(patch = {}, base = defaultQuery()) {
         throw new QueryError("until must be RFC3339, YYYY-MM-DD, or a relative duration like 7d");
     }
 
-    const top = merged.top === "" || merged.top === undefined || merged.top === null ? 10 : Number(merged.top);
+    const top = merged.top === "" || merged.top === undefined || merged.top === null ? 20 : Number(merged.top);
     if (!Number.isInteger(top) || top < 0 || top > MAX_TOP) {
         throw new QueryError(`top must be an integer between 0 and ${MAX_TOP}`);
     }

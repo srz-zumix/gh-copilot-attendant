@@ -41,7 +41,7 @@ input (all fields are optional):
 | `session` | `string` | empty | `--session` |
 | `since` | `string` | empty | `--since` |
 | `source` | `string` | `session` | `session stats` or `vscode stats` |
-| `top` | `integer` | `10` | `--top` (`0` keeps every entry) |
+| `top` | `integer` | `20` | `--top` (`0` keeps every entry) |
 | `until` | `string` | empty | `--until` |
 
 The `path` and `url` session filters and all `vscode` filters are regular expressions in
@@ -71,6 +71,13 @@ is required to run the canvas.
   Display, `get_data`, `get_summary`, and Ask agent share the same projected results.
   The footer shows an equivalent CLI command; its tooltip and summary `fetchCommand`
   identify the actual data-fetch command for VS Code local filtering.
+- **Calendar periods** — Period includes **This month** (month start to now) and
+  **Last month** (previous month start up to, but excluding, this month start).
+  Boundaries use the browser's local time zone and populate Since/Until as exact
+  timestamps. Apply submits these concrete dates; saved queries keep those dates,
+  rather than advancing automatically next month. Editing either bound returns
+  the calendar selection to None. Selecting a rolling period clears both bounds;
+  selecting None preserves them.
 - **Fusion usage only** — the Copilot CLI filter projects only explicitly
   Fusion-tagged usage records, not all usage in sessions that used Fusion.
   Permission statistics, user questions, resolution events, planned phases, and
