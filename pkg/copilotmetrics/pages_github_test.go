@@ -32,30 +32,34 @@ func TestGitHubPagesSnapshot(t *testing.T) {
 		err    string
 	}{
 		{"valid", func(*github.Tree, *github.Blob) {}, ""},
-		{"truncated tree", func(tree *github.Tree, _ *github.Blob) { tree.Truncated = github.Ptr(true) }, "truncated"},
+		{"truncated tree", func(tree *github.Tree, _ *github.Blob) {
+			truncated := true
+			tree.Truncated = &truncated
+		}, "truncated"},
 		{"unknown completeness", func(tree *github.Tree, _ *github.Blob) { tree.Truncated = nil }, "incomplete"},
 		{"duplicate paths", func(tree *github.Tree, _ *github.Blob) { tree.Entries = append(tree.Entries, tree.Entries[0]) }, "duplicate"},
 		{"missing path", func(tree *github.Tree, _ *github.Blob) { tree.Entries[0].Path = nil }, "without a path"},
-		{"unsupported encoding", func(_ *github.Tree, blob *github.Blob) { blob.Encoding = github.Ptr("utf-8") }, "metadata"},
+		{"unsupported encoding", func(_ *github.Tree, blob *github.Blob) { blob.Encoding = stringPointer("utf-8") }, "metadata"},
 		{"invalid encoding", func(_ *github.Tree, blob *github.Blob) { blob.Content = "not-base64!" }, "decode"},
 		{"changed content", func(_ *github.Tree, blob *github.Blob) {
 			blob.Content = base64.StdEncoding.EncodeToString([]byte("fictional"))
 		}, "does not match"},
-		{"changed blob identity", func(_ *github.Tree, blob *github.Blob) { blob.SHA = github.Ptr(strings.Repeat("3", 40)) }, "metadata"},
+		{"changed blob identity", func(_ *github.Tree, blob *github.Blob) { blob.SHA = stringPointer(strings.Repeat("3", 40)) }, "metadata"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files, err := pagesBootstrapFiles()
 			require.NoError(t, err)
-			tree := &github.Tree{Truncated: github.Ptr(false)}
+			complete := false
+			tree := &github.Tree{Truncated: &complete}
 			for path, content := range files {
 				tree.Entries = append(tree.Entries, &github.TreeEntry{
-					Path: github.Ptr(path), Mode: github.Ptr("100644"), Type: github.Ptr("blob"), SHA: github.Ptr(gitBlobSHA(content)),
+					Path: stringPointer(path), Mode: stringPointer("100644"), Type: stringPointer("blob"), SHA: stringPointer(gitBlobSHA(content)),
 				})
 			}
 			blob := &github.Blob{
-				SHA:      github.Ptr(gitBlobSHA(files[pagesManifestFile])),
-				Encoding: github.Ptr("base64"),
+				SHA:      stringPointer(gitBlobSHA(files[pagesManifestFile])),
+				Encoding: stringPointer("base64"),
 				Content:  base64.StdEncoding.EncodeToString(files[pagesManifestFile]),
 			}
 			tt.change(tree, blob)
@@ -65,7 +69,7 @@ func TestGitHubPagesSnapshot(t *testing.T) {
 				var response any
 				switch {
 				case strings.Contains(r.URL.Path, "/git/commits/"):
-					response = &github.Commit{Tree: &github.Tree{SHA: github.Ptr(strings.Repeat("2", 40))}}
+					response = &github.Commit{Tree: &github.Tree{SHA: stringPointer(strings.Repeat("2", 40))}}
 				case strings.Contains(r.URL.Path, "/git/trees/"):
 					response = tree
 				case strings.Contains(r.URL.Path, "/git/blobs/"):

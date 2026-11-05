@@ -32,15 +32,23 @@ type fakePagesStore struct {
 	commits            int
 }
 
+func pagesTestBoolPointer(value bool) *bool {
+	return &value
+}
+
+func pagesTestInt64Pointer(value int64) *int64 {
+	return &value
+}
+
 func newFakePagesStore() *fakePagesStore {
 	return &fakePagesStore{
 		repo: &github.Repository{
-			ID:            github.Ptr(int64(1)),
-			Owner:         &github.User{Login: github.Ptr("example-org"), Type: github.Ptr("Organization")},
-			Name:          github.Ptr("example-reports"),
-			Visibility:    github.Ptr("private"),
-			HasPages:      github.Ptr(false),
-			DefaultBranch: github.Ptr("main"),
+			ID:            pagesTestInt64Pointer(1),
+			Owner:         &github.User{Login: stringPointer("example-org"), Type: stringPointer("Organization")},
+			Name:          stringPointer("example-reports"),
+			Visibility:    stringPointer("private"),
+			HasPages:      pagesTestBoolPointer(false),
+			DefaultBranch: stringPointer("main"),
 		},
 		branches: map[string]string{"main": strings.Repeat("1", 40)},
 		files:    map[string][]byte{},
@@ -74,7 +82,7 @@ func (s *fakePagesStore) Site(context.Context) (*github.Pages, error) {
 		return nil, errPagesSiteNotFound
 	}
 	if s.siteCalls == s.publicOnSiteCall {
-		s.site.Public = github.Ptr(true)
+		s.site.Public = pagesTestBoolPointer(true)
 	}
 	return s.site, nil
 }
@@ -133,11 +141,11 @@ func (s *fakePagesStore) CreateWorkflowSite(context.Context) error {
 		return err
 	}
 	s.site = &github.Pages{
-		Public:    github.Ptr(true),
-		BuildType: github.Ptr("workflow"),
-		HTMLURL:   github.Ptr("https://pages.example.test"),
+		Public:    pagesTestBoolPointer(true),
+		BuildType: stringPointer("workflow"),
+		HTMLURL:   stringPointer("https://pages.example.test"),
 	}
-	s.repo.HasPages = github.Ptr(true)
+	s.repo.HasPages = pagesTestBoolPointer(true)
 	return nil
 }
 
@@ -148,7 +156,7 @@ func (s *fakePagesStore) SetPrivate(context.Context) error {
 	if s.unknownAfterSet {
 		s.site.Public = nil
 	} else {
-		s.site.Public = github.Ptr(false)
+		s.site.Public = pagesTestBoolPointer(false)
 	}
 	return nil
 }
@@ -160,8 +168,8 @@ func (s *fakePagesStore) SetBranchSource(_ context.Context, branch string) error
 	if s.site.Public == nil || *s.site.Public {
 		return errors.New("site is not private")
 	}
-	s.site.BuildType = github.Ptr("legacy")
-	s.site.Source = &github.PagesSource{Branch: github.Ptr(branch), Path: github.Ptr("/")}
+	s.site.BuildType = stringPointer("legacy")
+	s.site.Source = &github.PagesSource{Branch: stringPointer(branch), Path: stringPointer("/")}
 	return nil
 }
 
@@ -197,12 +205,12 @@ func configuredPagesStore(t *testing.T) *fakePagesStore {
 	require.NoError(t, err)
 	store.files = files
 	store.branches[pagesBranch] = strings.Repeat("2", 40)
-	store.repo.HasPages = github.Ptr(true)
+	store.repo.HasPages = pagesTestBoolPointer(true)
 	store.site = &github.Pages{
-		Public:    github.Ptr(false),
-		BuildType: github.Ptr("legacy"),
-		Source:    &github.PagesSource{Branch: github.Ptr(pagesBranch), Path: github.Ptr("/")},
-		HTMLURL:   github.Ptr("https://pages.example.test"),
+		Public:    pagesTestBoolPointer(false),
+		BuildType: stringPointer("legacy"),
+		Source:    &github.PagesSource{Branch: stringPointer(pagesBranch), Path: stringPointer("/")},
+		HTMLURL:   stringPointer("https://pages.example.test"),
 	}
 	return store
 }
@@ -263,17 +271,17 @@ func TestPagesPrepareRejectsUnsafeTargets(t *testing.T) {
 		name   string
 		change func(*fakePagesStore)
 	}{
-		{"public repository", func(s *fakePagesStore) { s.repo.Visibility = github.Ptr("public") }},
+		{"public repository", func(s *fakePagesStore) { s.repo.Visibility = stringPointer("public") }},
 		{"unknown repository visibility", func(s *fakePagesStore) { s.repo.Visibility = nil }},
-		{"personal repository", func(s *fakePagesStore) { s.repo.Owner.Type = github.Ptr("User") }},
-		{"organization site", func(s *fakePagesStore) { s.repo.Name = github.Ptr("example-org.github.io") }},
+		{"personal repository", func(s *fakePagesStore) { s.repo.Owner.Type = stringPointer("User") }},
+		{"organization site", func(s *fakePagesStore) { s.repo.Name = stringPointer("example-org.github.io") }},
 		{"empty repository", func(s *fakePagesStore) { delete(s.branches, "main") }},
-		{"public site", func(s *fakePagesStore) { s.site.Public = github.Ptr(true) }},
+		{"public site", func(s *fakePagesStore) { s.site.Public = pagesTestBoolPointer(true) }},
 		{"unknown site visibility", func(s *fakePagesStore) { s.site.Public = nil }},
-		{"workflow site", func(s *fakePagesStore) { s.site.BuildType = github.Ptr("workflow") }},
-		{"other branch", func(s *fakePagesStore) { s.site.Source.Branch = github.Ptr("other") }},
-		{"other source path", func(s *fakePagesStore) { s.site.Source.Path = github.Ptr("/docs") }},
-		{"insecure URL", func(s *fakePagesStore) { s.site.HTMLURL = github.Ptr("http://pages.example.test") }},
+		{"workflow site", func(s *fakePagesStore) { s.site.BuildType = stringPointer("workflow") }},
+		{"other branch", func(s *fakePagesStore) { s.site.Source.Branch = stringPointer("other") }},
+		{"other source path", func(s *fakePagesStore) { s.site.Source.Path = stringPointer("/docs") }},
+		{"insecure URL", func(s *fakePagesStore) { s.site.HTMLURL = stringPointer("http://pages.example.test") }},
 		{"unmanaged files", func(s *fakePagesStore) { s.files["unrelated.txt"] = []byte("unrelated") }},
 		{"modified index", func(s *fakePagesStore) { s.files[pagesIndexFile] = []byte("unrelated") }},
 		{"missing manifest", func(s *fakePagesStore) { delete(s.files, pagesManifestFile) }},
@@ -340,7 +348,7 @@ func TestPagesInitializeReusesManagedBranch(t *testing.T) {
 
 	// Simulate an interrupted setup: the managed branch remains but no site exists.
 	store.site = nil
-	store.repo.HasPages = github.Ptr(false)
+	store.repo.HasPages = pagesTestBoolPointer(false)
 	store.events = nil
 	store.siteCalls = 0
 	target, err = publisher.Prepare(t.Context())
@@ -357,7 +365,7 @@ func TestPagesPrepareAcceptsPrivateAndInternal(t *testing.T) {
 	for _, visibility := range []string{"private", "internal"} {
 		t.Run(visibility, func(t *testing.T) {
 			store := configuredPagesStore(t)
-			store.repo.Visibility = github.Ptr(visibility)
+			store.repo.Visibility = stringPointer(visibility)
 			target, err := (&PagesPublisher{store: store}).Prepare(t.Context())
 			require.NoError(t, err)
 			assert.False(t, target.Initialized())
@@ -371,11 +379,11 @@ func TestPagesPublishRejectsChangedTarget(t *testing.T) {
 		name   string
 		change func(*fakePagesStore)
 	}{
-		{"repository identity", func(s *fakePagesStore) { s.repo.ID = github.Ptr(int64(2)) }},
-		{"repository visibility", func(s *fakePagesStore) { s.repo.Visibility = github.Ptr("public") }},
+		{"repository identity", func(s *fakePagesStore) { s.repo.ID = pagesTestInt64Pointer(2) }},
+		{"repository visibility", func(s *fakePagesStore) { s.repo.Visibility = stringPointer("public") }},
 		{"site privacy", func(s *fakePagesStore) { s.site.Public = nil }},
-		{"site URL", func(s *fakePagesStore) { s.site.HTMLURL = github.Ptr("https://other.example.test") }},
-		{"site source", func(s *fakePagesStore) { s.site.Source.Branch = github.Ptr("other") }},
+		{"site URL", func(s *fakePagesStore) { s.site.HTMLURL = stringPointer("https://other.example.test") }},
+		{"site source", func(s *fakePagesStore) { s.site.Source.Branch = stringPointer("other") }},
 		{"source contents", func(s *fakePagesStore) { s.files["unexpected.txt"] = []byte("fictional") }},
 	}
 	for _, tt := range tests {

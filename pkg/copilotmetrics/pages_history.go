@@ -127,7 +127,7 @@ func pagesBootstrapFiles() (map[string][]byte, error) {
 
 func validatePagesSnapshot(snapshot *pagesSnapshot) (*pagesManifest, error) {
 	if snapshot == nil || snapshot.entries == nil || snapshot.manifest == nil {
-		return nil, fmt.Errorf("Pages source snapshot is incomplete")
+		return nil, fmt.Errorf("pages source snapshot is incomplete")
 	}
 	var manifest pagesManifest
 	decoder := json.NewDecoder(bytes.NewReader(snapshot.manifest))
@@ -136,10 +136,10 @@ func validatePagesSnapshot(snapshot *pagesSnapshot) (*pagesManifest, error) {
 		return nil, fmt.Errorf("decode Pages manifest: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("Pages manifest contains trailing data")
+		return nil, fmt.Errorf("pages manifest contains trailing data")
 	}
 	if manifest.Manager != pagesManager || manifest.Version != 1 || manifest.Reports == nil || !validGitSHA(manifest.IndexSHA) {
-		return nil, fmt.Errorf("Pages manifest is not a supported managed history")
+		return nil, fmt.Errorf("pages manifest is not a supported managed history")
 	}
 	expected := map[string]string{
 		".nojekyll":       gitBlobSHA(nil),
@@ -170,11 +170,11 @@ func validatePagesSnapshot(snapshot *pagesSnapshot) (*pagesManifest, error) {
 		delete(expected, path)
 	}
 	if len(expected) != 0 {
-		return nil, fmt.Errorf("Pages source is missing managed files")
+		return nil, fmt.Errorf("pages source is missing managed files")
 	}
 	if len(manifest.Reports) > 0 {
 		if _, exists := snapshot.entries["reports"]; !exists {
-			return nil, fmt.Errorf("Pages reports directory is missing")
+			return nil, fmt.Errorf("pages reports directory is missing")
 		}
 	}
 	return &manifest, nil
@@ -221,7 +221,7 @@ func renderPagesIndex(reports []pagesHistoryRecord) ([]byte, error) {
 
 func buildPagesUpdate(manifest *pagesManifest, source gh.CopilotMetricsSource, summary *Summary, report string) (map[string][]byte, error) {
 	if manifest == nil || summary == nil || summary.GeneratedAt.IsZero() {
-		return nil, fmt.Errorf("Pages history requires a summary with a generation time")
+		return nil, fmt.Errorf("pages history requires a summary with a generation time")
 	}
 	host := strings.ToLower(source.Owner.Host)
 	if host == "" {

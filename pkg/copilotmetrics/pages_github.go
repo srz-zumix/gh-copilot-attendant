@@ -16,6 +16,10 @@ type githubPagesStore struct {
 	repo   repository.Repository
 }
 
+func stringPointer(value string) *string {
+	return &value
+}
+
 // NewGitHubPagesPublisher returns a publisher for the destination repository.
 func NewGitHubPagesPublisher(client *gh.GitHubClient, repo repository.Repository) *PagesPublisher {
 	return &PagesPublisher{store: &githubPagesStore{client: client, repo: repo}}
@@ -53,23 +57,23 @@ func (s *githubPagesStore) Snapshot(ctx context.Context, head string) (*pagesSna
 		return nil, fmt.Errorf("get Git commit: %w", err)
 	}
 	if commit == nil || commit.Tree == nil || commit.Tree.GetSHA() == "" {
-		return nil, fmt.Errorf("Git commit has no tree")
+		return nil, fmt.Errorf("git commit has no tree")
 	}
 	tree, err := gh.GetGitTreeRecursive(ctx, s.client, s.repo, commit.Tree.GetSHA())
 	if err != nil {
 		return nil, fmt.Errorf("get Git tree: %w", err)
 	}
 	if tree == nil || tree.Truncated == nil || tree.GetTruncated() {
-		return nil, fmt.Errorf("Git tree is incomplete")
+		return nil, fmt.Errorf("git tree is incomplete")
 	}
 	snapshot := &pagesSnapshot{entries: make(map[string]pagesTreeEntry, len(tree.Entries))}
 	for _, entry := range tree.Entries {
 		if entry == nil || entry.Path == nil || entry.GetPath() == "" {
-			return nil, fmt.Errorf("Git tree contains an entry without a path")
+			return nil, fmt.Errorf("git tree contains an entry without a path")
 		}
 		path := entry.GetPath()
 		if _, exists := snapshot.entries[path]; exists {
-			return nil, fmt.Errorf("Git tree contains duplicate path %q", path)
+			return nil, fmt.Errorf("git tree contains duplicate path %q", path)
 		}
 		snapshot.entries[path] = pagesTreeEntry{Type: entry.GetType(), Mode: entry.GetMode(), SHA: entry.GetSHA()}
 	}
@@ -82,14 +86,14 @@ func (s *githubPagesStore) Snapshot(ctx context.Context, head string) (*pagesSna
 		return nil, fmt.Errorf("get Pages manifest blob: %w", err)
 	}
 	if blob == nil || blob.Encoding == nil || blob.GetEncoding() != "base64" || blob.GetSHA() != entry.SHA {
-		return nil, fmt.Errorf("Pages manifest blob metadata is invalid")
+		return nil, fmt.Errorf("pages manifest blob metadata is invalid")
 	}
 	snapshot.manifest, err = base64.StdEncoding.DecodeString(blob.GetContent())
 	if err != nil {
 		return nil, fmt.Errorf("decode Pages manifest blob: %w", err)
 	}
 	if gitBlobSHA(snapshot.manifest) != entry.SHA {
-		return nil, fmt.Errorf("Pages manifest blob does not match the Git tree")
+		return nil, fmt.Errorf("pages manifest blob does not match the git tree")
 	}
 	return snapshot, nil
 }
@@ -103,7 +107,7 @@ func (s *githubPagesStore) CreateCleanBranch(ctx context.Context, branch string,
 	entries := make([]*github.TreeEntry, 0, len(paths))
 	for _, path := range paths {
 		entries = append(entries, &github.TreeEntry{
-			Path: github.Ptr(path), Mode: github.Ptr("100644"), Type: github.Ptr("blob"), Content: github.Ptr(string(files[path])),
+			Path: stringPointer(path), Mode: stringPointer("100644"), Type: stringPointer("blob"), Content: stringPointer(string(files[path])),
 		})
 	}
 	tree, err := gh.CreateGitTree(ctx, s.client, s.repo, "", entries)
@@ -114,7 +118,7 @@ func (s *githubPagesStore) CreateCleanBranch(ctx context.Context, branch string,
 		return fmt.Errorf("created Git tree has no SHA")
 	}
 	commit, err := gh.CreateGitCommit(ctx, s.client, s.repo, github.Commit{
-		Message: github.Ptr("Initialize Copilot metrics Pages"),
+		Message: stringPointer("Initialize Copilot metrics Pages"),
 		Tree:    &github.Tree{SHA: tree.SHA},
 	})
 	if err != nil {
@@ -130,18 +134,19 @@ func (s *githubPagesStore) CreateCleanBranch(ctx context.Context, branch string,
 }
 
 func (s *githubPagesStore) CreateWorkflowSite(ctx context.Context) error {
-	_, err := gh.CreatePagesSite(ctx, s.client, s.repo, &github.Pages{BuildType: github.Ptr("workflow")})
+	_, err := gh.CreatePagesSite(ctx, s.client, s.repo, &github.Pages{BuildType: stringPointer("workflow")})
 	return err
 }
 
 func (s *githubPagesStore) SetPrivate(ctx context.Context) error {
-	return gh.UpdatePagesSite(ctx, s.client, s.repo, &github.PagesUpdateWithoutCNAME{Public: github.Ptr(false)})
+	private := false
+	return gh.UpdatePagesSite(ctx, s.client, s.repo, &github.PagesUpdateWithoutCNAME{Public: &private})
 }
 
 func (s *githubPagesStore) SetBranchSource(ctx context.Context, branch string) error {
 	return gh.UpdatePagesSite(ctx, s.client, s.repo, &github.PagesUpdateWithoutCNAME{
-		BuildType: github.Ptr("legacy"),
-		Source:    &github.PagesSource{Branch: github.Ptr(branch), Path: github.Ptr("/")},
+		BuildType: stringPointer("legacy"),
+		Source:    &github.PagesSource{Branch: stringPointer(branch), Path: stringPointer("/")},
 	})
 }
 

@@ -14,8 +14,8 @@ import (
 const pagesBranch = "copilot-metrics-pages"
 
 var (
-	errPagesSiteNotFound   = errors.New("Pages site not found")
-	errPagesBranchNotFound = errors.New("Pages branch not found")
+	errPagesSiteNotFound   = errors.New("pages site not found")
+	errPagesBranchNotFound = errors.New("pages branch not found")
 )
 
 type pagesStore interface {
@@ -69,7 +69,7 @@ func validatePagesRepository(repo *github.Repository) error {
 		return fmt.Errorf("destination repository identity is unavailable")
 	}
 	if repo.Owner == nil || repo.Owner.Type == nil || repo.Owner.GetType() != "Organization" || repo.Owner.GetLogin() == "" {
-		return fmt.Errorf("Pages requires an organization-owned repository")
+		return fmt.Errorf("pages requires an organization-owned repository")
 	}
 	if repo.Name == nil || repo.GetName() == "" {
 		return fmt.Errorf("destination repository name is unavailable")
@@ -78,7 +78,7 @@ func validatePagesRepository(repo *github.Repository) error {
 		return fmt.Errorf("organization sites do not support private Pages access control")
 	}
 	if repo.Visibility == nil || (repo.GetVisibility() != "private" && repo.GetVisibility() != "internal") {
-		return fmt.Errorf("Pages requires a private or internal repository with verified visibility")
+		return fmt.Errorf("pages requires a private or internal repository with verified visibility")
 	}
 	if repo.DefaultBranch == nil || repo.GetDefaultBranch() == "" {
 		return fmt.Errorf("destination repository must have an initialized default branch")
@@ -88,10 +88,10 @@ func validatePagesRepository(repo *github.Repository) error {
 
 func validatePrivatePages(site *github.Pages) error {
 	if site == nil || site.Public == nil {
-		return fmt.Errorf("Pages visibility could not be verified")
+		return fmt.Errorf("pages visibility could not be verified")
 	}
 	if *site.Public {
-		return fmt.Errorf("Pages site is public; reports can only be published to a private site")
+		return fmt.Errorf("pages site is public; reports can only be published to a private site")
 	}
 	return nil
 }
@@ -102,10 +102,10 @@ func validateManagedPages(site *github.Pages) (string, error) {
 	}
 	if site.BuildType == nil || site.GetBuildType() != "legacy" || site.Source == nil ||
 		site.Source.GetBranch() != pagesBranch || site.Source.GetPath() != "/" {
-		return "", fmt.Errorf("Pages site is not configured for the dedicated %s branch at the root", pagesBranch)
+		return "", fmt.Errorf("pages site is not configured for the dedicated %s branch at the root", pagesBranch)
 	}
 	if site.HTMLURL == nil || site.GetHTMLURL() == "" {
-		return "", fmt.Errorf("Pages site URL is unavailable")
+		return "", fmt.Errorf("pages site URL is unavailable")
 	}
 	u, err := url.Parse(site.GetHTMLURL())
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -250,7 +250,7 @@ func (p *PagesPublisher) recheckTarget(ctx context.Context, target *PagesTarget)
 		return err
 	}
 	if repo.GetID() != target.repositoryID {
-		return fmt.Errorf("Pages destination repository changed after preparation")
+		return fmt.Errorf("pages destination repository changed after preparation")
 	}
 	site, err := p.store.Site(ctx)
 	if err != nil {
@@ -261,7 +261,7 @@ func (p *PagesPublisher) recheckTarget(ctx context.Context, target *PagesTarget)
 		return err
 	}
 	if siteURL != target.url {
-		return fmt.Errorf("Pages site URL changed after preparation")
+		return fmt.Errorf("pages site URL changed after preparation")
 	}
 	return nil
 }
@@ -269,7 +269,7 @@ func (p *PagesPublisher) recheckTarget(ctx context.Context, target *PagesTarget)
 // Publish updates the report history and its index in a single source-branch commit.
 func (p *PagesPublisher) Publish(ctx context.Context, target *PagesTarget, source gh.CopilotMetricsSource, summary *Summary, report string) (*PagesResult, error) {
 	if target == nil || summary == nil || report == "" {
-		return nil, fmt.Errorf("Pages target, summary, and HTML report are required")
+		return nil, fmt.Errorf("pages target, summary, and HTML report are required")
 	}
 	if err := p.recheckTarget(ctx, target); err != nil {
 		return nil, err
@@ -298,7 +298,7 @@ func (p *PagesPublisher) Publish(ctx context.Context, target *PagesTarget, sourc
 		return nil, fmt.Errorf("update Pages source; the commit outcome may be unknown, so inspect the branch or retry: %w", err)
 	}
 	if commit == "" {
-		return nil, fmt.Errorf("Pages source update returned no commit ID; inspect the branch before retrying")
+		return nil, fmt.Errorf("pages source update returned no commit ID; inspect the branch before retrying")
 	}
 	return &PagesResult{URL: target.url, Branch: pagesBranch, CommitSHA: commit}, nil
 }
