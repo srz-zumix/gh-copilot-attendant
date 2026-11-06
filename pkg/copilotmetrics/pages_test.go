@@ -143,6 +143,7 @@ func (s *fakePagesStore) CreateWorkflowSite(context.Context) error {
 	s.site = &github.Pages{
 		Public:    pagesTestBoolPointer(true),
 		BuildType: stringPointer("workflow"),
+		Source:    &github.PagesSource{Branch: stringPointer(s.repo.GetDefaultBranch()), Path: stringPointer("/")},
 		HTMLURL:   stringPointer("https://pages.example.test"),
 	}
 	s.repo.HasPages = pagesTestBoolPointer(true)

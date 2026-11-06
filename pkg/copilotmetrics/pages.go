@@ -214,8 +214,8 @@ func (p *PagesPublisher) initialize(ctx context.Context, repositoryID int64) (*g
 	if err := validatePrivatePages(site); err != nil {
 		return nil, fmt.Errorf("verify private Pages after initialization; the site and branch %q remain: %w", pagesBranch, err)
 	}
-	if site.BuildType == nil || site.GetBuildType() != "workflow" ||
-		(site.Source != nil && (site.Source.GetBranch() != "" || site.Source.GetPath() != "")) {
+	// GitHub reports the default branch as the source of workflow sites, so only the build type is checked.
+	if site.BuildType == nil || site.GetBuildType() != "workflow" {
 		return nil, fmt.Errorf("new Pages site changed unexpectedly; inspect the site and branch %q before retrying", pagesBranch)
 	}
 	repo, err := p.store.Repository(ctx)
