@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, MAX_TOP, normalizeQuery, OPERATIONS, QueryError, SCOPES, SOURCES } from "../lib/query.mjs";
+import { buildArgv, checkGoRegexp, COMMAND_ACCESS, defaultQuery, exactPattern, MAX_TOP, normalizeQuery, OPERATIONS, QueryError, SCOPES, SOURCES } from "../lib/query.mjs";
 import { RUNNERS } from "../lib/runner.mjs";
 
 test("default query builds the worktree-scoped session command", () => {
@@ -67,6 +67,18 @@ test("decisionSource maps to --decision-source", () => {
     assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.decisionSource, []);
 });
 
+test("result and command access filters map to exact repeatable session flags", () => {
+    const values = [" denied-no-rule ", "denied"];
+    const q = normalizeQuery({ filters: { session: { result: values, commandAccess: ["read-only", "read-write"] } } });
+    assert.deepEqual(q.filters.session.result, values);
+    const argv = buildArgv(q, "session");
+    for (const value of values) assert.ok(argv.includes(`--result=${value}`));
+    assert.ok(argv.includes("--command-access=read-only"));
+    assert.ok(argv.includes("--command-access=read-write"));
+    assert.ok(!buildArgv(q, "vscode").some((arg) => arg.startsWith("--result=")));
+    assert.throws(() => normalizeQuery({ filters: { session: { commandAccess: ["read"] } } }), /commandAccess must be one of/);
+});
+
 test("Agent modes preserve exact values and map to repeatable session-only flags", () => {
     const values = [" plan ", "plan", "future,mode", " ", " plan "];
     const q = normalizeQuery({ filters: { session: { agentMode: values, kind: ["shell"] } } });
@@ -85,12 +97,12 @@ test("Agent modes preserve exact values and map to repeatable session-only flags
     assert.throws(() => normalizeQuery({ filters: { session: { agentMode: ["plan\nother"] } } }), /control characters/);
 });
 
-test("canvas open and refresh schemas accept the Agent mode query filter", () => {
+test("canvas open and refresh schemas accept the CLI permission query filters", () => {
     const source = readFileSync(new URL("../extension.mjs", import.meta.url), "utf8")
         .replace(/^import .*;\n/gm, "")
         .replace("session = await joinSession({ canvases: [canvas] });", "");
     const canvas = vm.runInNewContext(`${source}\ncanvas`, {
-        SOURCES, SCOPES, OPERATIONS, MAX_TOP, RUNNERS,
+        SOURCES, SCOPES, OPERATIONS, COMMAND_ACCESS, MAX_TOP, RUNNERS,
         QueryStore: class {}, createCanvas: (value) => value,
     });
     const openQuery = canvas.inputSchema.properties.query;
@@ -100,6 +112,8 @@ test("canvas open and refresh schemas accept the Agent mode query filter", () =>
     assert.equal(session.properties.agentMode.type, "array");
     assert.equal(session.properties.agentMode.items.type, "string");
     assert.equal(session.properties.agentMode.maxItems, 20);
+    assert.equal(session.properties.result.items.type, "string");
+    assert.deepEqual(session.properties.commandAccess.items.enum, COMMAND_ACCESS);
     assert.equal(refreshQuery, openQuery);
 });
 

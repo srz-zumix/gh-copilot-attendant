@@ -515,6 +515,10 @@ textarea {
     grid-column: 1 / -1;
 }
 
+[data-permissions-disclosure] > .grid > .panel {
+    align-content: start;
+}
+
 .panel-actions {
     display: flex;
     flex-wrap: wrap;
@@ -573,10 +577,20 @@ textarea {
     text-align: center;
 }
 
-.activity-table tbody th {
+.activity-table tbody th,
+.activity-table tfoot th {
     position: sticky;
     left: 0;
     background: var(--background-color-default, #ffffff);
+}
+
+.activity-table tfoot th,
+.activity-table tfoot td {
+    font-weight: var(--font-weight-semibold, 600);
+}
+
+.activity-table tfoot tr:first-child > * {
+    border-top: 1px solid var(--border-color-default, #d1d9e0);
 }
 
 .activity-cell {

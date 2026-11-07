@@ -22,6 +22,10 @@ type Stats struct {
 	*copilotext.PermissionStats
 	Fusion          FusionStats
 	SessionActivity SessionActivity
+	// UsageAgentModes lists the Agent modes that restricted the shared usage aggregates to
+	// sessions with a matching in-window permission request. Empty means usage is not
+	// restricted by Agent mode.
+	UsageAgentModes []string
 }
 
 // FusionStats reports only information explicitly recorded in Fusion events.
@@ -66,7 +70,19 @@ type FusionPhase struct {
 }
 
 // Collect combines the shared session statistics with recorded Fusion activity.
+// Agent mode filters also restrict shared usage to sessions with a matching request;
+// Fusion statistics are not restricted by permission filters.
 func Collect(opts copilotext.PermissionStatsOptions) (*Stats, error) {
+	opts.UsageByAgentMode = true
+	usageModes := make([]string, 0, len(opts.AgentMode))
+	seenModes := make(map[string]struct{}, len(opts.AgentMode))
+	for _, mode := range opts.AgentMode {
+		if _, ok := seenModes[mode]; !ok {
+			seenModes[mode] = struct{}{}
+			usageModes = append(usageModes, mode)
+		}
+	}
+	sort.Strings(usageModes)
 	type fusionResult struct {
 		stats    FusionStats
 		activity SessionActivity
@@ -91,7 +107,7 @@ func Collect(opts copilotext.PermissionStatsOptions) (*Stats, error) {
 	if fusion.err != nil {
 		return nil, fusion.err
 	}
-	return &Stats{PermissionStats: stats, Fusion: fusion.stats, SessionActivity: fusion.activity}, nil
+	return &Stats{PermissionStats: stats, Fusion: fusion.stats, SessionActivity: fusion.activity, UsageAgentModes: usageModes}, nil
 }
 
 type rawEvent struct {

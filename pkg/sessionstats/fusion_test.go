@@ -477,8 +477,19 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if filtered.Requests != 1 || filtered.UsageRequests != stats.UsageRequests || filtered.UsageAIU != stats.UsageAIU ||
-		!reflect.DeepEqual(filtered.Fusion, stats.Fusion) {
-		t.Fatalf("mode filter changed unrelated usage or Fusion: %+v", filtered)
+		!reflect.DeepEqual(filtered.Fusion, stats.Fusion) || !reflect.DeepEqual(filtered.UsageAgentModes, []string{"plan"}) {
+		t.Fatalf("mode filter changed matching session usage or Fusion: %+v", filtered)
+	}
+	unmatched, err := Collect(copilotext.PermissionStatsOptions{Root: root, AgentMode: []string{"autopilot", "autopilot"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unmatched.Requests != 0 || unmatched.UsageSessions != 0 || unmatched.UsageAIU != 0 ||
+		!reflect.DeepEqual(unmatched.Fusion, stats.Fusion) || !reflect.DeepEqual(unmatched.UsageAgentModes, []string{"autopilot"}) {
+		t.Fatalf("mode filter kept usage of a session without matching requests or changed Fusion: %+v", unmatched)
+	}
+	if stats.UsageAgentModes == nil || len(stats.UsageAgentModes) != 0 {
+		t.Fatalf("unfiltered UsageAgentModes = %#v, want empty slice", stats.UsageAgentModes)
 	}
 }
 

@@ -88,12 +88,16 @@ initialization, permissions, and privacy details.
 ```sh
 gh copilot-attendant session stats --period 7d
 gh copilot-attendant session stats --period 7d --agent-mode plan
+gh copilot-attendant session stats --period 7d --result denied
 ```
 
 Inspect the last seven days of local Copilot CLI activity in the current git
 worktree (the default scope). Add `--all` to include every working directory,
 or `--format json` for structured output. The second command filters permission
-requests by their recorded Agent mode without filtering usage.
+requests by their recorded Agent mode and limits usage to sessions with a
+matching request. Filter permission outcomes by exact result with `--result`;
+the dashboard also filters permission requests by clicking Results or
+Read-only/read-write rows.
 The dashboard also shows sessions with recorded events by local date and hour;
 this is not a continuous-activity measurement. When `--agent-mode` is selected,
 the heatmap counts matching permission requests by their recorded request time.

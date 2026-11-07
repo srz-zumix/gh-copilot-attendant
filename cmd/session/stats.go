@@ -24,6 +24,8 @@ func NewStatsCmd() *cobra.Command {
 	var period string
 	var operations []string
 	var agentModes []string
+	var results []string
+	var commandAccess []string
 	var kinds []string
 	var decisionSources []string
 	var commands []string
@@ -85,9 +87,12 @@ single working directory exactly, or --all to include every recorded session.
 Use --period as shorthand for --since when you only need a time window back from now
 (e.g. 7d, 3w, 6m, 1y).
 
-Use --operation to restrict to non-mutating ("read") or mutating ("write") requests, and
---agent-mode, --kind, --command, --path, or --url to restrict to requests matching that
-recorded mode, tool kind, command, path, or URL. --agent-mode matches exactly; use unknown
+Use --operation to restrict requests to non-mutating ("read") or mutating ("write")
+requests. Use --result to match an exact recorded result, --command-access to match
+requests containing commands with the selected read-only/read-write attribute, and
+--agent-mode, --kind, --command, --path, or --url to restrict requests matching that
+recorded mode, tool kind, command, path, or URL. --agent-mode and --result match exactly;
+use unknown
 for missing or invalid recorded modes. --path and --url match as regular expressions (a
 plain substring is also a valid, unanchored regular expression). --decision-source restricts
 to permission outcomes whose recorded decision source matches exactly (e.g. human_response,
@@ -98,8 +103,12 @@ flags may be repeated to match any of multiple values; different filters are com
 select usage updates by their recorded timestamps. Earlier recorded totals are subtracted
 from cumulative snapshots; a snapshot delta may include usage before the selected period.
 The role breakdown is never truncated by --top. Missing breakdowns are marked as incomplete;
---operation, --agent-mode, --kind, --decision-source, --command, --path, and --url do not
-affect usage totals, since usage is not recorded per permission request.`,
+--agent-mode also restricts usage totals and breakdowns to sessions with at least one
+matching permission request in the selected time window; all usage of those sessions is
+counted because usage is not recorded per mode. --operation, --kind, --decision-source,
+--result, --command-access, --command, --path, and --url do not affect usage totals,
+since usage is not recorded per permission request. JSON output lists the modes applied
+to usage in UsageAgentModes.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -137,6 +146,8 @@ affect usage totals, since usage is not recorded per permission request.`,
 			}
 			opts.Operations = operations
 			opts.AgentMode = agentModes
+			opts.Results = results
+			opts.CommandAccess = commandAccess
 			opts.Kind = kinds
 			opts.DecisionSource = decisionSources
 			opts.Command = commands
@@ -166,6 +177,8 @@ affect usage totals, since usage is not recorded per permission request.`,
 	f.StringVar(&period, "period", "", "only count requests made within this period back from now (e.g. 7d, 3w, 6m, 1y); shorthand for --since")
 	cmdutil.StringSliceEnumFlag(cmd, &operations, "operation", "", nil, []string{"read", "write"}, "only count requests classified as this operation; may be repeated to match multiple operations")
 	f.StringArrayVar(&agentModes, "agent-mode", nil, "only count requests with this exact recorded Agent mode (use unknown for missing modes); may be repeated")
+	f.StringArrayVar(&results, "result", nil, "only count requests with this exact recorded result; may be repeated")
+	cmdutil.StringSliceEnumFlag(cmd, &commandAccess, "command-access", "", nil, []string{"read-only", "read-write"}, "only count requests containing commands with this access mode; may be repeated")
 	f.StringArrayVar(&kinds, "kind", nil, "only count requests of this exact tool kind (e.g. shell, read, write); may be repeated to match multiple kinds")
 	f.StringArrayVar(&decisionSources, "decision-source", nil, "only count permission outcomes with this exact decision source (e.g. human_response, unattended_fallback, unknown); may be repeated to match multiple values")
 	f.StringArrayVar(&commands, "command", nil, "only count requests that include this exact command identifier; may be repeated to match multiple commands")

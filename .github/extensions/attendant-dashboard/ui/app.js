@@ -17,6 +17,8 @@ const LABELS = {
     filters: {
         operation: "Operation",
         agentMode: "Agent mode",
+        result: "Result",
+        commandAccess: "Command access",
         kind: "Kind",
         command: "Command",
         path: "Path",
@@ -29,7 +31,7 @@ const LABELS = {
 };
 
 /** Filters the CLI matches exactly rather than as regular expressions. */
-const EXACT_FILTERS = new Set(["agentMode", "kind", "command", "decisionSource"]);
+const EXACT_FILTERS = new Set(["agentMode", "result", "kind", "command", "decisionSource"]);
 
 let state = null;
 let meta = null;
@@ -371,6 +373,26 @@ function renderFilters(source) {
                 ),
             );
         }
+        if (name === "commandAccess") {
+            return h(
+                "div",
+                { class: "filter" },
+                h("span", { class: "name" }, LABELS.filters[name]),
+                ["read-only", "read-write"].map((access) =>
+                    h(
+                        "label",
+                        { class: "toggle" },
+                        h("input", {
+                            type: "checkbox",
+                            checked: values.includes(access),
+                            disabled: fusionOnly,
+                            onchange: (e) => (e.target.checked ? addFilter(name, access) : removeFilter(name, access)),
+                        }),
+                        access,
+                    ),
+                ),
+            );
+        }
         const input = h("input", {
             type: "text",
             spellcheck: "false",
@@ -544,6 +566,51 @@ function activityDate(number) {
     return new Date(number).toISOString().slice(0, 10);
 }
 
+function activityAverage(total, days) {
+    const denominator = BigInt(days);
+    // Round exactly before formatting, since the total may exceed a safe integer.
+    const hundredths = (total * 100n + denominator / 2n) / denominator;
+    const whole = fmt.format(hundredths / 100n);
+    const remainder = hundredths % 100n;
+    if (remainder === 0n) return whole;
+    const fraction = decimalFmt.formatToParts(Number(remainder) / 100)
+        .filter((part) => part.type === "decimal" || part.type === "fraction")
+        .map((part) => part.value).join("");
+    return whole + fraction;
+}
+
+function activitySummaryRow(label, totals) {
+    const maximum = totals.reduce((highest, current) => {
+        if (!current.days) return highest;
+        if (!highest || (label === "Total"
+            ? current.total > highest.total
+            : current.total * BigInt(highest.days) > highest.total * BigInt(current.days))) return current;
+        return highest;
+    }, null);
+    return h("tr", { "data-activity-summary": label.toLowerCase() },
+        h("th", { scope: "row" }, label),
+        totals.map(({ total, days, partial }, hour) => {
+            const hourLabel = `${String(hour).padStart(2, "0")}:00`;
+            if (!days) {
+                const description = `${label} for ${hourLabel}: no covered days on this page`;
+                return h("td", { title: description, "aria-label": description }, "–");
+            }
+            const value = label === "Total" ? fmt.format(total) : activityAverage(total, days);
+            const level = total === 0n ? 0 : label === "Total"
+                ? Number((4n * total + maximum.total - 1n) / maximum.total)
+                : Number((4n * total * BigInt(maximum.days) +
+                    maximum.total * BigInt(days) - 1n) / (maximum.total * BigInt(days)));
+            const units = label === "Total" ? "summed daily session counts" : "sessions per covered day";
+            const description = `${label} for ${hourLabel}: ${value} ${units}; ${num(days)} covered ${days === 1 ? "day" : "days"}${partial ? "; includes partially covered hours" : ""}`;
+            return h("td", {
+                class: `activity-cell activity-level-${level} activity-summary-cell${partial ? " activity-partial" : ""}`,
+                title: description,
+                "aria-label": description,
+            },
+                value, partial ? "*" : null);
+        }));
+}
+
 function prepareActivity(activity) {
     const count = (value) => Number.isSafeInteger(value) && value >= 0;
     if (typeof activity.TimeZone !== "string" || !activity.TimeZone ||
@@ -635,6 +702,7 @@ function activityPanel(activity) {
     const startLabel = activityDate(pageStart);
     const endLabel = activityDate(activityPageEnd);
     const rows = [];
+    const totals = Array.from({ length: 24 }, () => ({ total: 0n, days: 0, partial: false }));
     for (let day = activityPageEnd; day >= pageStart; day -= ACTIVITY_DAY_MS) {
         const date = activityDate(day);
         const counts = prepared.days.get(date);
@@ -650,6 +718,9 @@ function activityPanel(activity) {
                     return h("td", { class: `activity-cell activity-${status}`, title: `${date} ${hourLabel}: ${meaning}`, "aria-label": `${date} ${hourLabel}: ${meaning}` },
                         status === "outside" ? "–" : "×");
                 }
+                totals[hour].total += BigInt(value);
+                totals[hour].days++;
+                totals[hour].partial ||= status === "partial";
                 const level = value === 0 ? 0 : Math.max(1, Math.ceil(4 * value / prepared.maximum));
                 const partial = status === "partial";
                 const subject = selectedModes.length
@@ -672,11 +743,18 @@ function activityPanel(activity) {
                 onclick: () => { activityPageEnd = Math.min(prepared.last, activityPageEnd + ACTIVITY_PAGE_DAYS * ACTIVITY_DAY_MS); render(); },
             }, "Later")),
         h("p", { class: "muted small" }, "0: no events recorded as of the scan · *: partial time window · –: outside time window · ×: nonexistent local hour. Darker cells have more sessions."),
-        h("table", { class: "activity-table", "aria-label": `Recorded sessions by local date and hour, ${startLabel} to ${endLabel}` },
+        h("p", { class: "muted small", id: "activity-summary-note" },
+            "Totals sum daily session counts on this page, so a session can be counted on multiple days. Averages include zeros and partial hours once per covered day; outside and nonexistent hours are excluded. A summary asterisk means it includes partial hours. Summary colors scale relative to the highest value in each row."),
+        h("table", {
+            class: "activity-table",
+            "aria-label": `Recorded sessions by local date and hour, ${startLabel} to ${endLabel}`,
+            "aria-describedby": "activity-summary-note",
+        },
             h("thead", null, h("tr", null,
                 h("th", { scope: "col" }, "Date"),
                 Array.from({ length: 24 }, (_, hour) => h("th", { scope: "col" }, String(hour).padStart(2, "0"))))),
-            h("tbody", null, rows)));
+            h("tbody", null, rows),
+            h("tfoot", null, activitySummaryRow("Total", totals), activitySummaryRow("Average", totals))));
     return activitySection("recorded sessions by date and hour", details);
 }
 
@@ -735,6 +813,25 @@ function categorySection(name, title, hint, children) {
         ...children);
 }
 
+// Describes how the selected permission filters affect shared session usage. Agent mode
+// filters restrict usage to sessions with a matching request when the CLI confirms it.
+function sessionUsageFilterNote(data) {
+    const filters = state?.query?.filters?.session ?? {};
+    const modes = [...new Set(filters.agentMode ?? [])].sort();
+    const others = Object.entries(filters).some(([name, values]) => name !== "agentMode" && values?.length);
+    if (!modes.length) return others ? "permission filters do not apply" : null;
+    if (!Array.isArray(data.UsageAgentModes)) {
+        return "this CLI result does not restrict usage by Agent mode; permission filters do not apply";
+    }
+    const applied = [...new Set(data.UsageAgentModes)].sort();
+    if (JSON.stringify(applied) !== JSON.stringify(modes)) {
+        return "collected with a different Agent mode selection; refresh to restrict usage";
+    }
+    return others
+        ? "limited to sessions with a matching Agent mode request; other permission filters do not apply"
+        : "limited to sessions with a matching Agent mode request";
+}
+
 function renderSessionUsage(data) {
     // Older CLI builds do not report usage; keep the permission-only layout for them.
     if (data.UsageSessions === undefined) return [];
@@ -745,13 +842,13 @@ function renderSessionUsage(data) {
     const recordedComponents = components.filter(availableNumber);
     const prompt = recordedComponents.length ? recordedComponents.reduce((sum, value) => sum + value, 0) : null;
     const partialPrompt = recordedComponents.length !== components.length;
-    const filtered = Object.values(state.query.filters.session ?? {}).some((values) => values.length);
+    const filterNote = sessionUsageFilterNote(data);
     const hints = [
         data.ByRoleUsage !== undefined ? "recorded usage · includes unfinished sessions" : "from session.shutdown events",
-        filtered ? "permission filters do not apply" : null,
+        filterNote,
     ].filter(Boolean).join(" · ");
     const [modelSharePanel, modelUsagePanel] = data.ByModelUsage !== undefined
-        ? modelPanels((data.ByModelUsage ?? []).map(sessionUsageEntry), "session")
+        ? modelPanels((data.ByModelUsage ?? []).map(sessionUsageEntry), "session", filterNote)
         : [];
 
     return [categorySection("usage", "Usage", hints, [
@@ -1313,7 +1410,10 @@ function renderSession(data) {
                         pickTitle: "Filter by this Agent mode",
                     })), { filter: modeFilterSupported ? "agentMode" : undefined })
                 : null,
-            panel("Results", null, decisionRows(data.ByResult)),
+            panel("Results", "click to filter", decisionRows(data.ByResult, {
+                onPick: (k) => addFilter("result", k),
+                pickTitle: "Filter by this exact result",
+            }), { filter: "result" }),
             data.ByDecisionSource
                 ? panel(
                       "Decision sources",
@@ -1322,7 +1422,10 @@ function renderSession(data) {
                       { filter: "decisionSource" },
                   )
                 : null,
-            panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly), { filter: "operation" }),
+            panel("Read-only vs read-write", "click to filter", decisionRows(data.ByReadOnly, {
+                onPick: (k) => addFilter("commandAccess", k),
+                pickTitle: "Filter requests containing commands with this access",
+            }), { filter: "commandAccess" }),
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" }), { filter: "kind" }),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" }), { filter: "command" }),
             panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" }), { wide: true, filter: "path" }),
@@ -1588,13 +1691,14 @@ function sortableHeader(column, { view, label, next, attribute, onChange }) {
     );
 }
 
-function modelPanels(entries, source) {
+function modelPanels(entries, source, filterNote = null) {
     const share = source === "session"
         ? shareBar(entries, (entry) => entry.UsageAIU ?? 0, undefined, { formatValue: fusionNumber, formatShare: usageSharePercent })
         : aiuShare(entries);
     const session = source === "session";
     const note = session
-        ? "Recorded modelMetrics and request usage are included; checkpoints may lack a model breakdown. Shares cover listed models. A session may use multiple models. Permission filters do not apply."
+        ? "Recorded modelMetrics and request usage are included; checkpoints may lack a model breakdown. Shares cover listed models. A session may use multiple models." +
+            (filterNote ? ` Filters: ${filterNote}.` : "")
         : null;
     const missingSessions = entries.some((e) => e.Sessions == null);
     return [

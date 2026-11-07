@@ -224,7 +224,18 @@ request totals. Unlogged requests cannot be reconstructed.
 Use repeatable `--agent-mode <mode>` to match recorded modes exactly and
 case-sensitively; `unknown` includes missing or invalid modes. Multiple
 values are alternatives, combined with the other permission filters. The
-mode filter does not affect usage, Fusion, or user-question statistics.
+mode filter also limits usage totals and the CWD, model, and agent usage
+breakdowns to sessions with a matching in-window permission request; all usage
+of those sessions is counted because usage records have no mode.
+Use repeatable `--result <value>` to match exact recorded permission results,
+including specific denied variants. Use repeatable
+`--command-access <read-only|read-write>` to select requests containing
+commands with those attributes; a mixed request can match both. This command
+attribute filter is distinct from `--operation`, which classifies each whole
+request. These filters affect permission statistics, not usage.
+`UsageAgentModes` lists the modes applied to usage. Other permission filters
+do not affect usage, and no permission filter affects Fusion or user-question
+statistics.
 `AGENT_USAGE` / `ByRoleUsage` separates main, subagent, and unknown usage from request
 metadata; do not infer roles from model names. Checkpoint-only usage may have no model,
 request, or token breakdown. `UsageIncompleteSessions` flags incomplete breakdowns,
@@ -369,8 +380,12 @@ panel, which starts expanded and stays expanded or collapsed across dashboard
 updates. Each cell counts distinct sessions with an event in the host-local
 hour, not active time. When Agent mode filters are active, it counts matching
 `permission.requested` events by their request timestamps instead. `*`, `–`,
-and `×` identify partial, outside, and nonexistent hours. Untimed/malformed
-coverage gaps are shown separately.
+and `×` identify partial, outside, and nonexistent hours. Footer totals add the
+daily counts for each hour on the displayed page, so a session can count on
+multiple days. Averages include zeros and partial hours once per covered day;
+outside and nonexistent hours are excluded. A summary asterisk means it includes
+partial hours. Footer cell colors use the heatmap scale relative to the largest
+value in each summary row. Untimed/malformed coverage gaps are shown separately.
 `get_data` exposes the aggregate; `get_summary` and Ask agent cap their list at
 ten recent recorded dates and report omissions. Older CLI results require an
 updated CLI or the `source` runner. Fusion-only and VS Code exclude this panel.
@@ -397,8 +412,10 @@ included.
 The normal CLI permission view shows Agent modes and their request outcomes.
 It shares `ByAgentMode` with `get_data`, `get_summary`, and Ask agent.
 Click a mode to add an exact permission filter; Clear removes only the mode
-filter. Other permission filters and Top apply. Usage, Fusion, and user-question
-statistics are unaffected.
+filter. Other permission filters and Top apply. Usage is limited to sessions
+with a matching request; Fusion and user-question statistics are unaffected.
+Click Results and Read-only/read-write rows to filter by exact result or
+matching command access; a mixed request can match both command-access values.
 Older attendant builds without this field omit the panel. Older CLI logs
 without modes contribute to `unknown`.
 If the selected attendant CLI does not support `--agent-mode`, update it or

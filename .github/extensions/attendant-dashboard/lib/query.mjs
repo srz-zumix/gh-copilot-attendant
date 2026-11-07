@@ -11,21 +11,24 @@ import { RE2JS } from "../vendor/re2js.mjs";
 export const SOURCES = ["session", "vscode"];
 export const SCOPES = ["worktree", "all", "cwd"];
 export const OPERATIONS = ["read", "write"];
+export const COMMAND_ACCESS = ["read-only", "read-write"];
 
 /** Repeatable filter flags accepted by each source's `stats` command. */
 export const FILTERS = {
-    session: ["operation", "agentMode", "kind", "command", "path", "url", "decisionSource"],
+    session: ["operation", "agentMode", "result", "commandAccess", "kind", "command", "path", "url", "decisionSource"],
     vscode: ["tool", "model", "agent"],
 };
 
 /** CLI flag names for filters whose query key differs from the flag. */
 const FILTER_FLAGS = {
     agentMode: "agent-mode",
+    commandAccess: "command-access",
     decisionSource: "decision-source",
 };
 
 /** Filters that the CLI interprets as regular expressions. */
 const REGEX_FILTERS = new Set(["session.path", "session.url", "vscode.tool", "vscode.model", "vscode.agent"]);
+const EXACT_FILTERS = new Set(["session.agentMode", "session.result"]);
 
 export const MAX_TOP = 1000;
 const MAX_VALUE_LENGTH = 512;
@@ -165,10 +168,13 @@ function checkFilterValues(source, name, values) {
     if (values.length > MAX_FILTER_VALUES) throw new QueryError(`${label} has too many values`);
     const out = [];
     for (const raw of values) {
-        const value = checkString(label, raw, { preserveWhitespace: source === "session" && name === "agentMode" });
+        const value = checkString(label, raw, { preserveWhitespace: EXACT_FILTERS.has(`${source}.${name}`) });
         if (!value) continue;
         if (source === "session" && name === "operation" && !OPERATIONS.includes(value)) {
             throw new QueryError(`${label} must be one of ${OPERATIONS.join(", ")}`);
+        }
+        if (source === "session" && name === "commandAccess" && !COMMAND_ACCESS.includes(value)) {
+            throw new QueryError(`${label} must be one of ${COMMAND_ACCESS.join(", ")}`);
         }
         if (REGEX_FILTERS.has(`${source}.${name}`)) {
             const problem = checkGoRegexp(value);

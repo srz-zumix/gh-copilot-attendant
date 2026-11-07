@@ -248,7 +248,8 @@ function filteredQuery(source = "vscode") {
         session: "parent", top: 3,
         filters: {
             vscode: { agent: ["Explore", "executionSubagent"], model: ["a", "b"], tool: ["read", "write"] },
-            session: { operation: ["read", "write"], agentMode: ["interactive", "plan"], kind: ["shell", "read"], command: ["git", "go"],
+            session: { operation: ["read", "write"], agentMode: ["interactive", "plan"], result: ["approved"],
+                commandAccess: ["read-only", "read-write"], kind: ["shell", "read"], command: ["git", "go"],
                 path: ["/src", "/test"], url: ["example"], decisionSource: ["human_response"] },
         },
     });
@@ -350,7 +351,8 @@ test("CLI clear buttons cover permission filters and directories but not unsuppo
     const { panels, submitted, walk } = renderedPanels(query, data);
     const expected = {
         Workspaces: "workspace", "Working directories": "workspace",
-        "Agent modes": "agentMode", "Decision sources": "decisionSource", "Read-only vs read-write": "operation",
+        "Agent modes": "agentMode", Results: "result", "Decision sources": "decisionSource",
+        "Read-only vs read-write": "commandAccess",
         "Tool kinds": "kind", Commands: "command", Paths: "path", URLs: "url",
     };
     for (const panel of panels) {
@@ -365,6 +367,24 @@ test("CLI clear buttons cover permission filters and directories but not unsuppo
         assert.deepEqual(submitted.at(-1), panelClearPatch(query, "session", expected[title]));
     }
     assert.equal(submitted.length, Object.keys(expected).length);
+});
+
+test("Results and command-access rows add their matching exact filters", () => {
+    const query = normalizeQuery({ source: "session" });
+    const { panels, walk, submitted } = renderedPanels(query, {
+        ByResult: [{ Key: "denied-no-approval-rule", Total: 2, Denied: 2 }],
+        ByReadOnly: [{ Key: "read-only", Total: 3 }, { Key: "read-write", Total: 1 }],
+    });
+    const panelFor = (title) => panels.find((entry) =>
+        walk(entry).some((node) => node.tag === "h2" && node.children[0] === title));
+    const result = panelFor("Results");
+    walk(result).find((node) => node.className === "key").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { result: ["denied-no-approval-rule"] } } });
+
+    const access = panelFor("Read-only vs read-write");
+    assert.deepEqual(walk(access).find((node) => node.className === "hint").children, ["click to filter"]);
+    walk(access).find((node) => node.className === "key" && node.children[0] === "read-write").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { commandAccess: ["read-write"] } } });
 });
 
 test("Paths, URLs, and Working directories use the same wide panel layout", () => {
@@ -918,6 +938,11 @@ test("permission panels are grouped into one collapsible Permissions category", 
     }
     assert.ok(nodes.indexOf(categories[1]) < nodes.findIndex((node) =>
         walk(node).some((child) => Object.hasOwn(child.attributes, "data-activity-disclosure"))));
+});
+
+test("permission panel contents align to the top of their grid cells", () => {
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /\[data-permissions-disclosure\]\s*>\s*\.grid\s*>\s*\.panel\s*\{[^}]*align-content:\s*start\s*;/);
 });
 
 test("every dashboard category collapses independently and keeps state and focus across renders", () => {
@@ -2753,6 +2778,11 @@ function activityDataset() {
     };
 }
 
+function activityFooter(root, walk) {
+    const table = walk(root).find((node) => node.className === "activity-table");
+    return walk(table).find((node) => node.tag === "tfoot").children;
+}
+
 test("session activity renders accessible local-hour counts and distinguishes coverage", () => {
     const query = normalizeQuery({ source: "session", filters: { session: { kind: ["read"] } } });
     const data = { SessionActivity: activityDataset() };
@@ -2789,6 +2819,93 @@ test("session activity renders accessible local-hour counts and distinguishes co
     assert.deepEqual(data, before);
 });
 
+test("session activity footer aggregates covered daily cells exactly", () => {
+    const hours = (values) => Array.from({ length: 24 }, (_, hour) => values[hour] ?? 0);
+    const coverage = (values) => Array.from({ length: 24 }, (_, hour) => values[hour] ?? "full");
+    const activity = {
+        ...activityDataset(),
+        StartDate: "2026-03-01", EndDate: "2026-03-03",
+        Days: [
+            { Date: "2026-03-01", Hours: hours({ 0: 6, 1: 2, 3: Number.MAX_SAFE_INTEGER, 4: 1 }) },
+            { Date: "2026-03-02", Hours: hours({ 3: Number.MAX_SAFE_INTEGER }) },
+        ],
+        Coverage: [
+            { Date: "2026-03-01", Hours: coverage({ 2: "outside" }) },
+            { Date: "2026-03-02", Hours: coverage({ 0: "partial", 1: "outside", 2: "nonexistent" }) },
+            { Date: "2026-03-03", Hours: coverage({ 1: "nonexistent", 2: "outside" }) },
+        ],
+    };
+    const before = structuredClone(activity);
+    const { panels, walk } = renderedPanels(normalizeQuery({ source: "session" }), { SessionActivity: activity });
+    const panel = panels.at(-1);
+    const table = walk(panel).find((node) => node.className === "activity-table");
+    const note = walk(panel).find((node) => node.attributes.id === "activity-summary-note");
+    const [total, average] = activityFooter(panel, walk);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    assert.equal(table.attributes["aria-describedby"], note.attributes.id);
+    assert.match(text(note), /session can be counted on multiple days/);
+    assert.match(text(note), /outside and nonexistent hours are excluded/);
+    assert.equal(total.children.length, 25);
+    assert.equal(average.children.length, 25);
+    assert.equal(total.children[0].children[0], "Total");
+    assert.equal(average.children[0].children[0], "Average");
+    assert.equal(total.children[0].attributes.scope, "row");
+    assert.equal(average.children[0].attributes.scope, "row");
+    assert.equal(text(total.children[1]), "6*");
+    assert.equal(text(average.children[1]), "2*");
+    assert.match(average.children[1].attributes["aria-label"], /Average for 00:00: 2 sessions per covered day; 3 covered days; includes partially covered hours/);
+    assert.equal(text(total.children[2]), "2");
+    assert.equal(text(average.children[2]), "2");
+    assert.match(average.children[2].attributes["aria-label"], /1 covered day/);
+    assert.equal(text(total.children[3]), "–");
+    assert.equal(text(average.children[3]), "–");
+    assert.match(total.children[3].attributes["aria-label"], /Total for 02:00: no covered days on this page/);
+    assert.equal(text(total.children[4]), new Intl.NumberFormat().format(18014398509481982n));
+    assert.ok(total.children[1].className.includes("activity-summary-cell"));
+    assert.ok(total.children[1].className.includes("activity-level-1"));
+    assert.ok(total.children[1].className.includes("activity-partial"));
+    assert.ok(total.children[4].className.includes("activity-level-4"));
+    assert.ok(total.children[6].className.includes("activity-level-0"));
+    assert.ok(average.children[4].className.includes("activity-level-4"));
+    const decimalSuffix = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).formatToParts(0.67)
+        .filter((part) => part.type === "decimal" || part.type === "fraction")
+        .map((part) => part.value).join("");
+    assert.equal(text(average.children[4]), `${new Intl.NumberFormat().format(6004799503160660n)}${decimalSuffix}`);
+    assert.equal(text(average.children[5]), new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(1 / 3));
+    assert.deepEqual(activity, before);
+});
+
+test("session activity footer follows the visible page and its coverage", () => {
+    const hours = (value) => [value, ...Array(23).fill(0)];
+    const partial = ["partial", ...Array(23).fill("full")];
+    const activity = {
+        ...activityDataset(),
+        Days: [
+            { Date: "2026-01-01", Hours: hours(4) },
+            { Date: "2026-01-31", Hours: hours(5) },
+            { Date: "2026-03-02", Hours: hours(6) },
+        ],
+        Coverage: [{ Date: "2026-03-02", Hours: partial }],
+    };
+    const { content, walk } = interactiveFusion({ SessionActivity: activity });
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    const values = () => activityFooter(content, walk).map((row) => text(row.children[1]));
+    const earlier = () => walk(content).find((node) => node.attributes["data-activity-page"] === "earlier");
+    const later = () => walk(content).find((node) => node.attributes["data-activity-page"] === "later");
+    const decimal = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+    assert.deepEqual(values(), ["6*", `${decimal.format(6 / 30)}*`]);
+    const total = () => activityFooter(content, walk)[0];
+    assert.ok(total().children[1].className.includes("activity-level-4"));
+    earlier().events.click();
+    assert.deepEqual(values(), ["5", decimal.format(5 / 30)]);
+    assert.ok(total().children[1].className.includes("activity-level-4"));
+    earlier().events.click();
+    assert.deepEqual(values(), ["4", "2"]);
+    later().events.click();
+    later().events.click();
+    assert.deepEqual(values(), ["6*", `${decimal.format(6 / 30)}*`]);
+});
+
 test("session activity counts selected Agent-mode permission requests at request time", () => {
     const query = normalizeQuery({ source: "session", filters: { session: { agentMode: ["plan"] } } });
     const activity = {
@@ -2806,6 +2923,8 @@ test("session activity counts selected Agent-mode permission requests at request
     const row = walk(table).find((node) => node.tag === "tr" &&
         node.children[0]?.children?.[0] === "2026-03-02");
     assert.match(row.children[5].attributes["aria-label"], /1 session with a matching permission request/);
+    const [total] = activityFooter(panel, walk);
+    assert.equal(total.children[5].children[0], "1");
 });
 
 test("session activity hides data collected for a different or unverified Agent-mode filter", () => {
@@ -2908,4 +3027,23 @@ test("session activity distinguishes empty, legacy, invalid, and unrelated views
         assert.equal(view.panels.some((entry) => view.walk(entry).some((node) =>
             node.tag === "h2" && node.children[0] === "Session activity")), false);
     }
+});
+
+test("session usage notes reflect Agent mode usage filtering", () => {
+    const note = (filters, data) => {
+        const query = normalizeQuery({ source: "session", filters: { session: filters } });
+        const { context } = renderedPanels(query, { UsageSessions: 0 });
+        context.probe = data;
+        return vm.runInContext("sessionUsageFilterNote(probe)", context);
+    };
+    assert.equal(note({}, {}), null);
+    assert.equal(note({ kind: ["shell"] }, { UsageAgentModes: [] }), "permission filters do not apply");
+    assert.equal(note({ agentMode: ["plan"] }, {}),
+        "this CLI result does not restrict usage by Agent mode; permission filters do not apply");
+    assert.equal(note({ agentMode: ["plan"] }, { UsageAgentModes: ["autopilot"] }),
+        "collected with a different Agent mode selection; refresh to restrict usage");
+    assert.equal(note({ agentMode: ["plan", "autopilot"] }, { UsageAgentModes: ["autopilot", "plan"] }),
+        "limited to sessions with a matching Agent mode request");
+    assert.equal(note({ agentMode: ["plan"], kind: ["shell"] }, { UsageAgentModes: ["plan"] }),
+        "limited to sessions with a matching Agent mode request; other permission filters do not apply");
 });

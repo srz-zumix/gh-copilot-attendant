@@ -339,7 +339,8 @@ gh copilot-attendant metrics report --enterprise my-enterprise \
 gh copilot-attendant session stats \
   [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] \
   [--since <time> | --period <period>] [--until <time>] \
-  [--operation <read|write>]... [--agent-mode <mode>]... [--kind <kind>]... \
+  [--operation <read|write>]... [--agent-mode <mode>]... [--result <value>]... \
+  [--command-access <read-only|read-write>]... [--kind <kind>]... \
   [--decision-source <source>]... [--command <identifier>]... \
   [--path <pattern>]... [--url <pattern>]... [--top <n>] \
   [--format <format>] [--jq <expression>] [--template <template>]
@@ -353,9 +354,9 @@ as well as by the CLI's own `decisionSource` for that outcome (e.g.
 sessions from older CLI versions and unresolved requests without a recorded
 outcome). It also reports each session's recorded usage totals (premium
 requests, AIU, and token counts), including unfinished sessions, summed overall
-and broken down by working directory; usage is counted independently of the
-permission-request filters below, since it is not recorded per permission
-request.
+and broken down by working directory. Usage is not recorded per permission
+request: `--agent-mode` selects sessions through matching requests, while other
+permission filters do not affect usage totals.
 
 `AGENT_MODE` (`ByAgentMode` in JSON) groups permission requests by the
 `agentMode` recorded when permission evaluation began. It includes
@@ -398,7 +399,11 @@ timestamps, with an inclusive lower and exclusive upper bound. Earlier recorded
 totals are subtracted from cumulative snapshots; a snapshot delta may include
 usage before the selected period. `--period` is shorthand for `--since` using a
 window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`.
-`--operation` restricts to non-mutating (`read`) or mutating (`write`) requests.
+`--operation` restricts requests to non-mutating (`read`) or mutating (`write`)
+classification. `--result` matches an exact recorded result value, including
+specific denied variants. `--command-access` selects requests containing at
+least one command with the selected `read-only` or `read-write` attribute; a
+mixed request can match both values and its commands can appear in both rows.
 `--agent-mode` matches the recorded Agent mode exactly and case-sensitively; use
 `unknown` to include requests whose mode is missing or invalid. Empty mode
 filter values are rejected. `--kind` restricts to an exact tool kind (e.g.
@@ -408,11 +413,19 @@ with an exact decision source (e.g. `human_response`, `unattended_fallback`, or
 unresolved requests). `--command` restricts to requests that include an exact
 command identifier; `--path` and `--url` restrict to requests with a recorded
 path or URL matching the given regular expression (a plain substring is also a
-valid, unanchored regular expression). `--operation`, `--agent-mode`, `--kind`,
-`--decision-source`, `--command`, `--path`, and `--url` may each be repeated to
-match any of multiple values; different filter types are combined. Permission
-filters do not affect usage, Fusion, or user-question statistics. `--top` keeps
-only the top N entries per statistic (default `10`; `0` keeps every entry).
+valid, unanchored regular expression). `--operation`, `--agent-mode`, `--result`,
+`--command-access`, `--kind`, `--decision-source`, `--command`, `--path`, and
+`--url` may each be repeated to match any of multiple values; different filter
+types are combined. `--command-access` describes command-level attributes and
+is distinct from `--operation`, which classifies the request as a whole.
+`--agent-mode` also restricts usage totals and the working directory, model,
+and agent usage breakdowns to sessions with at least one matching permission
+request in the selected time window. Usage is not recorded per mode, so every
+usage update of a matching session is counted, including usage from other
+modes in that session. Other permission filters do not affect usage, and
+permission filters do not affect Fusion or user-question statistics. JSON
+output reports the Agent modes applied to usage in `UsageAgentModes`. `--top`
+keeps only the top N entries per statistic (default `10`; `0` keeps every entry).
 `--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags;
 without `--format json`, results are printed as tables.
 
@@ -623,7 +636,12 @@ one or more `--agent-mode` values, they count distinct sessions that recorded
 matching `permission.requested` events in each hour, using each request event's
 timestamp; selected modes are alternatives. Other permission filters and `--top`
 do not apply to the heatmap. Older CLI results need an updated CLI or the canvas
-`source` runner.
+`source` runner. Total and Average rows summarize each hour on the displayed
+page. Totals add daily counts, so a session can count on multiple days.
+Averages include zeros and partial hours once per covered day; outside and
+nonexistent hours are excluded. A summary asterisk means it includes partial
+hours. Footer cell colors use the heatmap scale relative to the largest value
+in each summary row.
 Fusion-only and VS Code views do not show this full-session activity.
 The dashboard groups CLI permission panels into a collapsible Permissions
 category; its Summary panel uses the same bordered panel style as the other

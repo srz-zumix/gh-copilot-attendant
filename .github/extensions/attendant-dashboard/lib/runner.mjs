@@ -282,6 +282,15 @@ export async function runStats(runner, argv, options = {}) {
                 { stderr: result.stderr, code: result.code },
             );
         }
+        for (const flag of ["result", "command-access"]) {
+            const requested = argv.some((arg) => arg === `--${flag}` || arg.startsWith(`--${flag}=`));
+            if (requested && new RegExp(`unknown flag:\\s*--${flag}(?:\\s|$)`, "i").test(result.stderr)) {
+                throw new RunError(
+                    `The selected gh copilot-attendant CLI does not support --${flag}; update it or choose an up-to-date source runner`,
+                    { stderr: result.stderr, code: result.code },
+                );
+            }
+        }
         const tail = errorTail(result.stderr);
         throw new RunError(tail || `exited with code ${result.code}`, { stderr: result.stderr, code: result.code });
     }
