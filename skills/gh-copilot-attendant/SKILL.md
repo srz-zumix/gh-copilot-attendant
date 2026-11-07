@@ -114,8 +114,7 @@ review; created and merged charts compare Copilot-created PRs with
 other-created PRs. Their tooltips show counts and shares. Copilot review
 suggestions by repository compares generated and applied counts in separate
 bars, not as an acceptance rate; the events may concern different suggestions.
-When both are available, the reviewed and suggestions charts appear side by
-side, stacking vertically on narrow screens. Partial period totals are marked
+Partial period totals are marked
 and show only known counts. Copilot reviews
 per day by repository stacks daily counts by repository. Available days with
 no repository activity count as zero; missing reports or values remain `n/a`.
