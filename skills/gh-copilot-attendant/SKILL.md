@@ -106,8 +106,7 @@ active days (top seven, reported interactions divided by days with a user
 record, including zero-interaction days) beside users by
 surface (vertical bars; users may count in several), then reported days
 distribution (`1`, `2–3`, `4–7`, `8–14`, `15+` days) beside acceptance rate
-distribution (`<20%` to `≥80%`, including rates above 100%). Pairs use half
-widths only when both charts exist. Missing interaction values are excluded
+distribution (`<20%` to `≥80%`, including rates above 100%). Missing interaction values are excluded
 from totals; users without reported interactions are omitted. By repository includes
 horizontal stacked bars for reviewed, created, and merged pull requests. The
 reviewed chart compares PRs reviewed with Copilot to those without a Copilot
