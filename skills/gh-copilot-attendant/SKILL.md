@@ -326,8 +326,6 @@ report model session counts.
 In the
 normal CLI view, User questions precedes Agent usage and the Copilot Fusion
 panel; Fusion-only excludes user questions and permissions.
-The Permissions summary below uses the same bordered panel style as the other
-panels.
 The CLI tab also shows Agent usage (main / subagent / unknown) and incomplete-usage
 notices. Normal-view agent unit costs require available row inputs and no
 reported incomplete session breakdowns; this is not per-record coverage.
