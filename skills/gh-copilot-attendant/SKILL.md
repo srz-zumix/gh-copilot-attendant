@@ -323,8 +323,7 @@ or per 1M tokens. Session units use each model's recorded `Sessions` count, neve
 the overall session count. Missing counts or zero denominators show a dash;
 missing counts also display an explanation. Current VS Code statistics do not
 report model session counts.
-Usage panels in both views follow the same order when data is available: model
-AIU share, Models table, workspace AIU share, then the Workspaces table. In the
+In the
 normal CLI view, User questions precedes Agent usage and the Copilot Fusion
 panel; Fusion-only excludes user questions and permissions.
 The Permissions summary below uses the same bordered panel style as the other
