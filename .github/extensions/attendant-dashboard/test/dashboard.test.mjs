@@ -85,6 +85,23 @@ test("errors keep the previous data and report the message", async () => {
     assert.equal(result.data.Sessions, 3);
 });
 
+test("an unsupported Agent mode flag reports an error without presenting stale data as fresh", async () => {
+    const calls = [];
+    const dashboard = makeDashboard(async (runner, argv) => {
+        calls.push(argv);
+        if (argv.includes("--agent-mode=plan")) throw new Error("update gh copilot-attendant or choose the source runner");
+        return { data: { Requests: 3 }, warnings: [], durationMs: 1 };
+    });
+    await dashboard.ensureFresh();
+    await dashboard.setQuery({ filters: { session: { agentMode: ["plan"] } } });
+    assert.equal(dashboard.results.session.status, "error");
+    assert.match(dashboard.results.session.error, /update gh copilot-attendant/);
+    assert.equal(dashboard.results.session.data.Requests, 3);
+    assert.equal(dashboard.snapshot().results.session.fresh, false);
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].includes("--agent-mode=plan"));
+});
+
 test("ensureFresh skips re-running when the result matches the query", async () => {
     let runs = 0;
     const dashboard = makeDashboard(async () => {
@@ -114,11 +131,12 @@ test("switching source only runs the newly active source", async () => {
 
 test("Fusion-only toggles project synchronously and never expose full session data as filtered", async () => {
     const calls = [];
+    const activity = { Version: 1, Days: [{ Date: "2026-01-01", Hours: Array(24).fill(0) }] };
     const dashboard = makeDashboard(async (runner, argv) => {
         calls.push(argv);
-        return { data: argv[0] === "vscode" ? vscodeDataset() : fusionDataset(), warnings: [], durationMs: 1 };
+        return { data: argv[0] === "vscode" ? vscodeDataset() : { ...fusionDataset(), SessionActivity: activity }, warnings: [], durationMs: 1 };
     });
-    await dashboard.setQuery({ filters: { session: { kind: ["shell"] } } });
+    await dashboard.setQuery({ filters: { session: { kind: ["shell"], agentMode: ["plan"] } } });
     const ranAt = dashboard.results.session.ranAt;
     const snapshots = [];
     dashboard.subscribe((snapshot) => snapshots.push(structuredClone(snapshot)));
@@ -128,9 +146,12 @@ test("Fusion-only toggles project synchronously and never expose full session da
     assert.equal(dashboard.results.session.data.FusionOnly, true);
     assert.equal(dashboard.results.session.data.FusionUsage.UsageRecords, 3);
     assert.equal("Requests" in dashboard.results.session.data, false);
+    assert.equal("SessionActivity" in dashboard.results.session.data, false);
     assert.equal(dashboard.summary().summary.filter, "explicitly Fusion-tagged usage records");
     assert.equal(dashboard.isFresh("session"), true);
     assert.deepEqual(dashboard.query.filters.session.kind, ["shell"]);
+    assert.deepEqual(dashboard.query.filters.session.agentMode, ["plan"]);
+    assert.ok(calls[0].includes("--agent-mode=plan"));
     await dashboard.setQuery({ source: "vscode" });
     assert.equal(dashboard.query.fusionOnly, true);
     assert.equal(dashboard.results.session.data.FusionOnly, true);
@@ -138,9 +159,11 @@ test("Fusion-only toggles project synchronously and never expose full session da
     assert.equal(calls.length, 2);
     await dashboard.setQuery({ fusionOnly: false });
     assert.equal(dashboard.results.session.data.Requests, 99);
+    assert.deepEqual(dashboard.results.session.data.SessionActivity, activity);
     assert.equal(dashboard.results.session.data.FusionOnly, undefined);
     assert.equal(dashboard.results.session.ranAt, ranAt);
     assert.deepEqual(dashboard.query.filters.session.kind, ["shell"]);
+    assert.deepEqual(dashboard.query.filters.session.agentMode, ["plan"]);
     for (const snapshot of snapshots.filter((value) => value.query.fusionOnly)) {
         const data = snapshot.results.session.data;
         assert.ok(!data || (data.FusionOnly && !("Requests" in data)));

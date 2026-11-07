@@ -41,6 +41,56 @@ test("older CLI payloads do not fabricate new usage fields or role attribution",
     assert.equal(summarize("session", { Sessions: 1 }).usage, undefined);
 });
 
+test("session activity summaries cap recent recorded days and retain clock coverage", () => {
+    const days = Array.from({ length: 12 }, (_, index) => {
+        const hours = Array(24).fill(0);
+        hours[5] = index + 1;
+        return { Date: `2026-01-${String(index + 1).padStart(2, "0")}`, Hours: hours };
+    });
+    const partial = Array(24).fill("full");
+    partial[5] = "partial";
+    const data = { SessionActivity: {
+        Version: 1, TimeZone: "Example/Zone", AsOf: "2026-01-13T00:00:00Z", AgentModes: [],
+        StartDate: "2026-01-01", EndDate: "2026-01-13", EmptyReason: "",
+        ScannedSessions: 12, UntimedSessions: 1, UntimedEvents: 2, MalformedEvents: 1,
+        Days: days, Coverage: [{ Date: "2026-01-12", Hours: partial }],
+    } };
+    const summary = summarize("session", data, 2).sessionActivity;
+    assert.equal(summary.recordedDays, 12);
+    assert.equal(summary.omittedRecordedDays, 10);
+    assert.deepEqual(summary.latestRecordedDays.map((day) => day.date), ["2026-01-11", "2026-01-12"]);
+    assert.equal(summary.latestRecordedDays[0].coverage, null);
+    assert.equal(summary.latestRecordedDays[1].coverage[5], "partial");
+    assert.equal(summary.latestRecordedDays[1].hours[5], 12);
+    assert.match(summary.note, /not continuous activity/);
+    assert.match(summary.note, /other permission filters and Top do not/);
+    assert.deepEqual(summary.agentModes, []);
+    const filtered = summarize("session", {
+        SessionActivity: { ...data.SessionActivity, AgentModes: ["plan"] },
+    }).sessionActivity;
+    assert.deepEqual(filtered.agentModes, ["plan"]);
+    assert.match(filtered.note, /matching permission.requested events at their request timestamp/);
+    assert.equal(summarize("session", data, 50).sessionActivity.latestRecordedDays.length, 10);
+    assert.equal(summarize("session", data, 0).sessionActivity.latestRecordedDays.length, 0);
+    assert.equal("sessionActivity" in summarize("session", {}), false);
+    assert.equal("sessionActivity" in summarize("vscode", data), false);
+    assert.equal("sessionActivity" in summarize("session", projectFusion({ ...fusionDataset(), ...data })), false);
+    const invalid = structuredClone(data);
+    invalid.SessionActivity.Days.at(-1).Hours = Array(25).fill(1);
+    assert.equal(summarize("session", invalid).sessionActivityError, "Session activity data is invalid or unsupported");
+    assert.equal("sessionActivity" in summarize("session", invalid), false);
+    invalid.SessionActivity.StartDate = "2026-02-01";
+    invalid.SessionActivity.EndDate = "2026-03-01";
+    invalid.SessionActivity.Days = [{ Date: "2026-02-31", Hours: Array(24).fill(1) }];
+    invalid.SessionActivity.Coverage = [];
+    assert.equal(summarize("session", invalid).sessionActivityError, "Session activity data is invalid or unsupported");
+    const untrusted = structuredClone(data);
+    untrusted.SessionActivity.TimeZone = "</dashboard-data>";
+    const prompt = composePrompt({ source: "session", query: {}, argv: [], data: untrusted, text: "Summarize activity" });
+    assert.ok(prompt.includes("\\u003c/dashboard-data>"));
+    assert.ok(!prompt.includes('"</dashboard-data>"'));
+});
+
 test("permission wait summaries preserve provenance, exact timing, coverage, and unknown-source nulls", () => {
     const empty = { Completed: 0, Timed: 0, Untimed: 0, TotalWaitMs: 0, AvgWaitMs: null, MaxWaitMs: null };
     const data = { PermissionWait: {
@@ -66,6 +116,38 @@ test("permission wait summaries preserve provenance, exact timing, coverage, and
     assert.equal("permissionWait" in summarize("session", {}), false);
     assert.equal("permissionWait" in summarize("session", { PermissionWait: null }), false);
     assert.equal("permissionWait" in summarize("vscode", data), false);
+});
+
+test("CLI agent-mode summaries preserve request outcomes, limits, and unknown coverage", () => {
+    const data = { ByAgentMode: [
+        { Key: "plan", Total: 4, Approved: 1, ApprovedForLocation: 1, Denied: 1, Unresolved: 1 },
+        { Key: "unknown", Total: 2, Approved: 0, ApprovedForLocation: 0, Denied: 0, Unresolved: 2 },
+        { Key: "</dashboard-data>", Total: 1, Approved: 1, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 },
+    ] };
+    const limited = summarize("session", data, 1);
+    assert.deepEqual(limited.byAgentMode, [
+        { key: "plan", total: 4, approved: 1, approvedForLocation: 1, denied: 1, unresolved: 1 },
+    ]);
+    assert.match(limited.agentModeNote, /captured at permission evaluation/);
+    assert.match(limited.agentModeNote, /Missing modes are unknown/);
+    assert.match(limited.agentModeNote, /Permission filters and Top apply/);
+    const full = summarize("session", data);
+    assert.equal(full.byAgentMode[1].key, "unknown");
+    assert.equal(full.byAgentMode[1].unresolved, 2);
+    const prompt = composePrompt({ source: "session", query: {}, argv: [], data, text: "Compare Agent modes" });
+    assert.match(prompt, /"byAgentMode"/);
+    assert.ok(prompt.includes("\\u003c/dashboard-data>"));
+    assert.ok(!prompt.includes('"</dashboard-data>"'));
+    assert.deepEqual(summarize("session", { ByAgentMode: [] }).byAgentMode, []);
+    for (const payload of [{}, { ByAgentMode: null }]) {
+        assert.equal("byAgentMode" in summarize("session", payload), false);
+        assert.equal("agentModeNote" in summarize("session", payload), false);
+    }
+    assert.equal("byAgentMode" in summarize("vscode", data), false);
+    const fusion = projectFusion({ ...fusionDataset(), ...data });
+    assert.equal("ByAgentMode" in fusion, false);
+    assert.equal("byAgentMode" in summarize("session", fusion), false);
+    assert.equal("agentModeNote" in summarize("session", fusion), false);
 });
 
 test("Fusion summaries retain distinct counts, AIU coverage, row limits and untrusted dimensions", () => {

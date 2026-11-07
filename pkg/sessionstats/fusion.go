@@ -20,7 +20,8 @@ import (
 // Stats extends the shared session statistics without changing their JSON fields.
 type Stats struct {
 	*copilotext.PermissionStats
-	Fusion FusionStats
+	Fusion          FusionStats
+	SessionActivity SessionActivity
 }
 
 // FusionStats reports only information explicitly recorded in Fusion events.
@@ -67,13 +68,20 @@ type FusionPhase struct {
 // Collect combines the shared session statistics with recorded Fusion activity.
 func Collect(opts copilotext.PermissionStatsOptions) (*Stats, error) {
 	type fusionResult struct {
-		stats FusionStats
-		err   error
+		stats    FusionStats
+		activity SessionActivity
+		err      error
 	}
 	fusionResults := make(chan fusionResult, 1)
 	go func() {
-		fusion, err := CollectFusion(opts)
-		fusionResults <- fusionResult{stats: fusion, err: err}
+		activity := newActivityCollector(opts, time.Local)
+		fusion, err := collectFusion(opts, activity)
+		if err != nil {
+			fusionResults <- fusionResult{err: err}
+			return
+		}
+		result, err := activity.finish(time.Now())
+		fusionResults <- fusionResult{stats: fusion, activity: result, err: err}
 	}()
 	stats, err := copilotext.CollectPermissionStats(opts)
 	fusion := <-fusionResults
@@ -83,7 +91,7 @@ func Collect(opts copilotext.PermissionStatsOptions) (*Stats, error) {
 	if fusion.err != nil {
 		return nil, fusion.err
 	}
-	return &Stats{PermissionStats: stats, Fusion: fusion.stats}, nil
+	return &Stats{PermissionStats: stats, Fusion: fusion.stats, SessionActivity: fusion.activity}, nil
 }
 
 type rawEvent struct {
@@ -219,6 +227,7 @@ type phaseCounter struct {
 type fusionCollector struct {
 	opts     copilotext.PermissionStatsOptions
 	stats    FusionStats
+	activity *activityCollector
 	patterns map[string]*patternCounter
 	phases   map[phaseKey]*phaseCounter
 	turns    map[turnIdentity]struct{}
@@ -232,11 +241,17 @@ type sessionCollector struct {
 	seenUsage    map[string]struct{}
 	seenResolved map[string]struct{}
 	hasActivity  bool
+	activitySeen map[activityHour]struct{}
+	untimed      bool
 }
 
 // CollectFusion scans the same session scope as the shared collector. Time bounds
 // select individual resolution and usage-record timestamps.
 func CollectFusion(opts copilotext.PermissionStatsOptions) (FusionStats, error) {
+	return collectFusion(opts, nil)
+}
+
+func collectFusion(opts copilotext.PermissionStatsOptions, activity *activityCollector) (FusionStats, error) {
 	root := opts.Root
 	if root == "" {
 		home, err := copilotext.CopilotHome()
@@ -251,7 +266,7 @@ func CollectFusion(opts copilotext.PermissionStatsOptions) (FusionStats, error) 
 	}
 
 	c := fusionCollector{
-		opts: opts, patterns: make(map[string]*patternCounter), phases: make(map[phaseKey]*phaseCounter),
+		opts: opts, activity: activity, patterns: make(map[string]*patternCounter), phases: make(map[phaseKey]*phaseCounter),
 		turns: make(map[turnIdentity]struct{}), phaseIDs: make(map[phaseIdentity]struct{}),
 		usage: newFusionUsageCollector(),
 	}
@@ -270,8 +285,15 @@ func CollectFusion(opts copilotext.PermissionStatsOptions) (FusionStats, error) 
 			collector: &c, session: s, seenUsage: make(map[string]struct{}),
 			seenResolved: make(map[string]struct{}),
 		}
+		if activity != nil {
+			activity.scannedSessions++
+			sc.activitySeen = make(map[activityHour]struct{})
+		}
 		if err := sc.scan(); err != nil {
 			return FusionStats{}, fmt.Errorf("read Fusion events for session %q: %w", s.ID, err)
+		}
+		if sc.untimed {
+			activity.untimedSessions++
 		}
 		if sc.hasActivity {
 			c.stats.Sessions++
@@ -322,6 +344,9 @@ func (sc *sessionCollector) scan() (rerr error) {
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
+		}
+		if sc.collector.activity != nil && sc.collector.activity.record(line, sc.activitySeen) {
+			sc.untimed = true
 		}
 		// Avoid decoding unrelated event payloads, while accepting escaped JSON type names.
 		if !bytes.Contains(line, []byte(`"session.fusion_resolved"`)) &&

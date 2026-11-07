@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, normalizeQuery, QueryError } from "../lib/query.mjs";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import { buildArgv, checkGoRegexp, defaultQuery, exactPattern, MAX_TOP, normalizeQuery, OPERATIONS, QueryError, SCOPES, SOURCES } from "../lib/query.mjs";
+import { RUNNERS } from "../lib/runner.mjs";
 
 test("default query builds the worktree-scoped session command", () => {
     assert.deepEqual(buildArgv(normalizeQuery()), ["session", "stats", "--period=30d", "--top=20", "--format", "json"]);
@@ -62,6 +65,42 @@ test("decisionSource maps to --decision-source", () => {
     assert.ok(argv.includes("--decision-source=unknown"));
     assert.ok(!argv.some((a) => a.startsWith("--decisionSource")));
     assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.decisionSource, []);
+});
+
+test("Agent modes preserve exact values and map to repeatable session-only flags", () => {
+    const values = [" plan ", "plan", "future,mode", " ", " plan "];
+    const q = normalizeQuery({ filters: { session: { agentMode: values, kind: ["shell"] } } });
+    assert.deepEqual(q.filters.session.agentMode, values.slice(0, -1));
+    const argv = buildArgv(q, "session");
+    for (const value of q.filters.session.agentMode) assert.ok(argv.includes(`--agent-mode=${value}`));
+    assert.ok(argv.includes("--kind=shell"));
+    assert.ok(!buildArgv(q, "vscode").some((arg) => arg.startsWith("--agent-mode")));
+    assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.agentMode, []);
+
+    const fusion = normalizeQuery({ fusionOnly: true }, q);
+    const switched = normalizeQuery({ source: "vscode" }, fusion);
+    const back = normalizeQuery({ source: "session", fusionOnly: false }, switched);
+    assert.deepEqual(back.filters.session.agentMode, q.filters.session.agentMode);
+    assert.deepEqual(buildArgv(fusion, "session"), argv);
+    assert.throws(() => normalizeQuery({ filters: { session: { agentMode: ["plan\nother"] } } }), /control characters/);
+});
+
+test("canvas open and refresh schemas accept the Agent mode query filter", () => {
+    const source = readFileSync(new URL("../extension.mjs", import.meta.url), "utf8")
+        .replace(/^import .*;\n/gm, "")
+        .replace("session = await joinSession({ canvases: [canvas] });", "");
+    const canvas = vm.runInNewContext(`${source}\ncanvas`, {
+        SOURCES, SCOPES, OPERATIONS, MAX_TOP, RUNNERS,
+        QueryStore: class {}, createCanvas: (value) => value,
+    });
+    const openQuery = canvas.inputSchema.properties.query;
+    const refreshQuery = canvas.actions.find((action) => action.name === "refresh").inputSchema.properties.query;
+    const session = openQuery.properties.filters.properties.session;
+    assert.equal(session.additionalProperties, false);
+    assert.equal(session.properties.agentMode.type, "array");
+    assert.equal(session.properties.agentMode.items.type, "string");
+    assert.equal(session.properties.agentMode.maxItems, 20);
+    assert.equal(refreshQuery, openQuery);
 });
 
 test("regex filters are checked against Go's RE2 syntax", () => {

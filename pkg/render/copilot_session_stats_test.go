@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/srz-zumix/gh-copilot-attendant/pkg/sessionstats"
@@ -22,6 +23,11 @@ func sampleSessionStats() *sessionstats.Stats {
 				Pattern: "cascade", Phase: "judge", Role: "judge", Model: "model-a",
 				Sessions: 1, Turns: 1, Phases: 1, UsageRecords: 2, AIU: 3, AIURecords: 1,
 			}},
+		},
+		SessionActivity: sessionstats.SessionActivity{
+			Version: 1, TimeZone: "UTC", AsOf: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			StartDate: "2026-01-01", EndDate: "2026-01-01",
+			Days: []sessionstats.ActivityDay{{Date: "2026-01-01", Hours: [24]int{0, 2}}},
 		},
 	}
 }
@@ -72,5 +78,10 @@ func TestRenderCopilotSessionStatsJSON(t *testing.T) {
 	if err := json.Unmarshal(data["Fusion"], &fusion); err != nil || fusion.UsageRecords != 2 ||
 		fusion.AIURecords != 1 || len(fusion.ByPhase) != 1 || fusion.ByPhase[0].Model != "model-a" {
 		t.Fatalf("Fusion = %+v, error %v", fusion, err)
+	}
+	var activity sessionstats.SessionActivity
+	if err := json.Unmarshal(data["SessionActivity"], &activity); err != nil || activity.Version != 1 ||
+		activity.TimeZone != "UTC" || len(activity.Days) != 1 || activity.Days[0].Hours[1] != 2 {
+		t.Fatalf("SessionActivity = %+v, error %v", activity, err)
 	}
 }

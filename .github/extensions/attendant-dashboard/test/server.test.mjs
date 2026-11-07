@@ -160,6 +160,71 @@ test("ask requires a fresh, successful result and forwards presets", async (t) =
     assert.equal(asked.length, 1);
 });
 
+test("HTTP state and Ask agent share recorded Agent-mode outcomes", async (t) => {
+    const modes = [
+        { Key: "plan", Total: 1, Approved: 0, ApprovedForLocation: 0, Denied: 1, Unresolved: 0 },
+        { Key: "unknown", Total: 1, Approved: 0, ApprovedForLocation: 0, Denied: 0, Unresolved: 1 },
+    ];
+    const calls = [];
+    const { server, json, auth, dashboard, asked } = await setup(async (runner, argv) => {
+        calls.push(argv);
+        const selected = argv.includes("--agent-mode=plan") ? modes.slice(0, 1) : modes;
+        return { data: { Sessions: 1, Requests: selected.length, ByAgentMode: selected }, warnings: [], durationMs: 1 };
+    });
+    t.after(() => server.close());
+    await dashboard.refresh("session");
+    const state = await call(`${server.origin}/api/state`, { headers: auth });
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.json.results.session.data.ByAgentMode, modes);
+    const response = await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ text: "Compare Agent modes" }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(asked[0].summary.summary.byAgentMode, [
+        { key: "plan", total: 1, approved: 0, approvedForLocation: 0, denied: 1, unresolved: 0 },
+        { key: "unknown", total: 1, approved: 0, approvedForLocation: 0, denied: 0, unresolved: 1 },
+    ]);
+    const filtered = await call(`${server.origin}/api/query`, {
+        method: "POST", headers: json,
+        body: JSON.stringify({ query: { filters: { session: { agentMode: ["plan"] } } } }),
+    });
+    assert.equal(filtered.status, 200);
+    await dashboard.refreshing("session");
+    const next = await call(`${server.origin}/api/state`, { headers: auth });
+    assert.deepEqual(next.json.query.filters.session.agentMode, ["plan"]);
+    assert.deepEqual(next.json.results.session.data.ByAgentMode, modes.slice(0, 1));
+    assert.equal(next.json.results.session.fresh, true);
+    assert.ok(calls.at(-1).includes("--agent-mode=plan"));
+    assert.equal((await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ text: "Summarize the selected mode" }),
+    })).status, 200);
+    assert.deepEqual(asked[1].summary.summary.byAgentMode, [
+        { key: "plan", total: 1, approved: 0, approvedForLocation: 0, denied: 1, unresolved: 0 },
+    ]);
+});
+
+test("HTTP Ask agent rejects stale data when the selected CLI cannot filter Agent modes", async (t) => {
+    const { server, json, dashboard, asked } = await setup(async (runner, argv) => {
+        if (argv.includes("--agent-mode=plan")) throw new Error("update gh copilot-attendant or choose the source runner");
+        return { data: { Requests: 3 }, warnings: [], durationMs: 1 };
+    });
+    t.after(() => server.close());
+    await dashboard.ensureFresh();
+    const response = await call(`${server.origin}/api/query`, {
+        method: "POST", headers: json,
+        body: JSON.stringify({ query: { filters: { session: { agentMode: ["plan"] } } } }),
+    });
+    assert.equal(response.status, 200);
+    await dashboard.refreshing("session");
+    assert.equal(dashboard.results.session.status, "error");
+    assert.equal(dashboard.isFresh("session"), false);
+    const ask = await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ text: "Summarize permissions" }),
+    });
+    assert.equal(ask.status, 409);
+    assert.equal(asked.length, 0);
+});
+
 test("HTTP Agent changes use cached data for state and Ask agent without launching gh", async (t) => {
     let calls = 0;
     const { server, json, dashboard, asked, auth } = await setup(async () => {

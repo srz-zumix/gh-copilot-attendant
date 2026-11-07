@@ -1,7 +1,8 @@
 # Usage guide
 
-See the [project overview and installation instructions](../README.md) to get started.
-This guide covers command arguments, defaults, output semantics, and dashboard behavior.
+See the [project overview and installation instructions](../README.md) to get
+started. This guide covers command arguments, defaults, output semantics, and
+dashboard behavior.
 
 ## Contents
 
@@ -24,18 +25,21 @@ below each command. For shell completion setup, run
 #### copilot extension install
 
 ```sh
-gh copilot-attendant copilot extension install [name...] [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
+gh copilot-attendant copilot extension install [name...] \
+  [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
 ```
 
 Downloads and installs the bundled GitHub Copilot CLI canvas extensions
-(currently `attendant-dashboard`) from this repository's GitHub sources.
-For install, status, uninstall, and update, `[name...]` is optional; omitting
-it targets every bundled extension. `--scope` selects the installation scope:
-`user` (default) installs under `$COPILOT_HOME/extensions` (`~/.copilot/extensions` when
-unset) and `repo` installs into the current repository's `.github/extensions`. `--prefix`
-overrides the install directory and takes precedence over `--scope`. `--ref` overrides the
-default git ref (`main`). `--dry-run` prints what would be installed without writing files.
-`--force` overwrites an existing destination directory that is not managed by this command.
+(currently `attendant-dashboard`) from this repository's GitHub sources. For
+install, status, uninstall, and update, `[name...]` is optional; omitting it
+targets every bundled extension. `--scope` selects the installation scope:
+`user` (default) installs under `$COPILOT_HOME/extensions`
+(`~/.copilot/extensions` when unset) and `repo` installs into the current
+repository's `.github/extensions`. `--prefix` overrides the install directory
+and takes precedence over `--scope`. `--ref` overrides the default git ref
+(`main`). `--dry-run` prints what would be installed without writing files.
+`--force` overwrites an existing destination directory that is not managed by
+this command.
 
 #### copilot extension list
 
@@ -48,31 +52,37 @@ Lists the bundled extensions with their source URL and default ref.
 #### copilot extension status
 
 ```sh
-gh copilot-attendant copilot extension status [name...] [--scope <user|repo>] [--prefix <dir>]
+gh copilot-attendant copilot extension status [name...] \
+  [--scope <user|repo>] [--prefix <dir>]
 ```
 
-Shows whether the given extensions are installed and which ref and commit they were installed
-from. Only the local filesystem is inspected. `--scope` defaults to `user`.
+Shows whether the given extensions are installed and which ref and commit they
+were installed from. Only the local filesystem is inspected. `--scope` defaults
+to `user`.
 
 #### copilot extension uninstall
 
 ```sh
-gh copilot-attendant copilot extension uninstall [name...] [--scope <user|repo>] [--prefix <dir>] [--dry-run] [--force]
+gh copilot-attendant copilot extension uninstall [name...] \
+  [--scope <user|repo>] [--prefix <dir>] [--dry-run] [--force]
 ```
 
-Removes the given extensions. `--scope` defaults to `user`. `--dry-run` prints what would be
-removed. `--force` removes a destination directory even if it is not managed by this command.
+Removes the given extensions. `--scope` defaults to `user`. `--dry-run` prints
+what would be removed. `--force` removes a destination directory even if it is
+not managed by this command.
 
 #### copilot extension update
 
 ```sh
-gh copilot-attendant copilot extension update [name...] [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
+gh copilot-attendant copilot extension update [name...] \
+  [--scope <user|repo>] [--prefix <dir>] [--ref <ref>] [--dry-run] [--force]
 ```
 
-Re-installs the given installed extensions when their ref resolves to a different commit than
-the installed one. Fails if an extension is not installed yet. `--scope` defaults to `user`.
-`--ref` overrides the default git ref (`main`). `--dry-run` prints what would be updated.
-`--force` re-installs even when already up to date, or overwrites an unmanaged directory.
+Re-installs the given installed extensions when their ref resolves to a
+different commit than the installed one. Fails if an extension is not installed
+yet. `--scope` defaults to `user`. `--ref` overrides the default git ref
+(`main`). `--dry-run` prints what would be updated. `--force` re-installs even
+when already up to date, or overwrites an unmanaged directory.
 
 ### metrics
 
@@ -326,54 +336,112 @@ gh copilot-attendant metrics report --enterprise my-enterprise \
 #### session stats
 
 ```sh
-gh copilot-attendant session stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--operation <read|write>]... [--kind <kind>]... [--decision-source <source>]... [--command <identifier>]... [--path <pattern>]... [--url <pattern>]... [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
+gh copilot-attendant session stats \
+  [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] \
+  [--since <time> | --period <period>] [--until <time>] \
+  [--operation <read|write>]... [--agent-mode <mode>]... [--kind <kind>]... \
+  [--decision-source <source>]... [--command <identifier>]... \
+  [--path <pattern>]... [--url <pattern>]... [--top <n>] \
+  [--format <format>] [--jq <expression>] [--template <template>]
 ```
 
-Scans local Copilot CLI session history under `~/.copilot/session-state`
-(or `$COPILOT_HOME/session-state`) and reports how often each tool, command, file
-path, and URL was requested, broken down by whether it was approved or denied, as well as
-by the CLI's own `decisionSource` for that outcome (e.g. `human_response`; `unknown` when
-no decision source was recorded, including sessions from older CLI versions and unresolved
-requests without a recorded outcome). It also reports each session's recorded usage totals
-(premium requests, AIU, and token counts), including unfinished sessions, summed
-overall and broken down by working directory; usage is counted independently of the
-permission-request filters below, since it is not recorded per permission request.
-Request-level `session.usage_record` events and cumulative `session.usage_checkpoint` and
-`session.shutdown` snapshots are combined without double counting: each snapshot replaces
-the counters it covers, and subsequent request records add new usage. Replayed request
-records are deduplicated using their source-session accounting identity.
-When request records or `modelMetrics` are available, `MODEL_USAGE` also reports model names, API
-request counts (not permission requests), premium requests, AIU, and token counts per
-model. JSON output includes this breakdown in `ByModelUsage`. Checkpoints can record AIU
-and premium totals without model, request, or token details; those totals are included
-without inventing missing details. `UsageIncompleteSessions` marks incomplete breakdowns,
-and request/token counts for those sessions are recorded subtotals.
-`AGENT_USAGE` (`ByRoleUsage` in JSON) separates `main`, `subagent`, and `unknown` usage
-using recorded request metadata, not model names. Older or partially recorded usage stays
-`unknown`. This role breakdown is never truncated by `--top`; it reports API requests,
-premium requests, AIU, and tokens, not API duration. API request totals are also exported
-as `UsageRequests`. Model usage follows the same session scope, time bounds, and `--top`
-limit as working-directory usage. `--all`,
-`--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional; when none are given,
-only sessions whose recorded working directory is inside the current git worktree are
-counted. `--session` restricts to a single session ID. `--since` and `--until` accept
-RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as `7d`/`24h`/`30m`, and
-default to no bound. Usage updates are selected by their recorded timestamps,
-with an inclusive lower and exclusive upper bound. Earlier recorded totals are
-subtracted from cumulative snapshots; a snapshot delta may include usage before
-the selected period. `--period` is shorthand for `--since` using a window such
-as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`. `--operation`
-restricts to non-mutating (`read`) or mutating (`write`) requests. `--kind` restricts to an
-exact tool kind (e.g. `shell`, `read`, `write`); `--decision-source` restricts to permission
-outcomes with an exact decision source (e.g. `human_response`, `unattended_fallback`, or `unknown`
-when no decision source was recorded, including older CLI versions and unresolved requests); `--command` restricts to requests that include an
-exact command identifier; `--path` and `--url` restrict to requests with a recorded path or
-URL matching the given regular expression (a plain substring is also a valid, unanchored
-regular expression). `--operation`, `--kind`, `--decision-source`, `--command`, `--path`, and
-`--url` may each be repeated to match any of multiple values. `--top` keeps only the top N
-entries per statistic (default `10`; `0` keeps every entry).
-`--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
-`--format json`, results are printed as tables.
+Scans local Copilot CLI session history under `~/.copilot/session-state` (or
+`$COPILOT_HOME/session-state`) and reports how often each tool, command, file
+path, and URL was requested, broken down by whether it was approved or denied,
+as well as by the CLI's own `decisionSource` for that outcome (e.g.
+`human_response`; `unknown` when no decision source was recorded, including
+sessions from older CLI versions and unresolved requests without a recorded
+outcome). It also reports each session's recorded usage totals (premium
+requests, AIU, and token counts), including unfinished sessions, summed overall
+and broken down by working directory; usage is counted independently of the
+permission-request filters below, since it is not recorded per permission
+request.
+
+`AGENT_MODE` (`ByAgentMode` in JSON) groups permission requests by the
+`agentMode` recorded when permission evaluation began. It includes
+approved, approved-for-location, denied, and unresolved outcomes. Each
+logical request counts once, using its first recorded snapshot; modes
+can differ within one session. Missing, null, empty, or malformed modes
+are grouped as `unknown`; nonempty future mode names remain distinct.
+Modes are not inferred from `session.mode_changed`, defaults, model names,
+or main/subagent roles. This is not a mode-duration or usage breakdown,
+and unlogged requests cannot be reconstructed. All directory, session,
+time, and permission filters apply. Completion events after `--until`
+still resolve selected requests. Rows are sorted by request total
+descending, then mode name ascending; `--top` limits the rows, not
+overall request totals.
+
+Request-level `session.usage_record` events and cumulative
+`session.usage_checkpoint` and `session.shutdown` snapshots are combined without
+double counting: each snapshot replaces the counters it covers, and subsequent
+request records add new usage. Replayed request records are deduplicated using
+their source-session accounting identity. When request records or `modelMetrics`
+are available, `MODEL_USAGE` also reports model names, API request counts (not
+permission requests), premium requests, AIU, and token counts per model. JSON
+output includes this breakdown in `ByModelUsage`. Checkpoints can record AIU and
+premium totals without model, request, or token details; those totals are
+included without inventing missing details. `UsageIncompleteSessions` marks
+incomplete breakdowns, and request/token counts for those sessions are recorded
+subtotals. `AGENT_USAGE` (`ByRoleUsage` in JSON) separates `main`, `subagent`,
+and `unknown` usage using recorded request metadata, not model names. Older or
+partially recorded usage stays `unknown`. This role breakdown is never truncated
+by `--top`; it reports API requests, premium requests, AIU, and tokens, not API
+duration. API request totals are also exported as `UsageRequests`. Model usage
+follows the same session scope, time bounds, and `--top` limit as
+working-directory usage. `--all`, `--cwd`, and `--worktree`/`-W` are mutually
+exclusive and all optional; when none are given, only sessions whose recorded
+working directory is inside the current git worktree are counted. `--session`
+restricts to a single session ID. `--since` and `--until` accept RFC3339
+timestamps, `YYYY-MM-DD` dates, or a relative duration such as `7d`/`24h`/`30m`,
+and default to no bound. Usage updates are selected by their recorded
+timestamps, with an inclusive lower and exclusive upper bound. Earlier recorded
+totals are subtracted from cumulative snapshots; a snapshot delta may include
+usage before the selected period. `--period` is shorthand for `--since` using a
+window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`.
+`--operation` restricts to non-mutating (`read`) or mutating (`write`) requests.
+`--agent-mode` matches the recorded Agent mode exactly and case-sensitively; use
+`unknown` to include requests whose mode is missing or invalid. Empty mode
+filter values are rejected. `--kind` restricts to an exact tool kind (e.g.
+`shell`, `read`, `write`); `--decision-source` restricts to permission outcomes
+with an exact decision source (e.g. `human_response`, `unattended_fallback`, or
+`unknown` when no decision source was recorded, including older CLI versions and
+unresolved requests). `--command` restricts to requests that include an exact
+command identifier; `--path` and `--url` restrict to requests with a recorded
+path or URL matching the given regular expression (a plain substring is also a
+valid, unanchored regular expression). `--operation`, `--agent-mode`, `--kind`,
+`--decision-source`, `--command`, `--path`, and `--url` may each be repeated to
+match any of multiple values; different filter types are combined. Permission
+filters do not affect usage, Fusion, or user-question statistics. `--top` keeps
+only the top N entries per statistic (default `10`; `0` keeps every entry).
+`--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags;
+without `--format json`, results are printed as tables.
+
+JSON output includes versioned `SessionActivity` data for the CLI dashboard.
+Each local date has 24 hourly counts of distinct sessions with at least one
+timestamped event in that hour. Multiple events and repeated clock hours count a
+session once per cell; the result does not infer continuous activity or idle
+time. `Days` contains dates with recorded events, while `StartDate` and
+`EndDate` define the display range. Dates and hours use the CLI host's local
+time zone, identified by `TimeZone`, not the browser's time zone.
+`Coverage` reports `full`, `partial`, `outside`, or `nonexistent` for affected
+hours on boundary or clock-transition dates; dates omitted from `Coverage` have
+full coverage. A partial cell includes only events within the selected window,
+including when a repeated hour is only partly selected.
+
+Directory and session scope apply; event timestamps are selected with inclusive
+`--since` and exclusive `--until`. Permission filters and `--top` do not affect
+these counts. `UntimedEvents` and `MalformedEvents` count events that cannot be
+placed in any hour; `UntimedSessions` counts scoped sessions with untimed
+events. These diagnostics cover the scoped logs, including when a time window is
+selected. Missing timestamps cannot be assigned to that window. `AsOf` is the
+scan completion time, not an implicit upper bound; active logs may change
+while scanning, and recorded future timestamps can extend the displayed range.
+With no lower bound, the display is anchored at the earliest dated event and
+includes local dates reached after it. With no upper bound, it ends on the scan
+date or the latest recorded event date. A fully
+bounded empty period is displayed with zero counts; without a known start date,
+when a future `--since` has no dated events, or when `--since` is not earlier
+than `--until`, no range is displayed.
 
 `FUSION` (`Fusion` in JSON) reports Copilot Fusion activity from recorded
 events. `FUSION_PATTERN` counts distinct resolved turns by pattern;
@@ -403,138 +471,171 @@ Permission filters do not apply. `--top` limits each Fusion
 breakdown but not its totals. Active sessions can be updated while scanning,
 so shared and Fusion totals are not an atomic snapshot.
 
-`ASK_USER` (`AskUser` in JSON) reports sessions with questions, question counts, and
-answered/cancelled/failed/unresolved/unknown outcomes from paired `ask_user` tool events.
-Answered questions with valid timestamps contribute to total, average, and maximum
-wait in milliseconds; `TimedAnswers` and `UntimedAnswers` expose timing coverage.
-Average and maximum are `null` (`n/a` in tables) without timed answers. Unknown completions
-are not inferred as answers. Wait runs from tool start to completion and includes
-UI/transport overhead; overlapping per-question intervals are summed, not deduplicated
-as wall-clock idle time. Session/directory scope applies; time bounds select question
-starts (inclusive `--since`, exclusive `--until`), while later completions still resolve
-selected questions. Permission filters and `--top` do not affect this summary.
-No question or answer text is exported. Older logs without recorded events cannot
+`ASK_USER` (`AskUser` in JSON) reports sessions with questions, question counts,
+and answered/cancelled/failed/unresolved/unknown outcomes from paired `ask_user`
+tool events. Answered questions with valid timestamps contribute to total,
+average, and maximum wait in milliseconds; `TimedAnswers` and `UntimedAnswers`
+expose timing coverage. Average and maximum are `null` (`n/a` in tables) without
+timed answers. Unknown completions are not inferred as answers. Wait runs from
+tool start to completion and includes UI/transport overhead; overlapping
+per-question intervals are summed, not deduplicated as wall-clock idle time.
+Session/directory scope applies; time bounds select question starts (inclusive
+`--since`, exclusive `--until`), while later completions still resolve selected
+questions. Permission filters and `--top` do not affect this summary. No
+question or answer text is exported. Older logs without recorded events cannot
 reconstruct missing questions.
 
-`PERMISSION_WAIT` (`PermissionWait` in JSON) reports request-to-completion elapsed time
-separately from `ASK_USER`. `HumanResponses` includes only recorded `human_response`
-decisions; `NonHumanDecisions` and `UnknownSourceDecisions` retain other and missing-source
-decision times separately, without inferring human wait from an approval or a long delay.
-Each group reports completed/timed/untimed counts and total/average/maximum milliseconds.
-Zero-length intervals are valid; missing or negative timing is untimed and excluded.
-Average/maximum are `null` (`n/a` in tables) without timed decisions. Unresolved requests
-have no inferred duration. Replay duplicates count once, paired by session/agent/request
-identity. All permission filters and directory/session scope apply; time bounds select
-request starts, while later completions still resolve them. `--top` does not truncate
-these totals. Intervals include UI/transport overhead; overlapping waits are summed,
-not unique wall-clock idle time. Unlogged rule-based approvals cannot be reconstructed.
+`PERMISSION_WAIT` (`PermissionWait` in JSON) reports request-to-completion
+elapsed time separately from `ASK_USER`. `HumanResponses` includes only recorded
+`human_response` decisions; `NonHumanDecisions` and `UnknownSourceDecisions`
+retain other and missing-source decision times separately, without inferring
+human wait from an approval or a long delay. Each group reports
+completed/timed/untimed counts and total/average/maximum milliseconds.
+Zero-length intervals are valid; missing or negative timing is untimed and
+excluded. Average/maximum are `null` (`n/a` in tables) without timed decisions.
+Unresolved requests have no inferred duration. Replay duplicates count once,
+paired by session/agent/request identity. All permission filters and
+directory/session scope apply; time bounds select request starts, while later
+completions still resolve them. `--top` does not truncate these totals.
+Intervals include UI/transport overhead; overlapping waits are summed, not
+unique wall-clock idle time. Unlogged rule-based approvals cannot be
+reconstructed.
 
 ### skills
 
-`gh copilot-attendant skills` manages the agent skills bundled with this extension. Run
-`gh copilot-attendant skills --help` for its subcommands.
+`gh copilot-attendant skills` manages the agent skills bundled with this
+extension. Run `gh copilot-attendant skills --help` for its subcommands.
 
 ### vscode
 
 #### vscode stats
 
 ```sh
-gh copilot-attendant vscode stats [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] [--since <time> | --period <period>] [--until <time>] [--tool <pattern>]... [--model <pattern>]... [--agent <pattern>]... [--include-log-stats] [--top <n>] [--format <format>] [--jq <expression>] [--template <template>]
+gh copilot-attendant vscode stats \
+  [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] \
+  [--since <time> | --period <period>] [--until <time>] \
+  [--tool <pattern>]... [--model <pattern>]... [--agent <pattern>]... \
+  [--include-log-stats] [--top <n>] [--format <format>] \
+  [--jq <expression>] [--template <template>]
 ```
 
 Scans local VS Code Copilot Chat debug logs from the Local harness under
 `~/Library/Application Support/Code/User/workspaceStorage` and reports tool
-usage, LLM token and usage totals, turn counts, and subagent invocations.
-Only the stable, non-Insiders VS Code installation on macOS is supported.
-Subagent log files referenced by each session
-are included recursively, with each file counted once. Their model requests, tokens,
-AIU, tool calls, and turns are attributed to the parent workspace; session counts still
-refer to parent chat sessions. Internal
-title-generation child logs and unreferenced files are excluded. Time bounds apply to
-each event, including child activity whose invocation predates `--since`.
-When `--agent` is specified, all activity is scoped to matching subagents' own child logs:
-model requests, AIU, tokens, tool calls, turns, and workspace totals. Main-agent usage is
-excluded, and differently named descendants are excluded unless they also match an agent
-pattern. Without `--agent`, parent and referenced child usage is included as before.
-Tool and model filters apply independently within that scope. Missing child logs produce
-a warning, while their recorded matching invocations remain counted.
+usage, LLM token and usage totals, turn counts, and subagent invocations. Only
+the stable, non-Insiders VS Code installation on macOS is supported. Subagent
+log files referenced by each session are included recursively, with each file
+counted once. Their model requests, tokens, AIU, tool calls, and turns are
+attributed to the parent workspace; session counts still refer to parent chat
+sessions. Internal title-generation child logs and unreferenced files are
+excluded. Time bounds apply to each event, including child activity whose
+invocation predates `--since`. When `--agent` is specified, all activity is
+scoped to matching subagents' own child logs: model requests, AIU, tokens, tool
+calls, turns, and workspace totals. Main-agent usage is excluded, and
+differently named descendants are excluded unless they also match an agent
+pattern. Without `--agent`, parent and referenced child usage is included as
+before. Tool and model filters apply independently within that scope. Missing
+child logs produce a warning, while their recorded matching invocations remain
+counted.
 
 VS Code Copilot harness (Agent Host) sessions recorded locally under
 `~/.copilot/session-state` use CLI-format logs and are reported by
 `gh copilot-attendant session stats` instead. The source depends on the harness,
 not the VS Code version.
 
-`--all`, `--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional; when none
-are given, only sessions belonging to the
-current git worktree are counted. `--session` restricts to a single session ID. `--since`
-and `--until` accept RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as
-`7d`/`24h`/`30m`, and default to no bound. `--period` is shorthand for `--since` using a
-coarser window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive with `--since`.
-`--tool` and `--model` restrict tool calls and LLM requests; `--agent` scopes activity by
-subagent name. All three are optional and default to no filter. They match the given
-regular expression (a plain substring is also a valid, unanchored regular expression)
-and may each be repeated to match any of multiple values.
-`--include-log-stats` is optional (default `false`) and adds versioned `LogDetails` to JSON
-output. Details contain each parent chat's identity and workspace, unique log identities,
-main/child classification, all referencing agent names, normalized own-activity metrics,
-and invocation identities in traversal order. These details are not truncated by `--top`
-and contain no raw events or conversation content. They support local agent filtering
-without double-counting shared logs or parent chats; positive TTFT sample counts and sums
-are retained for accurate averaging. This flag cannot be combined with `--agent`.
-`--top` keeps only the top N entries per statistic (default `10`; `0` keeps every entry).
-`--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags; without
-`--format json`, results are printed as tables.
+`--all`, `--cwd`, and `--worktree`/`-W` are mutually exclusive and all optional;
+when none are given, only sessions belonging to the current git worktree are
+counted. `--session` restricts to a single session ID. `--since` and `--until`
+accept RFC3339 timestamps, `YYYY-MM-DD` dates, or a relative duration such as
+`7d`/`24h`/`30m`, and default to no bound. `--period` is shorthand for `--since`
+using a coarser window such as `7d`/`3w`/`6m`/`1y`, and is mutually exclusive
+with `--since`. `--tool` and `--model` restrict tool calls and LLM requests;
+`--agent` scopes activity by subagent name. All three are optional and default
+to no filter. They match the given regular expression (a plain substring is also
+a valid, unanchored regular expression) and may each be repeated to match any of
+multiple values. `--include-log-stats` is optional (default `false`) and adds
+versioned `LogDetails` to JSON output. Details contain each parent chat's
+identity and workspace, unique log identities, main/child classification, all
+referencing agent names, normalized own-activity metrics, and invocation
+identities in traversal order. These details are not truncated by `--top` and
+contain no raw events or conversation content. They support local agent
+filtering without double-counting shared logs or parent chats; positive TTFT
+sample counts and sums are retained for accurate averaging. This flag cannot be
+combined with `--agent`. `--top` keeps only the top N entries per statistic
+(default `10`; `0` keeps every entry). `--format`, `--jq`, and `--template`
+follow the standard `gh` JSON export flags; without `--format json`, results are
+printed as tables.
 
-For example, report only Explore agents' own usage across all workspaces over the last
-seven days:
+For example, report only Explore agents' own usage across all workspaces over
+the last seven days:
 
 ```sh
 gh copilot-attendant vscode stats --all --period 7d --agent '^Explore$'
 ```
 
-`USER_QUESTIONS` (`UserQuestions` in JSON) reports completed `vscode_askQuestions`
-calls, sessions with calls, and answered/skipped/cancelled/failed/unknown outcomes.
-Each multi-question batch counts as one call; a partially skipped batch with at least
-one recorded answer counts as answered, while a fully skipped batch counts as skipped.
-Only answered calls with valid recorded `dur` contribute to total/average/maximum
-wait in milliseconds. `TimedAnswers` and `UntimedAnswers` expose timing coverage;
-average/maximum are `null` (`n/a` in tables) without timed answers.
-Time bounds select call starts, even when completion falls after `--until`.
+`USER_QUESTIONS` (`UserQuestions` in JSON) reports completed
+`vscode_askQuestions` calls, sessions with calls, and
+answered/skipped/cancelled/failed/unknown outcomes. Each multi-question batch
+counts as one call; a partially skipped batch with at least one recorded answer
+counts as answered, while a fully skipped batch counts as skipped. Only answered
+calls with valid recorded `dur` contribute to total/average/maximum wait in
+milliseconds. `TimedAnswers` and `UntimedAnswers` expose timing coverage;
+average/maximum are `null` (`n/a` in tables) without timed answers. Time bounds
+select call starts, even when completion falls after `--until`.
 Session/directory/agent/tool filters apply; model filters and `--top` do not.
 Duration includes tool/UI/transport overhead; overlapping intervals are summed,
-not deduplicated as wall-clock idle time. In-flight questions cannot be reconstructed
-from completed-call logs. No question or answer text is exported. Log details include
-these untruncated per-log metrics for exact local filtering and parent-session counting.
+not deduplicated as wall-clock idle time. In-flight questions cannot be
+reconstructed from completed-call logs. No question or answer text is exported.
+Log details include these untruncated per-log metrics for exact local filtering
+and parent-session counting.
 
 ## Copilot app dashboard
 
 This repository ships a canvas extension for the GitHub Copilot app in
 [`.github/extensions/attendant-dashboard`](../.github/extensions/attendant-dashboard/README.md).
 When a Copilot session runs inside this repository, ask the agent to open the
-"Copilot attendant dashboard" to browse `session stats` and `vscode stats` results as
-interactive charts, filter by clicking entries, and hand the data back to the agent.
-The VS Code tab always explains that it reads logs from the Local harness.
-Locally recorded VS Code Copilot harness (Agent Host) sessions are included in the
-Copilot CLI tab. This distinction depends on the harness, not the VS Code version.
-The VS Code canvas fetches log details once and processes Agent and Top changes locally,
-without re-running gh. Refresh, scope/time/session changes, and tool/model filter changes
-fetch a new dataset. Filtered display, summaries, and Ask agent use the same projected data.
-On the Copilot CLI tab, **Fusion usage only** restricts the dashboard to usage
-records explicitly tagged as Fusion, excluding permission data, resolution
-events, and checkpoint-only usage. The switch applies locally to matching
-cached data; scope, time, session, and Top changes fetch new data. Metric
-coverage distinguishes missing values from zero, and record counts are not
-necessarily distinct API calls. The fetch command shown in this mode returns
-the unfiltered CLI result; filtering is applied by the dashboard. Use an
-updated CLI or the canvas `source` runner if Fusion-only details are unavailable.
-Filterable panels have a Clear button that removes only that panel's conditions.
-Workspaces and Working directories clear the directory scope back to all workspaces.
-Other filters, the time window, session selection, and Top remain unchanged.
-Both tabs show a User questions panel with answer outcomes and total/average/maximum
-wait; VS Code counts completed tool calls, while CLI pairs recorded question events.
+"Copilot attendant dashboard" to browse `session stats` and `vscode stats`
+results as interactive charts, filter by clicking entries, and hand the data
+back to the agent. The VS Code tab always explains that it reads logs from the
+Local harness. Locally recorded VS Code Copilot harness (Agent Host) sessions
+are included in the Copilot CLI tab. This distinction depends on the harness,
+not the VS Code version. The VS Code canvas fetches log details once and
+processes Agent and Top changes locally, without re-running gh. Refresh,
+scope/time/session changes, and tool/model filter changes fetch a new dataset.
+Filtered display, summaries, and Ask agent use the same projected data. On the
+Copilot CLI tab, **Fusion usage only** restricts the dashboard to usage records
+explicitly tagged as Fusion, excluding permission data, resolution events, and
+checkpoint-only usage. The switch applies locally to matching cached data;
+scope, time, session, and Top changes fetch new data. Metric coverage
+distinguishes missing values from zero, and record counts are not necessarily
+distinct API calls. The fetch command shown in this mode returns the unfiltered
+CLI result; filtering is applied by the dashboard. Use an updated CLI or the
+canvas `source` runner if Fusion-only details are unavailable. Filterable panels
+have a Clear button that removes only that panel's conditions. Workspaces and
+Working directories clear the directory scope back to all workspaces. Other
+filters, the time window, session selection, and Top remain unchanged. Both tabs
+show a User questions panel with answer outcomes and total/average/maximum wait;
+VS Code counts completed tool calls, while CLI pairs recorded question events.
 User questions follows Workspaces on both tabs and precedes Agent usage on CLI.
-The CLI Permissions summary uses the same bordered panel style as the other panels.
-It also shows confirmed human permission wait and separate other/unknown-source
-decision timing. VS Code Local harness debug logs do not independently identify
-ordinary permission request/response waits; confirmation-tool or execution durations
-are not substituted.
+The normal Copilot CLI view also shows a date/hour Session activity heatmap,
+with 30-day navigation, host-local time, and explicit boundary and missing-hour
+states. Without an Agent mode filter, cells count all recorded events. With
+one or more `--agent-mode` values, they count distinct sessions that recorded
+matching `permission.requested` events in each hour, using each request event's
+timestamp; selected modes are alternatives. Other permission filters and `--top`
+do not apply to the heatmap. Older CLI results need an updated CLI or the canvas
+`source` runner.
+Fusion-only and VS Code views do not show this full-session activity.
+The dashboard groups CLI permission panels into a collapsible Permissions
+category; its Summary panel uses the same bordered panel style as the other
+panels and also shows confirmed human permission wait and separate
+other/unknown-source decision timing. Each panel, including Models and
+Workspaces, can be collapsed independently of its category. Panel states persist
+across dashboard updates and view changes; CLI and VS Code panels keep separate
+states, while matching CLI panels share state with the Fusion-only view. Panel
+Clear buttons remain available when collapsed. Option-clicking any category or
+panel heading expands all included disclosures when any are collapsed, or
+collapses all when they are already expanded. The Usage and Permissions
+categories are excluded; their inner panels are still included. VS Code Local
+harness debug logs do not independently identify ordinary permission
+request/response waits; confirmation-tool or execution durations are not
+substituted.

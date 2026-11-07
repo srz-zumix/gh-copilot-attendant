@@ -45,6 +45,10 @@ const QUERY_SCHEMA = {
                     additionalProperties: false,
                     properties: {
                         operation: { type: "array", items: { type: "string", enum: OPERATIONS }, maxItems: 2 },
+                        agentMode: {
+                            ...stringArray,
+                            description: "Exact recorded Agent modes; unknown includes missing or invalid values",
+                        },
                         kind: stringArray,
                         command: stringArray,
                         path: { ...stringArray, description: "Regular expressions" },

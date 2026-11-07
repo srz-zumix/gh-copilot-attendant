@@ -469,7 +469,41 @@ textarea {
     margin-top: 20px;
 }
 
+.category-disclosure > summary.section-head {
+    cursor: pointer;
+    list-style: none;
+}
+
+.category-disclosure > summary.section-head::-webkit-details-marker {
+    display: none;
+}
+
+.category-disclosure > summary.section-head::before {
+    content: "▸";
+    display: inline-block;
+    width: 1em;
+    color: var(--text-color-muted, #59636e);
+}
+
+.category-disclosure[open] > summary.section-head::before {
+    content: "▾";
+}
+
+.category-disclosure + .category-disclosure,
+.category-disclosure + .grid,
+.grid + .category-disclosure {
+    margin-top: 20px;
+}
+
+.category-disclosure > .grid + .grid {
+    margin-top: 12px;
+}
+
 .panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) fit-content(65%);
+    align-items: baseline;
+    column-gap: 8px;
     min-width: 0;
     overflow-x: auto;
     padding: 12px;
@@ -481,25 +515,100 @@ textarea {
     grid-column: 1 / -1;
 }
 
-.panel header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-}
-
 .panel-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
+    justify-content: flex-end;
     gap: 8px;
-    margin-left: auto;
+    min-width: 0;
 }
 
-.panel header .hint {
+.panel-actions .hint {
     font-size: 11px;
     color: var(--text-color-muted, #59636e);
+}
+
+.panel-disclosure {
+    min-width: 0;
+}
+
+.panel-disclosure > summary {
+    cursor: pointer;
+}
+
+.panel-disclosure > summary h2 {
+    display: inline;
+    margin: 0;
+}
+
+.panel-body {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-top: 8px;
+}
+
+.panel-disclosure:not([open]) ~ .panel-body {
+    display: none;
+}
+
+.activity-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.activity-table {
+    width: auto;
+    border-collapse: separate;
+    border-spacing: 2px;
+}
+
+.activity-table th,
+.activity-table td {
+    min-width: 32px;
+    padding: 3px 4px;
+    border: 0;
+    text-align: center;
+}
+
+.activity-table tbody th {
+    position: sticky;
+    left: 0;
+    background: var(--background-color-default, #ffffff);
+}
+
+.activity-cell {
+    border-radius: 3px;
+    background: var(--surface);
+}
+
+.activity-level-1 {
+    background: color-mix(in srgb, var(--c-bar) 12%, var(--background-color-default, #ffffff));
+}
+
+.activity-level-2 {
+    background: color-mix(in srgb, var(--c-bar) 22%, var(--background-color-default, #ffffff));
+}
+
+.activity-level-3 {
+    background: color-mix(in srgb, var(--c-bar) 32%, var(--background-color-default, #ffffff));
+}
+
+.activity-level-4 {
+    background: color-mix(in srgb, var(--c-bar) 42%, var(--background-color-default, #ffffff));
+}
+
+.activity-partial {
+    outline: 1px dashed var(--text-color-muted, #59636e);
+    outline-offset: -1px;
+}
+
+.activity-outside,
+.activity-nonexistent {
+    color: var(--text-color-muted, #59636e);
+    background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 3px, var(--track) 3px, var(--track) 6px);
 }
 
 .rows {

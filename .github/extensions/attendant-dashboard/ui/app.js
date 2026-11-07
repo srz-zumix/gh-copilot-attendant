@@ -16,6 +16,7 @@ const LABELS = {
     vscode: "VS Code",
     filters: {
         operation: "Operation",
+        agentMode: "Agent mode",
         kind: "Kind",
         command: "Command",
         path: "Path",
@@ -28,13 +29,17 @@ const LABELS = {
 };
 
 /** Filters the CLI matches exactly rather than as regular expressions. */
-const EXACT_FILTERS = new Set(["kind", "command", "decisionSource"]);
+const EXACT_FILTERS = new Set(["agentMode", "kind", "command", "decisionSource"]);
 
 let state = null;
 let meta = null;
 let formQueryKey = "";
 let filtersKey = "";
 let loadingTimer = null;
+const disclosureState = {
+    activity: true, fusion: true, usage: true, permissions: true, "fusion-usage": true, "vscode-usage": true, "vscode-tools": true,
+};
+const EXCLUDED_BULK_DISCLOSURES = new Set(["usage", "permissions"]);
 
 // ---------------------------------------------------------------- helpers
 
@@ -231,7 +236,15 @@ function showError(message, kind = "result") {
 
 function render() {
     if (!state || !meta) return;
-    const tableStates = ["data-fusion-phase-sort", "data-agent-sort", "data-fusion-model-sort", "data-fusion-workspace-sort"].map((attribute) => ({
+    for (const name of Object.keys(disclosureState)) {
+        const disclosure = document.querySelector(`[data-${name}-disclosure]`);
+        if (disclosure) disclosureState[name] = disclosure.open;
+    }
+    const tableStates = [
+        "data-fusion-phase-sort", "data-agent-sort", "data-fusion-model-sort", "data-fusion-workspace-sort",
+        "data-activity-page", "data-clear-panel",
+        ...Object.keys(disclosureState).map((name) => `data-${name}-toggle`),
+    ].map((attribute) => ({
         attribute,
         focus: document.activeElement?.getAttribute(attribute),
         scrollLeft: document.querySelector(`[${attribute}]`)?.closest(".panel")?.scrollLeft,
@@ -277,7 +290,13 @@ function render() {
             const panel = document.querySelector(`[${attribute}]`)?.closest(".panel");
             if (panel) panel.scrollLeft = scrollLeft;
         }
-        if (focus) document.querySelector(`[${attribute}="${focus}"]`)?.focus({ preventScroll: true });
+        if (focus) {
+            let target = document.querySelector(`[${attribute}="${focus}"]`);
+            if (attribute === "data-clear-panel" && target?.disabled) {
+                target = document.querySelector(`[data-${focus}-toggle]`);
+            }
+            target?.focus({ preventScroll: true });
+        }
     }
 }
 
@@ -361,7 +380,7 @@ function renderFilters(source) {
             onkeydown: (e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
-                const value = e.target.value.trim();
+                const value = name === "agentMode" ? e.target.value : e.target.value.trim();
                 if (value) addFilter(name, value);
             },
         });
@@ -460,26 +479,206 @@ function keyCell(key, onPick, pickTitle, display = key) {
 }
 
 function panel(title, hint, body, { wide = false, filter } = {}) {
+    const key = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return disclosurePanel(`panel-${activeSource()}-${key}`, title, hint, body, { wide, filter });
+}
+
+function toggleAllDisclosures(event) {
+    if (!event.altKey) return;
+    event.preventDefault();
+    const disclosures = [...document.querySelectorAll(".panel-disclosure, .category-disclosure")]
+        .filter((disclosure) => ![...EXCLUDED_BULK_DISCLOSURES].some((name) =>
+            disclosure.hasAttribute(`data-${name}-disclosure`)));
+    if (!disclosures.length) return;
+    const open = !disclosures.every((disclosure) => disclosure.open);
+    for (const disclosure of disclosures) {
+        const name = Object.keys(disclosureState).find((key) => disclosure.hasAttribute(`data-${key}-disclosure`));
+        if (name) disclosureState[name] = open;
+        disclosure.open = open;
+    }
+}
+
+function disclosurePanel(name, title, hint, body, { wide = true, filter } = {}) {
+    if (!Object.hasOwn(disclosureState, name)) disclosureState[name] = true;
     const patch = filter ? panelClearPatch(state.query, activeSource(), filter) : null;
-    return h(
-        "section",
+    const bodyId = `panel-body-${name}`;
+    // Keep Clear separate from the summary; CSS hides the body when details closes.
+    return h("section",
         { class: `panel${wide ? " wide" : ""}` },
-        h("header", null,
-            h("h2", null, title),
-            h("div", { class: "panel-actions" },
-                hint ? h("span", { class: "hint" }, hint) : null,
-                filter ? h("button", {
-                    type: "button", class: "btn subtle small", disabled: !patch,
-                    "data-clear-filter": filter,
-                    "aria-label": `Clear ${title} ${filter === "workspace" ? "scope" : "filters"}`,
-                    title: filter === "workspace" ? "Show all workspaces; keep other filters" : `Clear ${LABELS.filters[filter]} filters only`,
-                    onclick: () => { if (patch) patchQuery(patch); },
-                }, "Clear") : null)),
-        body,
-    );
+        h("details", { class: "panel-disclosure", [`data-${name}-disclosure`]: true, open: disclosureState[name] },
+            h("summary", { [`data-${name}-toggle`]: name, "aria-controls": bodyId, onclick: toggleAllDisclosures }, h("h2", null, title))),
+        h("div", { class: "panel-actions" },
+            hint ? h("span", { class: "hint" }, hint) : null,
+            filter ? h("button", {
+                type: "button", class: "btn subtle small", disabled: !patch,
+                "data-clear-filter": filter, "data-clear-panel": name,
+                "aria-label": `Clear ${title} ${filter === "workspace" ? "scope" : "filters"}`,
+                title: filter === "workspace" ? "Show all workspaces; keep other filters" : `Clear ${LABELS.filters[filter]} filters only`,
+                onclick: () => { if (patch) patchQuery(patch); },
+            }, "Clear") : null),
+        h("div", { class: "panel-body", id: bodyId }, body));
 }
 
 // ---------------------------------------------------------------- Copilot CLI
+
+const ACTIVITY_DAY_MS = 24 * 60 * 60 * 1000;
+const ACTIVITY_PAGE_DAYS = 30;
+const ACTIVITY_COVERAGE = new Set(["full", "partial", "outside", "nonexistent"]);
+let activityRangeKey = "";
+let activityPageEnd = null;
+
+function activitySection(hint, body) {
+    return disclosurePanel("activity", "Session activity", null, [
+        hint ? h("p", { class: "muted small" }, hint) : null,
+        body,
+    ]);
+}
+
+function activityDayNumber(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const number = Date.parse(`${value}T00:00:00.000Z`);
+    return Number.isFinite(number) && new Date(number).toISOString().slice(0, 10) === value ? number : null;
+}
+
+function activityDate(number) {
+    return new Date(number).toISOString().slice(0, 10);
+}
+
+function prepareActivity(activity) {
+    const count = (value) => Number.isSafeInteger(value) && value >= 0;
+    if (typeof activity.TimeZone !== "string" || !activity.TimeZone ||
+        typeof activity.AsOf !== "string" || !Number.isFinite(Date.parse(activity.AsOf)) ||
+        (activity.AgentModes !== undefined &&
+            (!Array.isArray(activity.AgentModes) || !activity.AgentModes.every((mode) => typeof mode === "string" && mode.length > 0))) ||
+        !["", "empty-window", "no-dated-events"].includes(activity.EmptyReason) ||
+        !["ScannedSessions", "UntimedSessions", "UntimedEvents", "MalformedEvents"].every((key) => count(activity[key])) ||
+        activity.UntimedSessions > activity.ScannedSessions ||
+        !Array.isArray(activity.Days) || !Array.isArray(activity.Coverage)) return null;
+    const empty = !activity.StartDate && !activity.EndDate;
+    const first = empty ? null : activityDayNumber(activity.StartDate);
+    const last = empty ? null : activityDayNumber(activity.EndDate);
+    if ((empty && (!activity.EmptyReason || activity.Days.length || activity.Coverage.length)) ||
+        (!empty && (first === null || last === null || first > last || activity.EmptyReason))) return null;
+    const days = new Map();
+    const coverage = new Map();
+    let maximum = 0;
+    for (const entry of activity.Days) {
+        const date = activityDayNumber(entry?.Date);
+        if (date === null || date < first || date > last || days.has(entry.Date) ||
+            !Array.isArray(entry.Hours) || entry.Hours.length !== 24 || !entry.Hours.every(count)) return null;
+        days.set(entry.Date, entry.Hours);
+        for (const value of entry.Hours) maximum = Math.max(maximum, value);
+    }
+    for (const entry of activity.Coverage) {
+        const date = activityDayNumber(entry?.Date);
+        if (date === null || date < first || date > last || coverage.has(entry.Date) ||
+            !Array.isArray(entry.Hours) || entry.Hours.length !== 24 ||
+            !entry.Hours.every((value) => ACTIVITY_COVERAGE.has(value))) return null;
+        const counts = days.get(entry.Date);
+        if (counts?.some((value, hour) => value > 0 && ["outside", "nonexistent"].includes(entry.Hours[hour]))) return null;
+        coverage.set(entry.Date, entry.Hours);
+    }
+    return { first, last, days, coverage, maximum };
+}
+
+function activityPanel(activity) {
+    const selectedModes = state?.query?.filters?.session?.agentMode ?? [];
+    if (activity == null) {
+        return activitySection(null, h("p", { class: "muted small" },
+            "Session activity is unavailable in this CLI result. Update gh copilot-attendant or choose the source runner."));
+    }
+    if (selectedModes.length > 0 && !Array.isArray(activity.AgentModes)) {
+        return activitySection(null, h("p", { class: "muted small" },
+            "This result does not confirm that Session activity used the selected Agent mode filter. Refresh with an up-to-date CLI or choose the source runner."));
+    }
+    if (Array.isArray(activity.AgentModes)) {
+        const appliedModes = [...new Set(activity.AgentModes)].sort();
+        const expectedModes = [...new Set(selectedModes)].sort();
+        if (JSON.stringify(appliedModes) !== JSON.stringify(expectedModes)) {
+            const applied = appliedModes.length ? appliedModes.map((mode) => JSON.stringify(mode)).join(", ") : "no Agent mode filter";
+            const expected = expectedModes.length ? expectedModes.map((mode) => JSON.stringify(mode)).join(", ") : "no Agent mode filter";
+            return activitySection(null, h("p", { class: "muted small" },
+                `This Session activity result was collected with ${applied}; the current selection is ${expected}. Refresh to show matching data.`));
+        }
+    }
+    if (activity.Version !== 1) {
+        return activitySection(null, h("p", { class: "muted small" },
+            "This session activity format is unsupported. Update the dashboard and gh copilot-attendant."));
+    }
+    const prepared = prepareActivity(activity);
+    if (!prepared) {
+        return activitySection(null, h("p", { class: "muted small" },
+            "The session activity data is invalid and cannot be displayed."));
+    }
+    const details = [
+        h("p", { class: "muted small" }, selectedModes.length
+            ? "Each cell counts distinct sessions with a matching permission.requested event in that local hour. The Agent mode is read from the request and its timestamp determines the hour; repeated clock hours are combined. Other permission filters and Top do not apply."
+            : "Each cell counts distinct sessions with at least one recorded event in that local hour, not continuous active time. Repeated clock hours are combined. Other permission filters and Top do not apply."),
+        h("p", { class: "muted small" }, `CLI host time zone: ${activity.TimeZone} · scanned as of ${activity.AsOf}`),
+        activity.UntimedEvents || activity.MalformedEvents
+            ? h("p", { class: "muted small" }, `${num(activity.UntimedEvents)} ${selectedModes.length ? "matching permission request" : "included event"}${activity.UntimedEvents === 1 ? "" : "s"} in ${num(activity.UntimedSessions)} scoped ${activity.UntimedSessions === 1 ? "session" : "sessions"} ${activity.UntimedEvents === 1 ? "has" : "have"} no usable timestamp; ${num(activity.MalformedEvents)} event ${activity.MalformedEvents === 1 ? "envelope" : "envelopes"} across the scoped logs could not be parsed. Untimed records cannot be placed on the chart, including when a time window is selected.`)
+            : null,
+    ];
+    if (prepared.first === null) {
+        details.push(h("p", { class: "muted small" }, activity.EmptyReason === "empty-window"
+            ? "The selected time window is empty: Since must be earlier than Until."
+            : "No dated events are available to establish a display range."));
+        return activitySection(null, details);
+    }
+
+    const key = `${activity.TimeZone}\n${activity.StartDate}\n${activity.EndDate}`;
+    if (activityRangeKey !== key || activityPageEnd < prepared.first || activityPageEnd > prepared.last) {
+        activityRangeKey = key;
+        activityPageEnd = prepared.last;
+    }
+    const pageStart = Math.max(prepared.first, activityPageEnd - (ACTIVITY_PAGE_DAYS - 1) * ACTIVITY_DAY_MS);
+    const startLabel = activityDate(pageStart);
+    const endLabel = activityDate(activityPageEnd);
+    const rows = [];
+    for (let day = activityPageEnd; day >= pageStart; day -= ACTIVITY_DAY_MS) {
+        const date = activityDate(day);
+        const counts = prepared.days.get(date);
+        const coverage = prepared.coverage.get(date);
+        rows.push(h("tr", null,
+            h("th", { scope: "row" }, date),
+            Array.from({ length: 24 }, (_, hour) => {
+                const hourLabel = `${String(hour).padStart(2, "0")}:00`;
+                const value = counts?.[hour] ?? 0;
+                const status = coverage?.[hour] ?? "full";
+                if (status === "outside" || status === "nonexistent") {
+                    const meaning = status === "outside" ? "outside the selected time window" : "local clock hour did not exist";
+                    return h("td", { class: `activity-cell activity-${status}`, title: `${date} ${hourLabel}: ${meaning}`, "aria-label": `${date} ${hourLabel}: ${meaning}` },
+                        status === "outside" ? "–" : "×");
+                }
+                const level = value === 0 ? 0 : Math.max(1, Math.ceil(4 * value / prepared.maximum));
+                const partial = status === "partial";
+                const subject = selectedModes.length
+                    ? value === 1 ? "with a matching permission request" : "with matching permission requests"
+                    : "with recorded events";
+                const label = `${date} ${hourLabel}: ${num(value)} ${value === 1 ? "session" : "sessions"} ${subject}${partial ? "; selected window covers only part of this hour" : ""}`;
+                return h("td", { class: `activity-cell activity-level-${level}${partial ? " activity-partial" : ""}`, title: label, "aria-label": label },
+                    num(value), partial ? "*" : null);
+            })));
+    }
+    details.push(
+        h("div", { class: "activity-controls" },
+            h("button", {
+                type: "button", class: "btn small", "data-activity-page": "earlier", disabled: pageStart <= prepared.first,
+                onclick: () => { activityPageEnd = pageStart - ACTIVITY_DAY_MS; render(); },
+            }, "Earlier"),
+            h("span", { class: "muted small", "aria-live": "polite" }, `${startLabel} to ${endLabel}`),
+            h("button", {
+                type: "button", class: "btn small", "data-activity-page": "later", disabled: activityPageEnd >= prepared.last,
+                onclick: () => { activityPageEnd = Math.min(prepared.last, activityPageEnd + ACTIVITY_PAGE_DAYS * ACTIVITY_DAY_MS); render(); },
+            }, "Later")),
+        h("p", { class: "muted small" }, "0: no events recorded as of the scan · *: partial time window · –: outside time window · ×: nonexistent local hour. Darker cells have more sessions."),
+        h("table", { class: "activity-table", "aria-label": `Recorded sessions by local date and hour, ${startLabel} to ${endLabel}` },
+            h("thead", null, h("tr", null,
+                h("th", { scope: "col" }, "Date"),
+                Array.from({ length: 24 }, (_, hour) => h("th", { scope: "col" }, String(hour).padStart(2, "0"))))),
+            h("tbody", null, rows)));
+    return activitySection("recorded sessions by date and hour", details);
+}
 
 const DECISION_COLORS = [
     ["Approved", "var(--c-approved)", "Approved"],
@@ -527,8 +726,13 @@ const CLI_TOKEN_FIELDS = {
     output: ["OutputTokens"],
 };
 
-function sectionHead(title, hint) {
-    return h("div", { class: "section-head" }, h("h2", null, title), hint ? h("span", { class: "hint" }, hint) : null);
+// A collapsible top-level category grouping related cards and panels.
+function categorySection(name, title, hint, children) {
+    return h("details", { class: "category-disclosure", [`data-${name}-disclosure`]: true, open: disclosureState[name] },
+        h("summary", { class: "section-head", [`data-${name}-toggle`]: name, onclick: toggleAllDisclosures },
+            h("h2", null, title),
+            hint ? h("span", { class: "hint" }, hint) : null),
+        ...children);
 }
 
 function renderSessionUsage(data) {
@@ -546,9 +750,11 @@ function renderSessionUsage(data) {
         data.ByRoleUsage !== undefined ? "recorded usage · includes unfinished sessions" : "from session.shutdown events",
         filtered ? "permission filters do not apply" : null,
     ].filter(Boolean).join(" · ");
+    const [modelSharePanel, modelUsagePanel] = data.ByModelUsage !== undefined
+        ? modelPanels((data.ByModelUsage ?? []).map(sessionUsageEntry), "session")
+        : [];
 
-    return [
-        sectionHead("Usage", hints),
+    return [categorySection("usage", "Usage", hints, [
         data.ByRoleUsage !== undefined
             ? h("p", { class: "muted small" }, data.Fusion != null
                 ? "Time filters select recorded usage updates. Cumulative snapshots are differenced against earlier recorded totals and may include usage from before the selected period."
@@ -575,12 +781,14 @@ function renderSessionUsage(data) {
         h(
             "div",
             { class: "grid" },
-            ...(data.ByModelUsage !== undefined ? modelPanels((data.ByModelUsage ?? []).map(sessionUsageEntry), "session") : []),
+            modelSharePanel,
+            data.Fusion != null ? fusionPanel(data.Fusion) : null,
+            modelUsagePanel,
             ...workspacePanels(data.ByCWDUsage ?? [], "session"),
             data.AskUser != null ? askUserPanel(data.AskUser) : null,
             data.ByRoleUsage !== undefined ? agentUsagePanel(data) : null,
         ),
-    ];
+    ])];
 }
 
 const AGENT_ROLE_LABELS = { main: "Main agent", subagent: "Subagents", unknown: "Unknown" };
@@ -740,7 +948,7 @@ function fusionAIU(entry) {
 function fusionPanel(fusion, usageOnly = false) {
     const patterns = fusion.ByPattern ?? [];
     const phases = sortFusionPhases(fusion.ByPhase ?? [], fusionPhaseView);
-    return panel("Copilot Fusion", usageOnly ? "tagged usage only" : "recorded events only", [
+    return disclosurePanel("fusion", "Copilot Fusion", usageOnly ? "tagged usage only" : "recorded events only", [
         h("p", { class: "muted small" }, usageOnly
             ? "Only explicitly Fusion-tagged usage records are included. Phase/model rows may share turns or phases; Top limits rows, not totals."
             : "Resolution and usage timestamps are filtered separately. Permission filters do not apply; Top limits rows, not totals. Planned phases and checkpoint-only usage are not attributed. Phase/model rows may share turns or phases. Active sessions can change during scanning, so totals are not an atomic snapshot."),
@@ -782,7 +990,7 @@ function fusionPanel(fusion, usageOnly = false) {
                       h("td", null, `${num(entry.AIURecords)} / ${num(entry.UsageRecords)}`),
                       h("td", null, num(entry.MissingPhaseIdentityRecords))))))
             : h("div", { class: "muted small" }, "No recorded Fusion usage."),
-    ], { wide: true });
+    ]);
 }
 
 function fusionMetricText(metric, records, format) {
@@ -1026,8 +1234,7 @@ function renderFusionOnly(data) {
     );
     const modelShare = usageShare(usage.ByModel, (entry) => entry.Key || "Unknown model");
     const workspaceShare = usageShare(usage.ByCWD, (entry) => entry.Key ? shortPath(entry.Key) : "Unknown workspace");
-    return [
-        sectionHead("Fusion usage", "explicitly tagged records only"),
+    return [categorySection("fusion-usage", "Fusion usage", "explicitly tagged records only", [
         h("p", { class: "muted small" }, "Usage records are not necessarily distinct API calls. Resolution events, permission data, and checkpoint-only usage are excluded. ≥ marks a recorded subtotal; – means unavailable. Hover over token totals for exact recorded counts. Premium requests sum cost multipliers for user or unspecified initiators; other initiators are excluded, following the shared collector."),
         h("div", { class: "cards fusion-cards" },
             card("Sessions with usage", num(usage.Sessions)),
@@ -1050,15 +1257,15 @@ function renderFusionOnly(data) {
                 h("p", { class: "muted small" }, "Shares compare recorded AIU subtotals for listed models. Missing AIU is excluded, so incomplete coverage can affect proportions."),
                 modelShare ?? h("div", { class: "muted small" }, "No positive recorded model AIU to compare."),
             ], { wide: true }),
+            fusionPanel(data.Fusion, true),
             fusionUsageBreakdown("Models", usage.ByModel, usage.ModelGroups, "model"),
             panel("Usage share by workspace", "recorded AIU · listed workspaces", [
                 h("p", { class: "muted small" }, "Shares compare recorded AIU subtotals for listed workspaces. Missing AIU is excluded, so incomplete coverage can affect proportions."),
                 workspaceShare ?? h("div", { class: "muted small" }, "No positive recorded workspace AIU to compare."),
             ], { wide: true, filter: "workspace" }),
             fusionUsageBreakdown("Workspaces", usage.ByCWD, usage.CWDGroups, "workspace"),
-            fusionUsageBreakdown("Agent usage", usage.ByRole, usage.RoleGroups, "role"),
-            fusionPanel(data.Fusion, true)),
-    ];
+            fusionUsageBreakdown("Agent usage", usage.ByRole, usage.RoleGroups, "role")),
+    ])];
 }
 
 function renderSession(data) {
@@ -1071,17 +1278,18 @@ function renderSession(data) {
     const covered = (data.ByKind ?? []).reduce((n, e) => n + (e.Total ?? 0), 0);
     const partial = covered < requests ? ` · listed kinds only (${num(covered)} of ${num(requests)})` : "";
     const cwdPick = (key) => patchQuery({ scope: "cwd", path: key });
+    const modeFilterSupported = meta?.filters?.session?.includes("agentMode") === true;
 
     return [
         ...renderSessionUsage(data),
-        data.Fusion != null ? h("div", { class: "grid" }, fusionPanel(data.Fusion)) : null,
+        data.UsageSessions === undefined && data.Fusion != null ? h("div", { class: "grid" }, fusionPanel(data.Fusion)) : null,
         data.UsageSessions === undefined && data.AskUser != null
             ? h("div", { class: "grid" }, askUserPanel(data.AskUser))
             : null,
-        h(
+        categorySection("permissions", "Permissions", "permission requests", [h(
             "div",
             { class: "grid" },
-            panel("Permissions", null, [
+            panel("Summary", null, [
                 h(
                     "div",
                     { class: "cards" },
@@ -1094,6 +1302,17 @@ function renderSession(data) {
                 legend(DECISION_COLORS.map(([label, color]) => [label, color])),
                 data.PermissionWait != null ? permissionWaitDetails(data.PermissionWait) : null,
             ], { wide: true }),
+            data.ByAgentMode != null
+                ? panel("Agent modes", modeFilterSupported ? "click to filter" : "permission requests", h("div", null,
+                    h("p", { class: "muted small" }, "Recorded at permission evaluation, not main/subagent roles. Missing modes are unknown. Only logged requests are counted; permission filters and Top apply."),
+                    !modeFilterSupported
+                        ? h("p", { class: "muted small" }, "Reload the dashboard extension to enable Agent mode filtering.")
+                        : null,
+                    decisionRows(data.ByAgentMode, {
+                        onPick: modeFilterSupported ? (k) => addFilter("agentMode", k) : undefined,
+                        pickTitle: "Filter by this Agent mode",
+                    })), { filter: modeFilterSupported ? "agentMode" : undefined })
+                : null,
             panel("Results", null, decisionRows(data.ByResult)),
             data.ByDecisionSource
                 ? panel(
@@ -1106,10 +1325,11 @@ function renderSession(data) {
             panel("Read-only vs read-write", "a request may count in both", decisionRows(data.ByReadOnly), { filter: "operation" }),
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" }), { filter: "kind" }),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" }), { filter: "command" }),
-            panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" }), { filter: "path" }),
-            panel("URLs", "click to filter", decisionRows(data.ByURL, { onPick: (k) => addFilter("url", exactPattern(k)), pickTitle: "Filter by this URL" }), { filter: "url" }),
+            panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" }), { wide: true, filter: "path" }),
+            panel("URLs", "click to filter", decisionRows(data.ByURL, { onPick: (k) => addFilter("url", exactPattern(k)), pickTitle: "Filter by this URL" }), { wide: true, filter: "url" }),
             panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true, filter: "workspace" }),
-        ),
+        )]),
+        h("div", { class: "grid" }, activityPanel(data.SessionActivity)),
     ];
 }
 
@@ -1607,29 +1827,35 @@ function renderVscode(data) {
     const agentScoped = state.results.vscode.argv?.some((a) => a.startsWith("--agent=")) ?? state.query.filters.vscode.agent.length > 0;
 
     return [
-        agentScoped
-            ? h("p", { class: "muted small" }, "Only the selected subagents' own usage is included. Main-agent and differently named descendant usage is excluded. Sessions count parent chats.")
-            : null,
-        h(
-            "div",
-            { class: "cards usage-cards" },
-            card("Sessions", num(data.Sessions)),
-            card("Usage (AIU)", aiu(sum("UsageAIU")), modelNote ? modelNote.slice(3) : null),
-            card("LLM requests", num(data.LLMRequests), data.Turns ? `${(data.LLMRequests / data.Turns).toFixed(1)} / turn` : null),
-            card("Input tokens", big(input), `${pct(cached, input)} cached${modelNote}`),
-            card("Output tokens", big(sum("OutputTokens")), modelNote ? modelNote.slice(3) : null),
-            card("Turns", num(data.Turns), data.Sessions ? `${(data.Turns / data.Sessions).toFixed(1)} / session` : null),
-            card("Tool calls", num(data.ToolCalls), toolTotal ? `${pct(toolErrors, toolTotal)} errors (listed tools)` : null),
-        ),
-        h(
+        categorySection("vscode-usage", "Usage", null, [
+            agentScoped
+                ? h("p", { class: "muted small" }, "Only the selected subagents' own usage is included. Main-agent and differently named descendant usage is excluded. Sessions count parent chats.")
+                : null,
+            h(
+                "div",
+                { class: "cards usage-cards" },
+                card("Sessions", num(data.Sessions)),
+                card("Usage (AIU)", aiu(sum("UsageAIU")), modelNote ? modelNote.slice(3) : null),
+                card("LLM requests", num(data.LLMRequests), data.Turns ? `${(data.LLMRequests / data.Turns).toFixed(1)} / turn` : null),
+                card("Input tokens", big(input), `${pct(cached, input)} cached${modelNote}`),
+                card("Output tokens", big(sum("OutputTokens")), modelNote ? modelNote.slice(3) : null),
+                card("Turns", num(data.Turns), data.Sessions ? `${(data.Turns / data.Sessions).toFixed(1)} / session` : null),
+                card("Tool calls", num(data.ToolCalls), toolTotal ? `${pct(toolErrors, toolTotal)} errors (listed tools)` : null),
+            ),
+            h(
+                "div",
+                { class: "grid" },
+                ...modelPanels(models, "vscode"),
+                ...workspacePanels(workspaces, "vscode", topNote),
+                data.UserQuestions != null ? askUserPanel(data.UserQuestions, "vscode") : null,
+            ),
+        ]),
+        categorySection("vscode-tools", "Tools", null, [h(
             "div",
             { class: "grid" },
-            ...modelPanels(models, "vscode"),
-            ...workspacePanels(workspaces, "vscode", topNote),
-            data.UserQuestions != null ? askUserPanel(data.UserQuestions, "vscode") : null,
             panel("Tools", topNote ? `${topNote} · click to filter` : "click to filter", toolTable(tools), { wide: true, filter: "tool" }),
             panel("Subagents", "click to scope usage", simpleRows(data.ByAgent, (e) => e.Total, { onPick: (k) => addFilter("agent", exactPattern(k)), pickTitle: "Show only this subagent's own usage" }), { filter: "agent" }),
-        ),
+        )]),
     ];
 }
 
