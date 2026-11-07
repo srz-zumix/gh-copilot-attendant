@@ -296,8 +296,6 @@ view's order and notation where comparable, but usage records are not API
 requests. Both views show cache read, cache write, and uncached input totals.
 AIU and AIU unit costs use at most two decimal places in both CLI and VS Code
 views; positive values below 0.01 display as `<0.01`.
-CLI, Fusion-only, and VS Code summary cards share a compact, responsive,
-equal-width layout and start with sessions, AIU, and a request or record count.
 Usage card titles stay on one line; other content may wrap. Titles are
 bottom-aligned within each card row, and values remain aligned; title height
 grows only when a title wraps. Counts retain source-specific semantics. Table
