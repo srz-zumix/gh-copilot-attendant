@@ -52,16 +52,12 @@ shares use valid nonnegative counts in the corresponding detail breakdown.
 Missing counts and zero-denominator shares are `n/a`. Empty names appear as
 `(not reported)`; Other and Unknown names remain separate in the tables.
 
-KPI cards and paired pie/stacked charts sit side by side when space allows and
-stack on narrow screens. Requests per chat mode appears below Average chat
+Requests per chat mode appears below Average chat
 requests per active user as a daily stacked bar chart using
 `user_initiated_interaction_count` for `chat_panel_*_mode` entries in each
-day's `totals_by_feature`, including Plan. It uses a green theme with gray for
-Other. Missing counts remain `n/a`; incomplete days are marked with `*` and
+day's `totals_by_feature`, including Plan. Missing counts remain `n/a`; incomplete days are marked with `*` and
 show a subtotal of known counts (or `n/a` if none), without total shares. When
-no chat-mode feature is reported, the chart is omitted. When both have data,
-the code activity and completion charts each appear beside their
-acceptance-rate chart; they stack on narrow screens. Chart areas, points, and
+no chat-mode feature is reported, the chart is omitted. Chart areas, points, and
 bars show labels and values in tooltips on hover or keyboard focus. Daily
 chart tooltips show all series for that day, with missing values shown as
 `n/a`. Stacked-bar tooltips list every displayed series and, when complete, the
@@ -95,9 +91,7 @@ because users can overlap.
 
 Model usage per language keeps the top five languages by activity total plus
 Other, and appears beside the language usage pie chart (vertically on narrow
-screens). Line charts use compact fonts and height. Reports share typography
-sizes across headings, chart titles, KPI labels, tables, legends, and tooltips,
-with smaller-width compensation for paired SVG charts. By team includes paired
+screens). By team includes paired
 Team usage pie charts for user-initiated interactions and code-generation
 activities, stacking vertically on narrow screens. Each independently uses all
 reported teams regardless of `--top`, groups shares below 1% and excess
@@ -112,8 +106,7 @@ active days (top seven, reported interactions divided by days with a user
 record, including zero-interaction days) beside users by
 surface (vertical bars; users may count in several), then reported days
 distribution (`1`, `2–3`, `4–7`, `8–14`, `15+` days) beside acceptance rate
-distribution (`<20%` to `≥80%`, including rates above 100%). Pairs use half
-widths only when both charts exist. Missing interaction values are excluded
+distribution (`<20%` to `≥80%`, including rates above 100%). Missing interaction values are excluded
 from totals; users without reported interactions are omitted. By repository includes
 horizontal stacked bars for reviewed, created, and merged pull requests. The
 reviewed chart compares PRs reviewed with Copilot to those without a Copilot
@@ -121,8 +114,7 @@ review; created and merged charts compare Copilot-created PRs with
 other-created PRs. Their tooltips show counts and shares. Copilot review
 suggestions by repository compares generated and applied counts in separate
 bars, not as an acceptance rate; the events may concern different suggestions.
-When both are available, the reviewed and suggestions charts appear side by
-side, stacking vertically on narrow screens. Partial period totals are marked
+Partial period totals are marked
 and show only known counts. Copilot reviews
 per day by repository stacks daily counts by repository. Available days with
 no repository activity count as zero; missing reports or values remain `n/a`.
@@ -139,11 +131,7 @@ excluded. The chart retains the top five models by chat-mode interaction total
 plus Other, beside the Chat model usage (interactions) pie chart (vertically on
 narrow screens).
 
-The model section uses a blue theme and the language section an orange theme,
-with gray for Other. A model or language keeps one color in HTML table keys;
-pie charts use darker shades for larger categories.
-Each stacked chat mode or model keeps one color in every bar and in detail-table
-keys. Blue numeric table backgrounds encode relative values within each
+Blue numeric table backgrounds encode relative values within each
 column. Bars are not normalized separately per language. Pie slices and legend
 entries also support tooltips. User-level reports are also fetched when
 selected team data or aggregate IDE active-user counts require them. The IDE
@@ -308,13 +296,7 @@ view's order and notation where comparable, but usage records are not API
 requests. Both views show cache read, cache write, and uncached input totals.
 AIU and AIU unit costs use at most two decimal places in both CLI and VS Code
 views; positive values below 0.01 display as `<0.01`.
-CLI, Fusion-only, and VS Code summary cards share a compact, responsive,
-equal-width layout and start with sessions, AIU, and a request or record count.
-Usage card titles stay on one line; other content may wrap. Titles are
-bottom-aligned within each card row, and values remain aligned; title height
-grows only when a title wraps. Counts retain source-specific semantics. Table
-column headings can wrap to two lines to reduce horizontal scrolling.
-Fusion model and workspace token bars require complete prompt, cache read,
+Counts retain source-specific semantics. Fusion model and workspace token bars require complete prompt, cache read,
 cache write, uncached input, and output totals, with prompt equal to the sum
 of its components. Cache hit requires complete prompt and cache-read totals
 and a valid nonzero denominator; otherwise it is unavailable.
@@ -341,12 +323,9 @@ or per 1M tokens. Session units use each model's recorded `Sessions` count, neve
 the overall session count. Missing counts or zero denominators show a dash;
 missing counts also display an explanation. Current VS Code statistics do not
 report model session counts.
-Usage panels in both views follow the same order when data is available: model
-AIU share, Models table, workspace AIU share, then the Workspaces table. In the
+In the
 normal CLI view, User questions precedes Agent usage and the Copilot Fusion
 panel; Fusion-only excludes user questions and permissions.
-The Permissions summary below uses the same bordered panel style as the other
-panels.
 The CLI tab also shows Agent usage (main / subagent / unknown) and incomplete-usage
 notices. Normal-view agent unit costs require available row inputs and no
 reported incomplete session breakdowns; this is not per-record coverage.
