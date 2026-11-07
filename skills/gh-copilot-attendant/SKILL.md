@@ -52,8 +52,7 @@ shares use valid nonnegative counts in the corresponding detail breakdown.
 Missing counts and zero-denominator shares are `n/a`. Empty names appear as
 `(not reported)`; Other and Unknown names remain separate in the tables.
 
-KPI cards and paired pie/stacked charts sit side by side when space allows and
-stack on narrow screens. Requests per chat mode appears below Average chat
+Requests per chat mode appears below Average chat
 requests per active user as a daily stacked bar chart using
 `user_initiated_interaction_count` for `chat_panel_*_mode` entries in each
 day's `totals_by_feature`, including Plan. It uses a green theme with gray for
