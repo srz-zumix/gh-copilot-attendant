@@ -55,8 +55,7 @@ Missing counts and zero-denominator shares are `n/a`. Empty names appear as
 Requests per chat mode appears below Average chat
 requests per active user as a daily stacked bar chart using
 `user_initiated_interaction_count` for `chat_panel_*_mode` entries in each
-day's `totals_by_feature`, including Plan. It uses a green theme with gray for
-Other. Missing counts remain `n/a`; incomplete days are marked with `*` and
+day's `totals_by_feature`, including Plan. Missing counts remain `n/a`; incomplete days are marked with `*` and
 show a subtotal of known counts (or `n/a` if none), without total shares. When
 no chat-mode feature is reported, the chart is omitted. When both have data,
 the code activity and completion charts each appear beside their
