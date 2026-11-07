@@ -296,11 +296,7 @@ view's order and notation where comparable, but usage records are not API
 requests. Both views show cache read, cache write, and uncached input totals.
 AIU and AIU unit costs use at most two decimal places in both CLI and VS Code
 views; positive values below 0.01 display as `<0.01`.
-Usage card titles stay on one line; other content may wrap. Titles are
-bottom-aligned within each card row, and values remain aligned; title height
-grows only when a title wraps. Counts retain source-specific semantics. Table
-column headings can wrap to two lines to reduce horizontal scrolling.
-Fusion model and workspace token bars require complete prompt, cache read,
+Counts retain source-specific semantics. Fusion model and workspace token bars require complete prompt, cache read,
 cache write, uncached input, and output totals, with prompt equal to the sum
 of its components. Cache hit requires complete prompt and cache-read totals
 and a valid nonzero denominator; otherwise it is unavailable.
