@@ -57,9 +57,7 @@ requests per active user as a daily stacked bar chart using
 `user_initiated_interaction_count` for `chat_panel_*_mode` entries in each
 day's `totals_by_feature`, including Plan. Missing counts remain `n/a`; incomplete days are marked with `*` and
 show a subtotal of known counts (or `n/a` if none), without total shares. When
-no chat-mode feature is reported, the chart is omitted. When both have data,
-the code activity and completion charts each appear beside their
-acceptance-rate chart; they stack on narrow screens. Chart areas, points, and
+no chat-mode feature is reported, the chart is omitted. Chart areas, points, and
 bars show labels and values in tooltips on hover or keyboard focus. Daily
 chart tooltips show all series for that day, with missing values shown as
 `n/a`. Stacked-bar tooltips list every displayed series and, when complete, the
