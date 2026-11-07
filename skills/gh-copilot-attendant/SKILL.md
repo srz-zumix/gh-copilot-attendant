@@ -91,9 +91,7 @@ because users can overlap.
 
 Model usage per language keeps the top five languages by activity total plus
 Other, and appears beside the language usage pie chart (vertically on narrow
-screens). Line charts use compact fonts and height. Reports share typography
-sizes across headings, chart titles, KPI labels, tables, legends, and tooltips,
-with smaller-width compensation for paired SVG charts. By team includes paired
+screens). By team includes paired
 Team usage pie charts for user-initiated interactions and code-generation
 activities, stacking vertically on narrow screens. Each independently uses all
 reported teams regardless of `--top`, groups shares below 1% and excess
