@@ -131,11 +131,7 @@ excluded. The chart retains the top five models by chat-mode interaction total
 plus Other, beside the Chat model usage (interactions) pie chart (vertically on
 narrow screens).
 
-The model section uses a blue theme and the language section an orange theme,
-with gray for Other. A model or language keeps one color in HTML table keys;
-pie charts use darker shades for larger categories.
-Each stacked chat mode or model keeps one color in every bar and in detail-table
-keys. Blue numeric table backgrounds encode relative values within each
+Blue numeric table backgrounds encode relative values within each
 column. Bars are not normalized separately per language. Pie slices and legend
 entries also support tooltips. User-level reports are also fetched when
 selected team data or aggregate IDE active-user counts require them. The IDE
