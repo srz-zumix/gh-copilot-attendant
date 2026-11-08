@@ -296,6 +296,9 @@ function render() {
             let target = document.querySelector(`[${attribute}="${focus}"]`);
             if (attribute === "data-clear-panel" && target?.disabled) {
                 target = document.querySelector(`[data-${focus}-toggle]`);
+            } else if (attribute === "data-activity-page" && target?.disabled) {
+                target = document.querySelector('[data-activity-page]:not([disabled])')
+                    ?? document.querySelector("[data-activity-toggle]");
             }
             target?.focus({ preventScroll: true });
         }
@@ -402,7 +405,7 @@ function renderFilters(source) {
             onkeydown: (e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
-                const value = name === "agentMode" ? e.target.value : e.target.value.trim();
+                const value = name === "agentMode" || name === "result" ? e.target.value : e.target.value.trim();
                 if (value) addFilter(name, value);
             },
         });
