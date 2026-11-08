@@ -24,6 +24,13 @@ class Element {
     }
     setAttribute(name, value) { this.attributes[name] = value; }
     getAttribute(name) { return this.attributes[name] ?? null; }
+    get open() { return Object.hasOwn(this.attributes, "open"); }
+    set open(value) {
+        if (value) this.attributes.open = "";
+        else delete this.attributes.open;
+    }
+    get disabled() { return Object.hasOwn(this.attributes, "disabled"); }
+    hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
     addEventListener(name, handler) { this.events[name] = handler; }
     append(child) {
         this.children.push(child);
@@ -37,7 +44,7 @@ class Element {
     }
 }
 
-function renderedPanels(query, data, { storage } = {}) {
+function renderedPanels(query, data, { storage, filters = FILTERS } = {}) {
     const source = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8")
         .replace(/^import .*;\n/gm, "").replace(/\nmain\(\);\s*$/, "\n");
     const submitted = [];
@@ -50,10 +57,10 @@ function renderedPanels(query, data, { storage } = {}) {
         },
         localStorage: storage ?? { getItem: () => null, setItem() {} },
         console: { warn: (...args) => warnings.push(args) },
-        query, data, submitted,
+        query, data, submitted, providerFilters: filters,
     });
     vm.runInContext(source, context);
-    vm.runInContext("state = { query, results: { vscode: { argv: [] } } }; patchQuery = (patch) => submitted.push(patch);", context);
+    vm.runInContext("meta = { filters: providerFilters }; state = { query, results: { vscode: { argv: [] } } }; patchQuery = (patch) => submitted.push(patch);", context);
     const nodes = vm.runInContext(query.source === "vscode" ? "renderVscode(data)" : "renderSession(data)", context);
     const walk = (node) => node instanceof Element ? [node, ...node.children.flatMap(walk)] : [];
     const panels = nodes.flatMap(walk).filter((node) => node.tag === "section");
@@ -74,7 +81,10 @@ function interactiveFusion(data, { storage, fusionOnly = false, top = 10 } = {})
         "vscode-harness-warning": {}, content, error: { dataset: {} }, refresh: {}, command: {}, "command-label": {},
     };
     context.document.getElementById = (id) => elements[id];
-    context.document.querySelectorAll = () => [];
+    context.document.querySelectorAll = (selector) => selector === ".panel-disclosure, .category-disclosure"
+        ? walk(content).filter((node) => node.tag === "details" &&
+            ["panel-disclosure", "category-disclosure"].some((name) => node.className?.split(" ").includes(name)))
+        : [];
     context.document.activeElement = null;
     context.document.querySelector = (selector) => {
         const match = /^\[([a-z-]+)(?:="([^"]+)")?\]$/.exec(selector);
@@ -238,7 +248,8 @@ function filteredQuery(source = "vscode") {
         session: "parent", top: 3,
         filters: {
             vscode: { agent: ["Explore", "executionSubagent"], model: ["a", "b"], tool: ["read", "write"] },
-            session: { operation: ["read", "write"], kind: ["shell", "read"], command: ["git", "go"],
+            session: { operation: ["read", "write"], agentMode: ["interactive", "plan"], result: ["approved"],
+                commandAccess: ["read-only", "read-write"], kind: ["shell", "read"], command: ["git", "go"],
                 path: ["/src", "/test"], url: ["example"], decisionSource: ["human_response"] },
         },
     });
@@ -336,11 +347,12 @@ test("VS Code renders enabled per-panel buttons, and clicks submit only the matc
 
 test("CLI clear buttons cover permission filters and directories but not unsupported usage axes", () => {
     const query = filteredQuery("session");
-    const data = { UsageSessions: 0, ByModelUsage: [], ByRoleUsage: [], ByDecisionSource: [], ByCWDUsage: [] };
+    const data = { UsageSessions: 0, ByModelUsage: [], ByRoleUsage: [], ByAgentMode: [], ByDecisionSource: [], ByCWDUsage: [] };
     const { panels, submitted, walk } = renderedPanels(query, data);
     const expected = {
         Workspaces: "workspace", "Working directories": "workspace",
-        "Decision sources": "decisionSource", "Read-only vs read-write": "operation",
+        "Agent modes": "agentMode", Results: "result", "Decision sources": "decisionSource",
+        "Read-only vs read-write": "commandAccess",
         "Tool kinds": "kind", Commands: "command", Paths: "path", URLs: "url",
     };
     for (const panel of panels) {
@@ -355,6 +367,42 @@ test("CLI clear buttons cover permission filters and directories but not unsuppo
         assert.deepEqual(submitted.at(-1), panelClearPatch(query, "session", expected[title]));
     }
     assert.equal(submitted.length, Object.keys(expected).length);
+});
+
+test("Results and command-access rows add their matching exact filters", () => {
+    const query = normalizeQuery({ source: "session" });
+    const { panels, walk, submitted } = renderedPanels(query, {
+        ByResult: [{ Key: "denied-no-approval-rule", Total: 2, Denied: 2 }],
+        ByReadOnly: [{ Key: "read-only", Total: 3 }, { Key: "read-write", Total: 1 }],
+    });
+    const panelFor = (title) => panels.find((entry) =>
+        walk(entry).some((node) => node.tag === "h2" && node.children[0] === title));
+    const result = panelFor("Results");
+    walk(result).find((node) => node.className === "key").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { result: ["denied-no-approval-rule"] } } });
+
+    const access = panelFor("Read-only vs read-write");
+    assert.deepEqual(walk(access).find((node) => node.className === "hint").children, ["click to filter"]);
+    walk(access).find((node) => node.className === "key" && node.children[0] === "read-write").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { commandAccess: ["read-write"] } } });
+});
+
+test("Paths, URLs, and Working directories use the same wide panel layout", () => {
+    const data = {
+        UsageSessions: 1,
+        ByPath: [{ Key: "/repo/a+b.txt", Total: 1, Approved: 1 }],
+        ByURL: [{ Key: "https://example.test/a/long/path", Total: 1, Approved: 1 }],
+        ByCWDUsage: [],
+    };
+    const { panels, walk, submitted } = renderedPanels(normalizeQuery({ source: "session" }), data);
+    for (const title of ["Paths", "URLs", "Working directories"]) {
+        const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === title));
+        assert.ok(panel, title);
+        assert.equal(panel.className, "panel wide", title);
+    }
+    const paths = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Paths"));
+    walk(paths).find((node) => node.tag === "button" && node.className === "key").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { path: ["^/repo/a\\+b\\.txt$"] } } });
 });
 
 test("normal Agent usage sorts each column by its displayed raw value", () => {
@@ -642,6 +690,401 @@ test("CLI Fusion panel shows recorded pattern and phase coverage without inventi
     assert.equal(walk(fusion).some((node) => node.attributes["data-clear-filter"]), false);
 });
 
+test("Fusion disclosure preserves its state and focus in normal and Fusion-only views", () => {
+    for (const fusionOnly of [false, true]) {
+        const data = fusionOnly ? projectFusion(fusionDataset()) : { Fusion: fusionDataset().Fusion };
+        const before = structuredClone(data);
+        const app = interactiveFusion(data, { fusionOnly });
+        const disclosure = () => app.walk(app.content).find((node) =>
+            Object.hasOwn(node.attributes, "data-fusion-disclosure"));
+        const summary = () => disclosure().children[0];
+        assert.equal(disclosure().tag, "details");
+        assert.equal(disclosure().open, true);
+        assert.equal(summary().tag, "summary");
+        assert.equal(summary().children[0].children[0], "Copilot Fusion");
+        const panel = () => disclosure().closest(".panel");
+        assert.equal(panel().children[1].children[0].children[0], fusionOnly ? "tagged usage only" : "recorded events only");
+        assert.ok(app.walk(panel()).some((node) => node.className === "cards fusion-cards"));
+        disclosure().open = false;
+        app.context.document.activeElement = summary();
+        vm.runInContext("render();", app.context);
+        assert.equal(disclosure().open, false);
+        assert.equal(app.context.document.activeElement, summary());
+        vm.runInContext("setState({ ...state });", app.context);
+        assert.equal(disclosure().open, false);
+        assert.equal(app.context.document.activeElement, summary());
+        disclosure().open = true;
+        vm.runInContext("render();", app.context);
+        assert.equal(disclosure().open, true);
+        app.button("phase").events.click();
+        assert.equal(disclosure().open, true);
+        assert.deepEqual(app.submitted, []);
+        assert.deepEqual(data, before);
+    }
+});
+
+test("every panel has an independent expanded disclosure in each dashboard view", () => {
+    const data = {
+        UsageSessions: 1,
+        ByModelUsage: [{ Key: "model-a", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByCWDUsage: [{ Key: "/fictional/project", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByRoleUsage: [], AskUser: {}, Fusion: fusionDataset().Fusion,
+        ByAgentMode: [], ByDecisionSource: [], SessionActivity: activityDataset(),
+    };
+    const views = [
+        {
+            query: normalizeQuery({ source: "session" }), data,
+            expected: ["Models", "Workspaces", "Copilot Fusion", "Summary", "Agent modes", "Paths", "Session activity"],
+        },
+        {
+            query: normalizeQuery({ source: "session", fusionOnly: true }), data: projectFusion(fusionDataset()),
+            expected: ["Models", "Workspaces", "Copilot Fusion", "Agent usage"],
+        },
+        {
+            query: normalizeQuery({ source: "vscode" }),
+            data: {
+                ByModel: [{ Key: "model-a", Requests: 1, UsageAIU: 1 }],
+                ByWorkspace: [{ Key: "/fictional/project", UsageAIU: 1 }],
+                ByTool: [], ByAgent: [], UserQuestions: {},
+            },
+            expected: ["Models", "Workspaces", "Tools", "Subagents", "User questions"],
+        },
+    ];
+    for (const { query, data: viewData, expected } of views) {
+        const { panels, walk } = renderedPanels(query, viewData);
+        const titles = panels.map((panel) => walk(panel).find((node) => node.tag === "h2").children[0]);
+        for (const title of expected) assert.ok(titles.includes(title), `${query.source}: ${title}`);
+        const keys = new Set();
+        for (const panel of panels) {
+            const [disclosure, actions, body] = panel.children;
+            const title = walk(panel).find((node) => node.tag === "h2").children[0];
+            assert.equal(disclosure.tag, "details", title);
+            assert.equal(disclosure.open, true, title);
+            const summary = disclosure.children[0];
+            assert.equal(summary.tag, "summary", title);
+            assert.equal(actions.className, "panel-actions", title);
+            assert.equal(body.className, "panel-body", title);
+            assert.equal(summary.attributes["aria-controls"], body.attributes.id, title);
+            const key = Object.entries(summary.attributes).find(([name]) => name.startsWith("data-") && name.endsWith("-toggle"))?.[1];
+            assert.ok(key, title);
+            assert.equal(keys.has(key), false, `duplicate disclosure key: ${key}`);
+            keys.add(key);
+            const clear = walk(panel).find((node) => node.attributes["data-clear-filter"]);
+            if (clear) {
+                assert.equal(clear.parentElement, actions, title);
+                assert.equal(clear.attributes["data-clear-panel"], key, title);
+                assert.equal(walk(summary).includes(clear), false, title);
+            }
+        }
+    }
+});
+
+test("panel disclosures survive rerenders, absent data, parent collapse, and view changes", () => {
+    const data = {
+        UsageSessions: 1,
+        ByModelUsage: [{ Key: "model-a", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByCWDUsage: [{ Key: "/fictional/project", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByRoleUsage: [], Fusion: fusionDataset().Fusion,
+    };
+    const app = interactiveFusion(data);
+    const disclosure = (name) => app.walk(app.content).find((node) =>
+        Object.hasOwn(node.attributes, `data-${name}-disclosure`));
+    const summary = (name) => disclosure(name).children[0];
+    for (const name of ["panel-session-models", "panel-session-workspaces", "panel-session-paths"]) {
+        assert.equal(disclosure(name).open, true, name);
+        disclosure(name).open = false;
+    }
+    disclosure("permissions").open = false;
+    app.context.document.activeElement = summary("panel-session-workspaces");
+    vm.runInContext("render();", app.context);
+    assert.equal(app.context.document.activeElement, summary("panel-session-workspaces"));
+    assert.equal(disclosure("panel-session-models").open, false);
+    assert.equal(disclosure("panel-session-workspaces").open, false);
+    assert.equal(disclosure("panel-session-paths").open, false);
+    assert.equal(disclosure("permissions").open, false);
+    assert.equal(disclosure("fusion").open, true);
+
+    vm.runInContext(`
+        state.results.session.data = { ...data, ByModelUsage: undefined };
+        render();
+    `, app.context);
+    assert.equal(disclosure("panel-session-models"), undefined);
+    vm.runInContext("state.results.session.data = data; render();", app.context);
+    assert.equal(disclosure("panel-session-models").open, false);
+
+    app.context.fusionData = projectFusion(fusionDataset());
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: true };
+        state.results.session.data = fusionData;
+        render();
+    `, app.context);
+    assert.equal(disclosure("panel-session-models").open, false);
+    assert.equal(disclosure("panel-session-workspaces").open, false);
+    assert.equal(disclosure("fusion").open, true);
+
+    vm.runInContext(`
+        state.results.vscode = { status: "ok", data: { ByModel: [], ByWorkspace: [], ByTool: [] }, command: [] };
+        state.query = { ...state.query, source: "vscode" };
+        render();
+    `, app.context);
+    assert.equal(disclosure("panel-vscode-models").open, true);
+    assert.equal(disclosure("panel-vscode-workspaces").open, true);
+    disclosure("panel-vscode-models").open = false;
+    vm.runInContext(`
+        state.query = { ...state.query, source: "session", fusionOnly: false };
+        state.results.session.data = data;
+        render();
+    `, app.context);
+    assert.equal(disclosure("panel-session-models").open, false);
+    assert.equal(disclosure("panel-session-workspaces").open, false);
+    assert.equal(disclosure("panel-session-paths").open, false);
+    disclosure("panel-session-models").open = true;
+    vm.runInContext('state.query = { ...state.query, source: "vscode" }; render();', app.context);
+    assert.equal(disclosure("panel-vscode-models").open, false);
+    assert.equal(disclosure("panel-vscode-workspaces").open, true);
+    assert.deepEqual(app.submitted, []);
+});
+
+test("Option-clicking any category or panel summary toggles every disclosure", () => {
+    const app = interactiveFusion({
+        UsageSessions: 1, ByModelUsage: [], ByRoleUsage: [], ByCWDUsage: [],
+        Fusion: fusionDataset().Fusion, SessionActivity: activityDataset(),
+    });
+    const disclosures = () => app.walk(app.content).filter((node) => node.tag === "details" &&
+        ["panel-disclosure", "category-disclosure"].some((name) => node.className?.split(" ").includes(name)));
+    const summary = (name) => app.walk(app.content).find((node) =>
+        Object.hasOwn(node.attributes, `data-${name}-toggle`));
+    const optionClick = (name) => {
+        let prevented = false;
+        summary(name).events.click({ altKey: true, preventDefault() { prevented = true; } });
+        assert.equal(prevented, true);
+    };
+    const excluded = () => disclosures().filter((disclosure) =>
+        disclosure.hasAttribute("data-usage-disclosure") || disclosure.hasAttribute("data-permissions-disclosure"));
+    const included = () => disclosures().filter((disclosure) => !excluded().includes(disclosure));
+    assert.ok(included().length > 5);
+    assert.ok(disclosures().every((disclosure) => disclosure.open));
+
+    optionClick("usage");
+    assert.ok(excluded().every((disclosure) => disclosure.open));
+    assert.ok(included().every((disclosure) => !disclosure.open));
+    vm.runInContext("render();", app.context);
+    assert.ok(excluded().every((disclosure) => disclosure.open));
+    assert.ok(included().every((disclosure) => !disclosure.open));
+
+    optionClick("panel-session-models");
+    assert.ok(excluded().every((disclosure) => disclosure.open));
+    assert.ok(included().every((disclosure) => disclosure.open));
+    const before = disclosures().map((disclosure) => disclosure.open);
+    let prevented = false;
+    summary("panel-session-models").events.click({ altKey: false, preventDefault() { prevented = true; } });
+    assert.equal(prevented, false);
+    assert.deepEqual(disclosures().map((disclosure) => disclosure.open), before);
+
+    optionClick("fusion");
+    assert.ok(excluded().every((disclosure) => disclosure.open));
+    assert.ok(included().every((disclosure) => !disclosure.open));
+    assert.deepEqual(app.submitted, []);
+});
+
+test("Clear stays separate from a collapsed panel and restores focus without stealing it", () => {
+    const app = interactiveFusion({ UsageSessions: 1, ByModelUsage: [], ByCWDUsage: [] });
+    const disclosure = (name) => app.walk(app.content).find((node) =>
+        Object.hasOwn(node.attributes, `data-${name}-disclosure`));
+    const summary = () => disclosure("panel-session-workspaces").children[0];
+    const clear = () => app.walk(app.content).find((node) =>
+        node.attributes["data-clear-panel"] === "panel-session-workspaces");
+    vm.runInContext('state.query = { ...state.query, scope: "cwd", path: "/fictional/project" }; render();', app.context);
+    assert.equal(clear().disabled, false);
+    disclosure("panel-session-workspaces").open = false;
+    app.context.document.activeElement = clear();
+    clear().events.click();
+    assert.deepEqual(app.submitted.at(-1), { scope: "all", path: "" });
+    assert.equal(disclosure("panel-session-workspaces").open, false);
+    vm.runInContext('state.query = { ...state.query, scope: "all", path: "" }; render();', app.context);
+    assert.equal(clear().disabled, true);
+    assert.equal(disclosure("panel-session-workspaces").open, false);
+    assert.equal(app.context.document.activeElement, summary());
+
+    vm.runInContext('state.query = { ...state.query, scope: "cwd", path: "/fictional/project" }; render();', app.context);
+    clear().events.click();
+    const otherSummary = () => disclosure("panel-session-models").children[0];
+    app.context.document.activeElement = otherSummary();
+    vm.runInContext('state.query = { ...state.query, scope: "all", path: "" }; render();', app.context);
+    assert.equal(app.context.document.activeElement, otherSummary());
+});
+
+test("permission panels are grouped into one collapsible Permissions category", () => {
+    const data = {
+        UsageSessions: 1, ByModelUsage: [], ByRoleUsage: [], ByCWDUsage: [],
+        Sessions: 1, Requests: 1, ByAgentMode: [], ByDecisionSource: [], SessionActivity: activityDataset(),
+    };
+    const { nodes, walk } = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const categories = nodes.filter((node) => node?.className === "category-disclosure");
+    const categoryTitle = (node) => node.children[0].children[0].children[0];
+    assert.deepEqual(Array.from(categories, categoryTitle), ["Usage", "Permissions"]);
+    const panelTitles = (node) => walk(node).filter((child) => child.tag === "section")
+        .map((panel) => walk(panel).find((child) => child.tag === "h2").children[0]);
+    assert.deepEqual(panelTitles(categories[1]), [
+        "Summary", "Agent modes", "Results", "Decision sources", "Read-only vs read-write",
+        "Tool kinds", "Commands", "Paths", "URLs", "Working directories",
+    ]);
+    assert.ok(panelTitles(categories[0]).includes("Agent usage"));
+    assert.equal(panelTitles(categories[0]).includes("Summary"), false);
+    for (const category of categories) {
+        assert.equal(category.tag, "details");
+        assert.equal(category.open, true);
+        assert.equal(category.children[0].tag, "summary");
+    }
+    assert.ok(nodes.indexOf(categories[1]) < nodes.findIndex((node) =>
+        walk(node).some((child) => Object.hasOwn(child.attributes, "data-activity-disclosure"))));
+});
+
+test("permission panel contents align to the top of their grid cells", () => {
+    const css = readFileSync(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /\[data-permissions-disclosure\]\s*>\s*\.grid\s*>\s*\.panel\s*\{[^}]*align-content:\s*start\s*;/);
+});
+
+test("every dashboard category collapses independently and keeps state and focus across renders", () => {
+    const app = interactiveFusion({
+        UsageSessions: 1, ByModelUsage: [], ByRoleUsage: [], ByCWDUsage: [],
+        Fusion: fusionDataset().Fusion, SessionActivity: activityDataset(),
+    });
+    const disclosure = (name) => app.walk(app.content).find((node) =>
+        Object.hasOwn(node.attributes, `data-${name}-disclosure`));
+    const summary = (name) => disclosure(name).children[0];
+    for (const name of ["usage", "permissions", "fusion", "activity"]) assert.equal(disclosure(name).open, true, name);
+    assert.ok(app.walk(disclosure("usage")).includes(disclosure("fusion")));
+    disclosure("permissions").open = false;
+    app.context.document.activeElement = summary("permissions");
+    vm.runInContext("render();", app.context);
+    assert.equal(disclosure("permissions").open, false);
+    assert.equal(app.context.document.activeElement, summary("permissions"));
+    for (const name of ["usage", "fusion", "activity"]) assert.equal(disclosure(name).open, true, name);
+    disclosure("usage").open = false;
+    vm.runInContext("render();", app.context);
+    assert.equal(disclosure("usage").open, false);
+    assert.equal(disclosure("fusion").open, true);
+
+    app.context.fusionData = projectFusion(fusionDataset());
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: true };
+        state.results.session.data = fusionData;
+        render();
+    `, app.context);
+    assert.equal(disclosure("fusion-usage").open, true);
+    disclosure("fusion-usage").open = false;
+    vm.runInContext("render();", app.context);
+    assert.equal(disclosure("fusion-usage").open, false);
+
+    vm.runInContext(`
+        state.results.vscode = { status: "ok", data: { ByModel: [], ByTool: [] }, command: [] };
+        state.query = { ...state.query, source: "vscode" };
+        render();
+    `, app.context);
+    const titles = (name) => app.walk(disclosure(name)).filter((node) => node.tag === "section")
+        .map((panel) => app.walk(panel).find((node) => node.tag === "h2").children[0]);
+    assert.equal(summary("vscode-usage").children[0].children[0], "Usage");
+    assert.ok(app.walk(disclosure("vscode-usage")).some((node) => node.className === "cards usage-cards"));
+    assert.deepEqual(titles("vscode-tools"), ["Tools", "Subagents"]);
+    disclosure("vscode-tools").open = false;
+    vm.runInContext("render();", app.context);
+    assert.equal(disclosure("vscode-tools").open, false);
+    assert.equal(disclosure("vscode-usage").open, true);
+
+    vm.runInContext(`
+        state.query = { ...state.query, source: "session", fusionOnly: false };
+        state.results.session.data = data;
+        render();
+    `, app.context);
+    assert.equal(disclosure("usage").open, false);
+    assert.equal(disclosure("permissions").open, false);
+    assert.equal(disclosure("activity").open, true);
+    assert.deepEqual(app.submitted, []);
+});
+
+test("Fusion and session activity disclosures stay independent across view changes", () => {
+    const app = interactiveFusion({ Fusion: fusionDataset().Fusion, SessionActivity: activityDataset() });
+    const disclosure = (name) => app.walk(app.content).find((node) =>
+        Object.hasOwn(node.attributes, `data-${name}-disclosure`));
+    disclosure("fusion").open = false;
+    disclosure("activity").open = false;
+    vm.runInContext("render();", app.context);
+    disclosure("fusion").open = true;
+    vm.runInContext("render();", app.context);
+    assert.equal(disclosure("fusion").open, true);
+    assert.equal(disclosure("activity").open, false);
+
+    disclosure("fusion").open = false;
+    app.context.fusionData = projectFusion(fusionDataset());
+    vm.runInContext(`
+        state.query = { ...state.query, fusionOnly: true };
+        state.results.session.data = fusionData;
+        render();
+    `, app.context);
+    assert.equal(disclosure("fusion").open, false);
+    assert.equal(disclosure("activity"), undefined);
+
+    vm.runInContext(`
+        state.results.vscode = { status: "ok", data: {}, command: [] };
+        state.query = { ...state.query, source: "vscode" };
+        render();
+    `, app.context);
+    assert.equal(disclosure("fusion"), undefined);
+    vm.runInContext(`
+        state.query = { ...state.query, source: "session", fusionOnly: false };
+        state.results.session.data = data;
+        render();
+    `, app.context);
+    assert.equal(disclosure("fusion").open, false);
+    assert.equal(disclosure("activity").open, false);
+    assert.deepEqual(app.submitted, []);
+});
+
+test("Copilot Fusion appears directly before Models in CLI views", () => {
+    const data = {
+        UsageSessions: 1,
+        ByModelUsage: [{ Key: "model-a", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByCWDUsage: [{ Key: "/fictional/project", Sessions: 1, Requests: 1, AIU: 1 }],
+        ByRoleUsage: [],
+        AskUser: {},
+        Fusion: fusionDataset().Fusion,
+    };
+    const before = structuredClone(data);
+    const normal = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const titles = (view) => Array.from(view.panels, (panel) =>
+        view.walk(panel).find((node) => node.tag === "h2")?.children[0]);
+    assert.deepEqual(titles(normal).slice(0, 8), [
+        "Usage share by model", "Copilot Fusion", "Models", "Usage share by workspace",
+        "Workspaces", "User questions", "Agent usage", "Summary",
+    ]);
+    assert.equal(titles(normal).filter((title) => title === "Copilot Fusion").length, 1);
+    assert.deepEqual(data, before);
+
+    const withoutShare = renderedPanels(normalizeQuery({ source: "session" }), { ...data, ByModelUsage: [] });
+    assert.deepEqual(titles(withoutShare).slice(0, 2), ["Copilot Fusion", "Models"]);
+    const withoutFusion = renderedPanels(normalizeQuery({ source: "session" }), { ...data, Fusion: null });
+    assert.deepEqual(titles(withoutFusion).slice(0, 2), ["Usage share by model", "Models"]);
+    assert.equal(titles(withoutFusion).includes("Copilot Fusion"), false);
+    for (const legacy of [
+        { UsageSessions: 1, Fusion: data.Fusion },
+        { Fusion: data.Fusion },
+    ]) {
+        const view = renderedPanels(normalizeQuery({ source: "session" }), legacy);
+        assert.equal(titles(view).filter((title) => title === "Copilot Fusion").length, 1);
+        assert.ok(titles(view).indexOf("Copilot Fusion") < titles(view).indexOf("Summary"));
+        if (legacy.UsageSessions !== undefined) {
+            assert.deepEqual(titles(view).slice(0, 2), ["Copilot Fusion", "Workspaces"]);
+        }
+    }
+
+    const vscode = renderedPanels(normalizeQuery({ source: "vscode" }), {
+        ByModel: [{ Key: "model-a", Requests: 1, UsageAIU: 1 }],
+    });
+    assert.deepEqual(titles(vscode).slice(0, 2), ["Usage share by model", "Models"]);
+    assert.equal(titles(vscode).includes("Copilot Fusion"), false);
+});
+
 test("Fusion phase columns sort raw values in both directions without changing the source", () => {
     const { context } = renderedPanels(normalizeQuery({ source: "session" }), {});
     const { columns, normalize, sort, toggle } = vm.runInContext(`({
@@ -854,8 +1297,9 @@ test("Fusion-only model shares compare recorded AIU for the listed models", () =
     const before = structuredClone(data);
     const { panels, walk } = renderedPanels(normalizeQuery({ fusionOnly: true }), data);
     const title = (node) => walk(node).find((child) => child.tag === "h2")?.children[0];
-    assert.deepEqual(Array.from(panels.slice(0, 4), title),
-        ["Usage share by model", "Models", "Usage share by workspace", "Workspaces"]);
+    assert.deepEqual(Array.from(panels.slice(0, 5), title),
+        ["Usage share by model", "Copilot Fusion", "Models", "Usage share by workspace", "Workspaces"]);
+    assert.equal(Array.from(panels, title).filter((name) => name === "Copilot Fusion").length, 1);
     const share = panels[0];
     const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
     assert.match(text(share), /recorded AIU · listed models/);
@@ -1904,7 +2348,7 @@ test("AIU formatting is capped at two decimals while API time retains small valu
 });
 
 test("Fusion-only switch disables permission filters and persists across source tabs", () => {
-    const query = normalizeQuery({ source: "session", filters: { session: { kind: ["shell"] } } });
+    const query = normalizeQuery({ source: "session", filters: { session: { kind: ["shell"], agentMode: ["plan"] } } });
     const { context, submitted, walk } = renderedPanels(query, {});
     const root = new Element("section");
     root.replaceChildren = (...children) => { root.children = children; };
@@ -1925,10 +2369,30 @@ test("Fusion-only switch disables permission filters and persists across source 
     assert.ok(disabled.length > 0 && disabled.every((node) => node.attributes.disabled === ""));
     const remove = walk(root).find((node) => node.attributes["aria-label"] === "Remove shell");
     assert.equal(remove.attributes.disabled, "");
+    const removeMode = walk(root).find((node) => node.attributes["aria-label"] === "Remove plan");
+    assert.equal(removeMode.attributes.disabled, "");
     vm.runInContext('state.query.source = "vscode"; renderFilters("vscode");', context);
     assert.equal(walk(root).some((node) => node.className === "toggle fusion-filter"), false);
     assert.equal(context.query.fusionOnly, false, "the original query object is not mutated");
     assert.equal(vm.runInContext("state.query.fusionOnly", context), true);
+    assert.equal(vm.runInContext("state.query.filters.session.agentMode[0]", context), "plan");
+});
+
+test("Agent mode filter input keeps literal whitespace and removes only its own chips", () => {
+    const query = filteredQuery("session");
+    const { context, submitted, walk } = renderedPanels(query, {});
+    const root = new Element("section");
+    root.replaceChildren = (...children) => { root.children = children; };
+    context.FILTERS = FILTERS;
+    context.document.getElementById = () => root;
+    vm.runInContext('meta = { filters: FILTERS }; renderFilters("session");', context);
+    const input = walk(root).find((node) => node.attributes["aria-label"] === "Add Agent mode filter");
+    assert.equal(input.attributes.placeholder, "exact value");
+    input.events.keydown({ key: "Enter", preventDefault() {}, target: { value: " future,mode " } });
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { agentMode: ["interactive", "plan", " future,mode "] } } });
+    walk(root).find((node) => node.attributes["aria-label"] === "Remove plan").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { agentMode: ["interactive"] } } });
+    assert.deepEqual(query.filters.session.agentMode, ["interactive", "plan"]);
 });
 
 test("a stale dashboard provider disables the Fusion switch and explains that a reload is needed", () => {
@@ -2162,14 +2626,15 @@ test("CLI question and permission panels use shared framing and follow the VS Co
     const title = (panel) => walk(panel).find((node) => node.tag === "h2").children[0];
     const titles = Array.from(panels, title);
     const workspace = titles.indexOf("Workspaces");
-    assert.deepEqual(titles.slice(workspace, workspace + 4), ["Workspaces", "User questions", "Agent usage", "Permissions"]);
+    assert.deepEqual(titles.slice(workspace, workspace + 4), ["Workspaces", "User questions", "Agent usage", "Summary"]);
     assert.equal(titles.filter((text) => text === "User questions").length, 1);
-    const usageGrid = nodes.find((node) => node?.className === "grid");
+    const usageGrid = nodes.flatMap(walk).find((node) => node?.className === "grid" &&
+        node.children.some((child) => child?.tag === "section" && title(child) === "Workspaces"));
     assert.deepEqual(usageGrid.children.filter((node) => node?.tag === "section").map(title).slice(-3),
         ["Workspaces", "User questions", "Agent usage"]);
-    const permissions = panels.find((panel) => title(panel) === "Permissions");
+    const permissions = panels.find((panel) => title(panel) === "Summary");
     assert.equal(permissions.className, "panel wide");
-    assert.equal(permissions.children[0].tag, "header");
+    assert.equal(permissions.children[0].tag, "details");
     assert.ok(walk(permissions).some((node) => node.className === "legend"));
     const cards = walk(permissions).filter((node) => node.className === "card");
     assert.deepEqual(cards.map((node) => walk(node).find((child) => child.className === "value").children[0]), ["2", "4", "2", "1", "1"]);
@@ -2185,9 +2650,9 @@ test("permission-only and older CLI payloads retain framed summaries and optiona
     for (const data of [{ Sessions: 0, Requests: 0 }, { Sessions: 1, Requests: 0, AskUser: {} }, { UsageSessions: 0, ByRoleUsage: [] }]) {
         const { panels, walk } = renderedPanels(filteredQuery("session"), data);
         const titles = panels.map((panel) => walk(panel).find((node) => node.tag === "h2").children[0]);
-        assert.equal(titles.filter((title) => title === "Permissions").length, 1);
+        assert.equal(titles.filter((title) => title === "Summary").length, 1);
         assert.equal(titles.filter((title) => title === "User questions").length, data.AskUser ? 1 : 0);
-        assert.equal(panels[titles.indexOf("Permissions")].className, "panel wide");
+        assert.equal(panels[titles.indexOf("Summary")].className, "panel wide");
     }
 });
 
@@ -2203,13 +2668,13 @@ test("Permissions contains human response wait and separate non-human/unknown ti
     const { panels, walk } = renderedPanels(query, data);
     const title = (panel) => walk(panel).find((node) => node.tag === "h2").children[0];
     const titles = Array.from(panels, title);
-    assert.deepEqual(titles.slice(titles.indexOf("User questions"), titles.indexOf("Permissions") + 1),
-        ["User questions", "Agent usage", "Permissions"]);
-    const permissions = panels[titles.indexOf("Permissions")];
+    assert.deepEqual(titles.slice(titles.indexOf("User questions"), titles.indexOf("Summary") + 1),
+        ["User questions", "Agent usage", "Summary"]);
+    const permissions = panels[titles.indexOf("Summary")];
     const nodes = walk(permissions);
     const waitHeading = nodes.find((node) => node.children[0] === "Permission response wait");
     assert.equal(waitHeading.tag, "h3");
-    assert.equal(walk(permissions).find((node) => node.children[0] === "Permissions").tag, "h2");
+    assert.equal(walk(permissions).find((node) => node.children[0] === "Summary").tag, "h2");
     const text = nodes.flatMap((node) => node.children.filter((child) => typeof child === "string")).join("\n");
     for (const label of ["Permission response wait", "Human responses", "Total permission wait", "Average permission wait",
         "Longest permission wait", "No recorded decision", "Other recorded sources", "Unknown source", "missing or invalid timestamps",
@@ -2230,8 +2695,355 @@ test("unknown-source permission timing never fabricates human wait samples", () 
         Unresolved: 0,
     } };
     const { panels, walk } = renderedPanels(filteredQuery("session"), data);
-    const permissions = panels.find((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Permissions"));
+    const permissions = panels.find((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Summary"));
     const nodes = walk(permissions);
     assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "–").length, 2);
     assert.equal(nodes.filter((node) => node.className === "value" && node.children[0] === "0 ms").length, 1);
+});
+
+test("Agent modes filters exact permission modes and clears only its own filter", () => {
+    const query = filteredQuery("session");
+    const before = structuredClone(query);
+    const data = { ByAgentMode: [
+        { Key: "plan", Total: 4, Approved: 1, ApprovedForLocation: 1, Denied: 1, Unresolved: 1 },
+        { Key: "unknown", Total: 2, Approved: 0, ApprovedForLocation: 0, Denied: 0, Unresolved: 2 },
+        { Key: " <future,mode> ", Total: 1, Approved: 1, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 },
+    ] };
+    const { panels, walk, submitted } = renderedPanels(query, data);
+    const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Agent modes"));
+    assert.ok(panel);
+    const nodes = walk(panel);
+    const rows = nodes.filter((node) => node.className === "row");
+    assert.deepEqual(rows.map((row) => row.attributes.title), [
+        "Approved: 1\nApproved for location: 1\nDenied: 1\nUnresolved: 1",
+        "Approved: 0\nApproved for location: 0\nDenied: 0\nUnresolved: 2",
+        "Approved: 1\nApproved for location: 0\nDenied: 0\nUnresolved: 0",
+    ]);
+    const text = nodes.flatMap((node) => node.children.filter((child) => typeof child === "string")).join("\n");
+    for (const expected of ["plan", "unknown", " <future,mode> ", "Missing modes are unknown", "permission filters and Top apply"]) {
+        assert.ok(text.includes(expected), expected);
+    }
+    rows[1].children[0].events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { agentMode: ["interactive", "plan", "unknown"] } } });
+    rows[2].children[0].events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { agentMode: ["interactive", "plan", " <future,mode> "] } } });
+    const clear = nodes.find((node) => node.attributes["data-clear-filter"] === "agentMode");
+    assert.equal(clear.attributes.disabled, undefined);
+    clear.events.click();
+    assert.deepEqual(submitted.at(-1), { filters: { session: { agentMode: [] } } });
+    assert.deepEqual(query, before);
+});
+
+test("a stale dashboard provider disables Agent mode picking and explains that a reload is needed", () => {
+    const query = filteredQuery("session");
+    delete query.filters.session.agentMode;
+    const filters = { ...FILTERS, session: FILTERS.session.filter((name) => name !== "agentMode") };
+    const { panels, walk, submitted } = renderedPanels(query, {
+        ByAgentMode: [{ Key: "plan", Total: 1, Approved: 1 }],
+    }, { filters });
+    const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Agent modes"));
+    const nodes = walk(panel);
+    assert.ok(nodes.some((node) => node.children.some((child) =>
+        typeof child === "string" && child.includes("Reload the dashboard extension"))));
+    assert.equal(nodes.some((node) => node.tag === "button"), false);
+    assert.deepEqual(submitted, []);
+});
+
+test("Agent modes distinguishes empty results from older builds and stays outside Fusion-only", () => {
+    for (const data of [{}, { ByAgentMode: null }, { ByAgentMode: [] }]) {
+        const { panels, walk } = renderedPanels(filteredQuery("session"), data);
+        const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Agent modes"));
+        assert.equal(Boolean(panel), Array.isArray(data.ByAgentMode));
+        if (panel) assert.ok(walk(panel).some((node) => node.children.includes("No entries.")));
+    }
+    const data = projectFusion({ ...fusionDataset(), ByAgentMode: [{ Key: "plan", Total: 1 }] });
+    const { panels, walk } = renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), data);
+    assert.equal(panels.some((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Agent modes")), false);
+});
+
+function activityDataset() {
+    const hours = Array(24).fill(0);
+    hours[1] = 2;
+    hours[4] = 1;
+    const coverage = Array(24).fill("full");
+    coverage[0] = "outside";
+    coverage[1] = "partial";
+    coverage[2] = "nonexistent";
+    return {
+        Version: 1, TimeZone: "Asia/Kathmandu", AsOf: "2026-03-03T11:00:00+05:45", AgentModes: [],
+        StartDate: "2026-01-01", EndDate: "2026-03-03", EmptyReason: "",
+        ScannedSessions: 3, UntimedSessions: 1, UntimedEvents: 2, MalformedEvents: 1,
+        Days: [{ Date: "2026-03-02", Hours: hours }],
+        Coverage: [{ Date: "2026-03-02", Hours: coverage }],
+    };
+}
+
+function activityFooter(root, walk) {
+    const table = walk(root).find((node) => node.className === "activity-table");
+    return walk(table).find((node) => node.tag === "tfoot").children;
+}
+
+test("session activity renders accessible local-hour counts and distinguishes coverage", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { kind: ["read"] } } });
+    const data = { SessionActivity: activityDataset() };
+    const before = structuredClone(data);
+    const { panels, walk } = renderedPanels(query, data);
+    const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Session activity"));
+    assert.equal(panel.className, "panel wide");
+    assert.equal(panels.at(-1), panel);
+    const disclosure = walk(panel).find((node) => node.tag === "details");
+    assert.equal(disclosure.open, true);
+    assert.equal(disclosure.children[0].tag, "summary");
+    assert.equal(disclosure.children[0].children[0].tag, "h2");
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    const content = text(panel);
+    for (const phrase of ["Asia/Kathmandu", "not continuous active time", "Other permission filters and Top do not apply",
+        "2 included events in 1 scoped session have no usable timestamp", "1 event envelope across the scoped logs could not be parsed"]) {
+        assert.ok(content.includes(phrase), phrase);
+    }
+    const table = walk(panel).find((node) => node.tag === "table");
+    assert.match(table.attributes["aria-label"], /2026-02-02 to 2026-03-03/);
+    const head = walk(table).find((node) => node.tag === "thead");
+    assert.equal(walk(head).filter((node) => node.tag === "th").length, 25);
+    const rows = walk(table).find((node) => node.tag === "tbody").children;
+    assert.equal(rows.length, 30);
+    const date = rows.find((row) => row.children[0].children[0] === "2026-03-02");
+    assert.deepEqual(date.children.slice(1, 6).map(text), ["–", "2 *", "×", "0", "1"]);
+    assert.match(date.children[1].attributes["aria-label"], /outside the selected time window/);
+    assert.match(date.children[2].attributes["aria-label"], /2 sessions with recorded events; selected window covers only part/);
+    assert.match(date.children[3].attributes["aria-label"], /local clock hour did not exist/);
+    assert.equal(date.children[2].className.includes("activity-partial"), true);
+    const zeroDay = rows.find((row) => row.children[0].children[0] === "2026-03-01");
+    assert.equal(zeroDay.children.length, 25);
+    assert.equal(zeroDay.children[1].children[0], "0");
+    assert.deepEqual(data, before);
+});
+
+test("session activity footer aggregates covered daily cells exactly", () => {
+    const hours = (values) => Array.from({ length: 24 }, (_, hour) => values[hour] ?? 0);
+    const coverage = (values) => Array.from({ length: 24 }, (_, hour) => values[hour] ?? "full");
+    const activity = {
+        ...activityDataset(),
+        StartDate: "2026-03-01", EndDate: "2026-03-03",
+        Days: [
+            { Date: "2026-03-01", Hours: hours({ 0: 6, 1: 2, 3: Number.MAX_SAFE_INTEGER, 4: 1 }) },
+            { Date: "2026-03-02", Hours: hours({ 3: Number.MAX_SAFE_INTEGER }) },
+        ],
+        Coverage: [
+            { Date: "2026-03-01", Hours: coverage({ 2: "outside" }) },
+            { Date: "2026-03-02", Hours: coverage({ 0: "partial", 1: "outside", 2: "nonexistent" }) },
+            { Date: "2026-03-03", Hours: coverage({ 1: "nonexistent", 2: "outside" }) },
+        ],
+    };
+    const before = structuredClone(activity);
+    const { panels, walk } = renderedPanels(normalizeQuery({ source: "session" }), { SessionActivity: activity });
+    const panel = panels.at(-1);
+    const table = walk(panel).find((node) => node.className === "activity-table");
+    const note = walk(panel).find((node) => node.attributes.id === "activity-summary-note");
+    const [total, average] = activityFooter(panel, walk);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    assert.equal(table.attributes["aria-describedby"], note.attributes.id);
+    assert.match(text(note), /session can be counted on multiple days/);
+    assert.match(text(note), /outside and nonexistent hours are excluded/);
+    assert.equal(total.children.length, 25);
+    assert.equal(average.children.length, 25);
+    assert.equal(total.children[0].children[0], "Total");
+    assert.equal(average.children[0].children[0], "Average");
+    assert.equal(total.children[0].attributes.scope, "row");
+    assert.equal(average.children[0].attributes.scope, "row");
+    assert.equal(text(total.children[1]), "6*");
+    assert.equal(text(average.children[1]), "2*");
+    assert.match(average.children[1].attributes["aria-label"], /Average for 00:00: 2 sessions per covered day; 3 covered days; includes partially covered hours/);
+    assert.equal(text(total.children[2]), "2");
+    assert.equal(text(average.children[2]), "2");
+    assert.match(average.children[2].attributes["aria-label"], /1 covered day/);
+    assert.equal(text(total.children[3]), "–");
+    assert.equal(text(average.children[3]), "–");
+    assert.match(total.children[3].attributes["aria-label"], /Total for 02:00: no covered days on this page/);
+    assert.equal(text(total.children[4]), new Intl.NumberFormat().format(18014398509481982n));
+    assert.ok(total.children[1].className.includes("activity-summary-cell"));
+    assert.ok(total.children[1].className.includes("activity-level-1"));
+    assert.ok(total.children[1].className.includes("activity-partial"));
+    assert.ok(total.children[4].className.includes("activity-level-4"));
+    assert.ok(total.children[6].className.includes("activity-level-0"));
+    assert.ok(average.children[4].className.includes("activity-level-4"));
+    const decimalSuffix = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).formatToParts(0.67)
+        .filter((part) => part.type === "decimal" || part.type === "fraction")
+        .map((part) => part.value).join("");
+    assert.equal(text(average.children[4]), `${new Intl.NumberFormat().format(6004799503160660n)}${decimalSuffix}`);
+    assert.equal(text(average.children[5]), new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(1 / 3));
+    assert.deepEqual(activity, before);
+});
+
+test("session activity footer follows the visible page and its coverage", () => {
+    const hours = (value) => [value, ...Array(23).fill(0)];
+    const partial = ["partial", ...Array(23).fill("full")];
+    const activity = {
+        ...activityDataset(),
+        Days: [
+            { Date: "2026-01-01", Hours: hours(4) },
+            { Date: "2026-01-31", Hours: hours(5) },
+            { Date: "2026-03-02", Hours: hours(6) },
+        ],
+        Coverage: [{ Date: "2026-03-02", Hours: partial }],
+    };
+    const { content, walk } = interactiveFusion({ SessionActivity: activity });
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    const values = () => activityFooter(content, walk).map((row) => text(row.children[1]));
+    const earlier = () => walk(content).find((node) => node.attributes["data-activity-page"] === "earlier");
+    const later = () => walk(content).find((node) => node.attributes["data-activity-page"] === "later");
+    const decimal = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+    assert.deepEqual(values(), ["6*", `${decimal.format(6 / 30)}*`]);
+    const total = () => activityFooter(content, walk)[0];
+    assert.ok(total().children[1].className.includes("activity-level-4"));
+    earlier().events.click();
+    assert.deepEqual(values(), ["5", decimal.format(5 / 30)]);
+    assert.ok(total().children[1].className.includes("activity-level-4"));
+    earlier().events.click();
+    assert.deepEqual(values(), ["4", "2"]);
+    later().events.click();
+    later().events.click();
+    assert.deepEqual(values(), ["6*", `${decimal.format(6 / 30)}*`]);
+});
+
+test("session activity counts selected Agent-mode permission requests at request time", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { agentMode: ["plan"] } } });
+    const activity = {
+        ...activityDataset(),
+        AgentModes: ["plan"],
+        Days: [{ Date: "2026-03-02", Hours: Array.from({ length: 24 }, (_, hour) => hour === 4 ? 1 : 0) }],
+    };
+    const { panels, walk } = renderedPanels(query, { SessionActivity: activity });
+    const panel = panels.find((entry) => walk(entry).some((node) =>
+        node.tag === "h2" && node.children[0] === "Session activity"));
+    const content = walk(panel);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    assert.ok(content.some((node) => text(node).includes("matching permission.requested event")));
+    const table = content.find((node) => node.tag === "table");
+    const row = walk(table).find((node) => node.tag === "tr" &&
+        node.children[0]?.children?.[0] === "2026-03-02");
+    assert.match(row.children[5].attributes["aria-label"], /1 session with a matching permission request/);
+    const [total] = activityFooter(panel, walk);
+    assert.equal(total.children[5].children[0], "1");
+});
+
+test("session activity hides data collected for a different or unverified Agent-mode filter", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { agentMode: ["plan"] } } });
+    for (const [activity, message] of [
+        [{ ...activityDataset(), AgentModes: [] }, "no Agent mode filter"],
+        [{ ...activityDataset(), AgentModes: ["interactive"] }, '"interactive"'],
+        [{ ...activityDataset(), AgentModes: undefined }, "does not confirm"],
+    ]) {
+        const { panels, walk } = renderedPanels(query, { SessionActivity: activity });
+        const panel = panels.find((entry) => walk(entry).some((node) =>
+            node.tag === "h2" && node.children[0] === "Session activity"));
+        const text = walk(panel).map((node) => typeof node.children?.[0] === "string" ? node.children[0] : "").join(" ");
+        assert.ok(text.includes(message), message);
+        assert.equal(walk(panel).some((node) => node.tag === "table"), false);
+    }
+
+    const noFilter = renderedPanels(normalizeQuery({ source: "session" }), {
+        SessionActivity: { ...activityDataset(), AgentModes: ["plan"] },
+    });
+    assert.equal(noFilter.walk(noFilter.panels.at(-1)).some((node) => node.tag === "table"), false);
+
+    const duplicateMetadata = renderedPanels(query, {
+        SessionActivity: { ...activityDataset(), AgentModes: ["plan", "plan"] },
+    });
+    assert.ok(duplicateMetadata.walk(duplicateMetadata.panels.at(-1)).some((node) => node.tag === "table"));
+});
+
+test("session activity preserves disclosure state and keyboard focus across updates", () => {
+    const { content, context, walk, submitted } = interactiveFusion({ SessionActivity: activityDataset() });
+    const disclosure = () => walk(content).find((node) => Object.hasOwn(node.attributes ?? {}, "data-activity-disclosure"));
+    const summary = () => disclosure().children[0];
+    assert.equal(disclosure().open, true);
+    disclosure().open = false;
+    context.document.activeElement = summary();
+    vm.runInContext("render();", context);
+    assert.equal(disclosure().open, false);
+    assert.equal(context.document.activeElement, summary());
+    vm.runInContext("render();", context);
+    assert.equal(disclosure().open, false);
+    disclosure().open = true;
+    vm.runInContext("render();", context);
+    assert.equal(disclosure().open, true);
+    walk(disclosure().closest(".panel")).find((node) => node.attributes["data-activity-page"] === "earlier").events.click();
+    assert.equal(disclosure().open, true);
+    assert.deepEqual(submitted, []);
+});
+
+test("session activity pages across the entire range without changing the query", () => {
+    const data = { SessionActivity: activityDataset() };
+    const view = interactiveFusion(data);
+    const { content, context, walk, submitted } = view;
+    const activity = () => walk(content).find((entry) => entry.tag === "section" &&
+        walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Session activity"));
+    const button = (direction) => walk(activity()).find((node) => node.attributes["data-activity-page"] === direction);
+    const dates = () => walk(activity()).find((node) => node.tag === "tbody").children.map((row) => row.children[0].children[0]);
+    assert.equal(dates()[0], "2026-03-03");
+    assert.equal(dates().at(-1), "2026-02-02");
+    assert.equal(button("later").attributes.disabled, "");
+    const first = button("earlier");
+    first.closest(".panel").scrollLeft = 47;
+    context.document.activeElement = first;
+    first.events.click();
+    assert.equal(dates()[0], "2026-02-01");
+    assert.equal(dates().at(-1), "2026-01-03");
+    assert.equal(button("earlier").closest(".panel").scrollLeft, 47);
+    assert.equal(context.document.activeElement, button("earlier"));
+    button("earlier").events.click();
+    assert.deepEqual(dates(), ["2026-01-02", "2026-01-01"]);
+    assert.equal(button("earlier").attributes.disabled, "");
+    button("later").events.click();
+    assert.equal(dates()[0], "2026-02-01");
+    assert.equal(dates().at(-1), "2026-01-03");
+    assert.deepEqual(submitted, []);
+});
+
+test("session activity distinguishes empty, legacy, invalid, and unrelated views", () => {
+    const query = normalizeQuery({ source: "session" });
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    for (const [activity, phrase] of [
+        [undefined, "Update gh copilot-attendant or choose the source runner"],
+        [{ Version: 2 }, "format is unsupported"],
+        [{ ...activityDataset(), Days: [{ Date: "2026-03-02", Hours: [2] }] }, "data is invalid"],
+        [{ ...activityDataset(), StartDate: "", EndDate: "", EmptyReason: "empty-window", Days: [], Coverage: [] }, "Since must be earlier than Until"],
+        [{ ...activityDataset(), StartDate: "", EndDate: "", EmptyReason: "no-dated-events", Days: [], Coverage: [] }, "No dated events"],
+    ]) {
+        const view = renderedPanels(query, { SessionActivity: activity });
+        const content = view.nodes.map(text).join(" ");
+        assert.ok(content.includes(phrase), phrase);
+        const panel = view.panels.find((entry) => view.walk(entry).some((node) =>
+            node.tag === "h2" && node.children[0] === "Session activity"));
+        assert.equal(view.panels.at(-1), panel);
+        assert.ok(view.walk(panel).some((node) => node.tag === "details"));
+        assert.equal(view.walk(panel).some((node) => node.tag === "table"), false);
+    }
+    const fusion = projectFusion({ ...fusionDataset(), SessionActivity: activityDataset() });
+    assert.equal("SessionActivity" in fusion, false);
+    for (const [source, data] of [["session", fusion], ["vscode", { SessionActivity: activityDataset() }]]) {
+        const view = renderedPanels(normalizeQuery({ source, fusionOnly: source === "session" }), data);
+        assert.equal(view.panels.some((entry) => view.walk(entry).some((node) =>
+            node.tag === "h2" && node.children[0] === "Session activity")), false);
+    }
+});
+
+test("session usage notes reflect Agent mode usage filtering", () => {
+    const note = (filters, data) => {
+        const query = normalizeQuery({ source: "session", filters: { session: filters } });
+        const { context } = renderedPanels(query, { UsageSessions: 0 });
+        context.probe = data;
+        return vm.runInContext("sessionUsageFilterNote(probe)", context);
+    };
+    assert.equal(note({}, {}), null);
+    assert.equal(note({ kind: ["shell"] }, { UsageAgentModes: [] }), "permission filters do not apply");
+    assert.equal(note({ agentMode: ["plan"] }, {}),
+        "this CLI result does not restrict usage by Agent mode; permission filters do not apply");
+    assert.equal(note({ agentMode: ["plan"] }, { UsageAgentModes: ["autopilot"] }),
+        "collected with a different Agent mode selection; refresh to restrict usage");
+    assert.equal(note({ agentMode: ["plan", "autopilot"] }, { UsageAgentModes: ["autopilot", "plan"] }),
+        "limited to sessions with a matching Agent mode request");
+    assert.equal(note({ agentMode: ["plan"], kind: ["shell"] }, { UsageAgentModes: ["plan"] }),
+        "limited to sessions with a matching Agent mode request; other permission filters do not apply");
 });

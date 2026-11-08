@@ -449,7 +449,9 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 	root := t.TempDir()
 	at := "2026-01-02T00:00:00Z"
 	writeSession(t, root, "session-a", "/work", resolution(t, "resolution", at, "turn", "single")+
-		usage(t, "record", at, "source", "usage", "model-a", "single", "turn", "phase", "primary", "solver", int64ptr(1e9)))
+		usage(t, "record", at, "source", "usage", "model-a", "single", "turn", "phase", "primary", "solver", int64ptr(1e9))+
+		testEvent(t, "permission.requested", "request-a", at, map[string]any{"requestId": "a", "agentMode": "interactive", "permissionRequest": map[string]any{"kind": "read"}})+
+		testEvent(t, "permission.requested", "request-b", at, map[string]any{"requestId": "b", "agentMode": "plan", "permissionRequest": map[string]any{"kind": "read"}}))
 	stats, err := Collect(copilotext.PermissionStatsOptions{Root: root})
 	if err != nil {
 		t.Fatal(err)
@@ -467,8 +469,27 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 			t.Errorf("missing flattened JSON field %q: %s", field, encoded)
 		}
 	}
-	if stats.UsageRequests != 1 || stats.UsageAIU != 1 || stats.Fusion.ResolvedTurns != 1 || stats.Fusion.UsageRecords != 1 {
+	if stats.Requests != 2 || stats.UsageRequests != 1 || stats.UsageAIU != 1 || stats.Fusion.ResolvedTurns != 1 || stats.Fusion.UsageRecords != 1 {
 		t.Fatalf("combined stats = %+v", stats)
+	}
+	filtered, err := Collect(copilotext.PermissionStatsOptions{Root: root, AgentMode: []string{"plan"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered.Requests != 1 || filtered.UsageRequests != stats.UsageRequests || filtered.UsageAIU != stats.UsageAIU ||
+		!reflect.DeepEqual(filtered.Fusion, stats.Fusion) || !reflect.DeepEqual(filtered.UsageAgentModes, []string{"plan"}) {
+		t.Fatalf("mode filter changed matching session usage or Fusion: %+v", filtered)
+	}
+	unmatched, err := Collect(copilotext.PermissionStatsOptions{Root: root, AgentMode: []string{"autopilot", "autopilot"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unmatched.Requests != 0 || unmatched.UsageSessions != 0 || unmatched.UsageAIU != 0 ||
+		!reflect.DeepEqual(unmatched.Fusion, stats.Fusion) || !reflect.DeepEqual(unmatched.UsageAgentModes, []string{"autopilot"}) {
+		t.Fatalf("mode filter kept usage of a session without matching requests or changed Fusion: %+v", unmatched)
+	}
+	if stats.UsageAgentModes == nil || len(stats.UsageAgentModes) != 0 {
+		t.Fatalf("unfiltered UsageAgentModes = %#v, want empty slice", stats.UsageAgentModes)
 	}
 }
 

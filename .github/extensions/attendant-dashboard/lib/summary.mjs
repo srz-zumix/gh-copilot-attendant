@@ -33,6 +33,73 @@ function counts(list, limit) {
     }));
 }
 
+function sessionActivity(data, limit) {
+    const activity = data.SessionActivity;
+    if (activity == null) return {};
+    const invalid = () => ({ sessionActivityError: "Session activity data is invalid or unsupported" });
+    const count = (value) => Number.isSafeInteger(value) && value >= 0;
+    const validDate = (value) => {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const number = Date.parse(`${value}T00:00:00.000Z`);
+        return Number.isFinite(number) && new Date(number).toISOString().slice(0, 10) === value;
+    };
+    if (activity.Version !== 1 || typeof activity.TimeZone !== "string" || !activity.TimeZone ||
+        typeof activity.AsOf !== "string" || !Number.isFinite(Date.parse(activity.AsOf)) ||
+        (activity.AgentModes !== undefined &&
+            (!Array.isArray(activity.AgentModes) || !activity.AgentModes.every((mode) => typeof mode === "string" && mode.length > 0))) ||
+        !["", "empty-window", "no-dated-events"].includes(activity.EmptyReason) ||
+        !["ScannedSessions", "UntimedSessions", "UntimedEvents", "MalformedEvents"].every((key) => count(activity[key])) ||
+        activity.UntimedSessions > activity.ScannedSessions ||
+        !Array.isArray(activity.Days) || !Array.isArray(activity.Coverage)) return invalid();
+    const empty = !activity.StartDate && !activity.EndDate;
+    if ((empty && (!activity.EmptyReason || activity.Days.length || activity.Coverage.length)) ||
+        (!empty && (!validDate(activity.StartDate) || !validDate(activity.EndDate) ||
+            activity.StartDate > activity.EndDate || activity.EmptyReason))) return invalid();
+    const maximum = Math.min(10, Math.max(0, Number.isFinite(limit) ? Math.floor(limit) : 10));
+    const selected = maximum ? activity.Days.slice(-maximum) : [];
+    const dates = new Set();
+    for (const entry of selected) {
+        if (!validDate(entry?.Date) || entry.Date < activity.StartDate || entry.Date > activity.EndDate ||
+            dates.has(entry.Date) || !Array.isArray(entry.Hours) || entry.Hours.length !== 24 ||
+            !entry.Hours.every(count)) return invalid();
+        dates.add(entry.Date);
+    }
+    const coverage = new Map();
+    const states = new Set(["full", "partial", "outside", "nonexistent"]);
+    for (const entry of activity.Coverage) {
+        if (!dates.has(entry?.Date)) continue;
+        if (coverage.has(entry.Date) || !Array.isArray(entry.Hours) || entry.Hours.length !== 24 ||
+            !entry.Hours.every((value) => states.has(value))) return invalid();
+        coverage.set(entry.Date, entry.Hours);
+    }
+    for (const entry of selected) {
+        const hours = coverage.get(entry.Date);
+        if (hours && entry.Hours.some((value, hour) => value > 0 && ["outside", "nonexistent"].includes(hours[hour]))) return invalid();
+    }
+    return {
+        sessionActivity: {
+            timeZone: cap(activity.TimeZone),
+            asOf: cap(activity.AsOf),
+            ...(Array.isArray(activity.AgentModes) ? { agentModes: activity.AgentModes.map(cap) } : {}),
+            startDate: activity.StartDate || null,
+            endDate: activity.EndDate || null,
+            emptyReason: activity.EmptyReason || null,
+            scannedSessions: activity.ScannedSessions,
+            untimedSessions: activity.UntimedSessions,
+            untimedEvents: activity.UntimedEvents,
+            malformedEvents: activity.MalformedEvents,
+            recordedDays: activity.Days.length,
+            omittedRecordedDays: activity.Days.length - selected.length,
+            latestRecordedDays: selected.map((entry) => ({
+                date: entry.Date, hours: entry.Hours, coverage: coverage.get(entry.Date) ?? null,
+            })),
+            note: Array.isArray(activity.AgentModes) && activity.AgentModes.length
+                ? "Each hour counts distinct sessions with matching permission.requested events at their request timestamp for the listed Agent modes. Repeated local clock hours are combined. Dates without recorded requests are omitted from this capped list. A null coverage array means all hours are within the selected window and exist; partial, outside, and nonexistent mark other hours. Other permission filters and Top do not apply."
+                : "Each hour counts distinct sessions with recorded timestamped events, not continuous activity. Repeated local clock hours are combined. Dates without recorded events are omitted from this capped list. A null coverage array means all hours are within the selected window and exist; partial, outside, and nonexistent mark other hours. Untimed and malformed events cannot be placed in any period. Scope and event-time bounds apply; other permission filters and Top do not.",
+        },
+    };
+}
+
 function round2(n) {
     return Math.round((n ?? 0) * 100) / 100;
 }
@@ -260,12 +327,17 @@ export function summarize(source, data, limit = 10) {
             requests: data.Requests,
             byResult: counts(data.ByResult, limit),
             byDecisionSource: counts(data.ByDecisionSource, limit),
+            ...(data.ByAgentMode != null ? {
+                byAgentMode: counts(data.ByAgentMode, limit),
+                agentModeNote: "Agent modes are captured at permission evaluation, not main/subagent roles or session-wide modes. Missing modes are unknown; unlogged requests cannot be reconstructed. Permission filters and Top apply.",
+            } : {}),
             byReadOnly: counts(data.ByReadOnly, limit),
             byKind: counts(data.ByKind, limit),
             byCommand: counts(data.ByCommand, limit),
             byPath: counts(data.ByPath, limit),
             byURL: counts(data.ByURL, limit),
             byCWD: counts(data.ByCWD, limit),
+            ...sessionActivity(data, limit),
             ...usage(data, limit),
             ...fusionSummary(data, limit),
             ...(data.PermissionWait != null ? {

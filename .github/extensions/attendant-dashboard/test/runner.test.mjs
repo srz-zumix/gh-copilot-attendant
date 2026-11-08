@@ -45,6 +45,24 @@ test("runStats parses JSON and surfaces non-warning stderr on failure", async ()
     await assert.rejects(runStats({ cmd: node, prefix: ["-e"] }, ['console.log("not json")']), /could not parse JSON/);
 });
 
+test("unsupported Agent mode flags produce an actionable error even before a long usage listing", async () => {
+    const script = 'console.error("Error: unknown flag: --agent-mode\\n" + "usage line\\n".repeat(20)); process.exit(1)';
+    await assert.rejects(
+        runStats({ cmd: node, prefix: ["-e", script, "--"] }, ["session", "stats", "--agent-mode=plan"]),
+        /does not support --agent-mode; update it or choose an up-to-date source runner/,
+    );
+});
+
+test("unsupported permission result and command-access flags suggest an updated CLI", async () => {
+    for (const flag of ["result", "command-access"]) {
+        const script = `console.error("Error: unknown flag: --${flag}\\n" + "usage line\\n".repeat(20)); process.exit(1)`;
+        await assert.rejects(
+            runStats({ cmd: node, prefix: ["-e", script, "--"] }, ["session", "stats", `--${flag}=value`]),
+            new RegExp(`does not support --${flag}; update it or choose an up-to-date source runner`),
+        );
+    }
+});
+
 test("aborting kills the whole process group", { skip: process.platform === "win32" }, async () => {
     const controller = new AbortController();
     // The parent spawns a long-lived grandchild and prints its PID.

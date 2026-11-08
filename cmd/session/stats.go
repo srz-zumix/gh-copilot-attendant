@@ -23,6 +23,9 @@ func NewStatsCmd() *cobra.Command {
 	var until string
 	var period string
 	var operations []string
+	var agentModes []string
+	var results []string
+	var commandAccess []string
 	var kinds []string
 	var decisionSources []string
 	var commands []string
@@ -44,12 +47,23 @@ use request records or "modelMetrics"; checkpoint-only usage may have no model o
 breakdown. Unattributed usage is reported as unknown, never inferred from model names.
 Model request counts are API requests, not permission requests.
 
+Agent mode counts group permission requests by their recorded "agentMode" at evaluation
+start, with approval/denial outcomes. Missing modes are unknown; session mode changes and
+main/subagent roles are not used to infer them. All permission filters and --top apply.
+
 Fusion statistics count recorded resolved turns by pattern and recorded usage by pattern,
 phase, role, and model. They include only explicitly attributed usage records, not planned
 phases or checkpoint-only usage. Missing AIU and identifiers are shown as incomplete.
 Time bounds select individual Fusion events; permission filters do not apply. --top limits
 each Fusion breakdown, but not its totals. Phase and model rows can share turns or phases.
 Active sessions may change while scanning; shared and Fusion totals are not an atomic snapshot.
+
+JSON output includes SessionActivity: distinct sessions with timestamped events by local
+date and hour, not continuous active time. Repeated clock hours are combined. Directory
+and session scope and event-time bounds apply; --agent-mode selects permission.requested
+events by their recorded mode and request timestamp. Other permission filters and --top
+do not apply. Events without usable timestamps and malformed envelopes are counted as
+coverage gaps.
 
 Permission request-to-completion intervals report total, average, and maximum wait.
 Confirmed human_response waits are separate from non-human and unknown-source decisions;
@@ -73,19 +87,28 @@ single working directory exactly, or --all to include every recorded session.
 Use --period as shorthand for --since when you only need a time window back from now
 (e.g. 7d, 3w, 6m, 1y).
 
-Use --operation to restrict to non-mutating ("read") or mutating ("write") requests, and
---kind, --command, --path, or --url to restrict to requests matching that tool kind,
-command, path, or URL. --path and --url match as regular expressions (a plain substring is
-also a valid, unanchored regular expression). --decision-source restricts to permission
-outcomes whose recorded decision source matches exactly (e.g. human_response,
+Use --operation to restrict requests to non-mutating ("read") or mutating ("write")
+requests. Use --result to match an exact recorded result, --command-access to match
+requests containing commands with the selected read-only/read-write attribute, and
+--agent-mode, --kind, --command, --path, or --url to restrict requests matching that
+recorded mode, tool kind, command, path, or URL. --agent-mode and --result match exactly;
+use unknown
+for missing or invalid recorded modes. --path and --url match as regular expressions (a
+plain substring is also a valid, unanchored regular expression). --decision-source restricts
+to permission outcomes whose recorded decision source matches exactly (e.g. human_response,
 unattended_fallback, or unknown when no decision source was recorded, including older CLI
 versions and unresolved requests without a recorded outcome). Each of these
-flags may be repeated to match any of multiple values. --since, --until, and --period also
+flags may be repeated to match any of multiple values; different filters are combined.
+--since, --until, and --period also
 select usage updates by their recorded timestamps. Earlier recorded totals are subtracted
 from cumulative snapshots; a snapshot delta may include usage before the selected period.
 The role breakdown is never truncated by --top. Missing breakdowns are marked as incomplete;
---operation, --kind, --decision-source, --command, --path, and --url do not affect usage
-totals, since usage is not recorded per permission request.`,
+--agent-mode also restricts usage totals and breakdowns to sessions with at least one
+matching permission request in the selected time window; all usage of those sessions is
+counted because usage is not recorded per mode. --operation, --kind, --decision-source,
+--result, --command-access, --command, --path, and --url do not affect usage totals,
+since usage is not recorded per permission request. JSON output lists the modes applied
+to usage in UsageAgentModes.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -122,6 +145,9 @@ totals, since usage is not recorded per permission request.`,
 				opts.Since = time.Now().Add(-d)
 			}
 			opts.Operations = operations
+			opts.AgentMode = agentModes
+			opts.Results = results
+			opts.CommandAccess = commandAccess
 			opts.Kind = kinds
 			opts.DecisionSource = decisionSources
 			opts.Command = commands
@@ -150,6 +176,9 @@ totals, since usage is not recorded per permission request.`,
 	f.StringVar(&until, "until", "", "only count requests made before this time (RFC3339, YYYY-MM-DD, or a relative duration like 2w/7d/24h/30m)")
 	f.StringVar(&period, "period", "", "only count requests made within this period back from now (e.g. 7d, 3w, 6m, 1y); shorthand for --since")
 	cmdutil.StringSliceEnumFlag(cmd, &operations, "operation", "", nil, []string{"read", "write"}, "only count requests classified as this operation; may be repeated to match multiple operations")
+	f.StringArrayVar(&agentModes, "agent-mode", nil, "only count requests with this exact recorded Agent mode (use unknown for missing modes); may be repeated")
+	f.StringArrayVar(&results, "result", nil, "only count requests with this exact recorded result; may be repeated")
+	cmdutil.StringSliceEnumFlag(cmd, &commandAccess, "command-access", "", nil, []string{"read-only", "read-write"}, "only count requests containing commands with this access mode; may be repeated")
 	f.StringArrayVar(&kinds, "kind", nil, "only count requests of this exact tool kind (e.g. shell, read, write); may be repeated to match multiple kinds")
 	f.StringArrayVar(&decisionSources, "decision-source", nil, "only count permission outcomes with this exact decision source (e.g. human_response, unattended_fallback, unknown); may be repeated to match multiple values")
 	f.StringArrayVar(&commands, "command", nil, "only count requests that include this exact command identifier; may be repeated to match multiple commands")

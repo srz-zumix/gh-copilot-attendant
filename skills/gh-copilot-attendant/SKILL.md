@@ -199,6 +199,31 @@ down by working directory and model, including unfinished sessions. Request usag
 and cumulative checkpoints/shutdown snapshots are combined without double counting.
 Model request counts are separate from permission requests. The model breakdown uses
 request records or `modelMetrics` and appears as `MODEL_USAGE` / `ByModelUsage`.
+`AGENT_MODE` / `ByAgentMode` groups permission requests and their approval,
+location-approval, denial, and unresolved outcomes by the `agentMode`
+snapshot at permission evaluation. First-seen request identities count
+once. Missing, null, empty, or malformed modes are `unknown`; future
+nonempty mode names remain distinct. Do not infer modes from session
+changes, defaults, models, or main/subagent roles, or attribute usage or
+duration to them. All scope, request-start time, and permission filters
+apply; later completions still resolve selected requests. `--top` limits
+rows sorted by request total, then mode name, without truncating overall
+request totals. Unlogged requests cannot be reconstructed.
+Use repeatable `--agent-mode <mode>` to match recorded modes exactly and
+case-sensitively; `unknown` includes missing or invalid modes. Multiple
+values are alternatives, combined with the other permission filters. The
+mode filter also limits usage totals and the CWD, model, and agent usage
+breakdowns to sessions with a matching in-window permission request; all usage
+of those sessions is counted because usage records have no mode.
+Use repeatable `--result <value>` to match exact recorded permission results,
+including specific denied variants. Use repeatable
+`--command-access <read-only|read-write>` to select requests containing
+commands with those attributes; a mixed request can match both. This command
+attribute filter is distinct from `--operation`, which classifies each whole
+request. These filters affect permission statistics, not usage.
+`UsageAgentModes` lists the modes applied to usage. Other permission filters
+do not affect usage, and no permission filter affects Fusion or user-question
+statistics.
 `AGENT_USAGE` / `ByRoleUsage` separates main, subagent, and unknown usage from request
 metadata; do not infer roles from model names. Checkpoint-only usage may have no model,
 request, or token breakdown. `UsageIncompleteSessions` flags incomplete breakdowns,
@@ -206,6 +231,14 @@ whose request/token counts are recorded subtotals. `UsageRequests` is the API re
 total. Usage time bounds select recorded updates; cumulative snapshots are
 differenced against earlier recorded totals and may include usage before the
 selected period. Role usage is never truncated by `--top`.
+JSON `SessionActivity` version 1 counts distinct sessions with timestamped
+events per CLI-host-local date/hour, not continuous activity or idle time.
+Repeated local clock hours are combined. Scope and inclusive-since /
+exclusive-until event bounds apply; permission filters and `--top` do not.
+Coverage identifies partial, outside, and nonexistent local hours. Untimed
+and malformed events are counted across scoped logs and cannot be placed in a
+time window. The scan time is not an implicit upper bound; future timestamps
+can extend the display range.
 `FUSION` / `Fusion` counts recorded resolved turns by pattern and usage records
 by pattern, phase, role, and usage model. A phase count requires both a Fusion
 ID and phase ID; unidentified records and incomplete AIU coverage are shown
@@ -323,9 +356,54 @@ or per 1M tokens. Session units use each model's recorded `Sessions` count, neve
 the overall session count. Missing counts or zero denominators show a dash;
 missing counts also display an explanation. Current VS Code statistics do not
 report model session counts.
-In the
-normal CLI view, User questions precedes Agent usage and the Copilot Fusion
-panel; Fusion-only excludes user questions and permissions.
+The normal CLI view has a Session activity heatmap with 30-day navigation and
+horizontal scrolling at the bottom of the dashboard. Its heading toggles the
+panel, which starts expanded and stays expanded or collapsed across dashboard
+updates. Each cell counts distinct sessions with an event in the host-local
+hour, not active time. When Agent mode filters are active, it counts matching
+`permission.requested` events by their request timestamps instead. `*`, `–`,
+and `×` identify partial, outside, and nonexistent hours. Footer totals add the
+daily counts for each hour on the displayed page, so a session can count on
+multiple days. Averages include zeros and partial hours once per covered day;
+outside and nonexistent hours are excluded. A summary asterisk means it includes
+partial hours. Footer cell colors use the heatmap scale relative to the largest
+value in each summary row. Untimed/malformed coverage gaps are shown separately.
+`get_data` exposes the aggregate; `get_summary` and Ask agent cap their list at
+ten recent recorded dates and report omissions. Older CLI results require an
+updated CLI or the `source` runner. Fusion-only and VS Code exclude this panel.
+Usage panels in both views follow the same order when data is available: model
+AIU share, Models table, workspace AIU share, then the Workspaces table.
+In the normal CLI view, User questions precedes Agent usage and the Copilot
+Fusion panel; Fusion-only excludes user questions and permissions.
+Panels are grouped into collapsible categories whose headings toggle them:
+Usage, Permissions, and Session activity in the normal CLI view; Fusion usage
+in the Fusion-only view; and Usage and Tools on the VS Code tab. The
+Permissions category holds the Summary panel (permission cards, legend, and
+response wait), Agent modes, Results, Decision sources, Read-only vs
+read-write, Tool kinds, Commands, Paths, URLs, and Working directories.
+Each panel, including Models, Workspaces, and Copilot Fusion, also collapses
+independently. Categories and panels start expanded and keep their state across
+dashboard updates and view changes. CLI and VS Code panels keep separate
+states; matching CLI panels share state with the Fusion-only view. A panel's
+Clear button remains available when collapsed and does not toggle the panel.
+Option-clicking any category or panel heading expands all included disclosures
+when any are collapsed, or collapses all when they are already expanded. The
+Usage and Permissions categories are excluded; their inner panels are still
+included.
+The normal CLI permission view shows Agent modes and their request outcomes.
+It shares `ByAgentMode` with `get_data`, `get_summary`, and Ask agent.
+Click a mode to add an exact permission filter; Clear removes only the mode
+filter. Other permission filters and Top apply. Usage is limited to sessions
+with a matching request; Fusion and user-question statistics are unaffected.
+Click Results and Read-only/read-write rows to filter by exact result or
+matching command access; a mixed request can match both command-access values.
+Older attendant builds without this field omit the panel. Older CLI logs
+without modes contribute to `unknown`.
+If the selected attendant CLI does not support `--agent-mode`, update it or
+choose an up-to-date source runner. Reload the dashboard extension if an older
+running provider does not support the filter.
+Fusion-only excludes Agent modes with the other permission statistics and
+retains the selection for the normal view.
 The CLI tab also shows Agent usage (main / subagent / unknown) and incomplete-usage
 notices. Normal-view agent unit costs require available row inputs and no
 reported incomplete session breakdowns; this is not per-record coverage.
@@ -369,9 +447,11 @@ CLI model names cannot be used as filters (`session stats` has no `--model` flag
 The CLI Copilot Fusion panel and agent summaries use the `Fusion` object from
 `session stats`. They distinguish resolved turns from turns and phases with
 recorded usage, show AIU record coverage and incomplete identifiers, and do not
-infer missing activity. Rows may share turns or phases. Click a Phase usage
-column heading to sort and click again to reverse; record count descending is
-the default. AIU coverage sorts by the fraction of records reporting AIU;
+infer missing activity. Click the panel heading to collapse or expand it; it
+starts expanded and retains its state across dashboard updates and view changes,
+independently of Session activity. Rows may share turns or phases. Click a Phase
+usage column heading to sort and click again to reverse; record count descending
+is the default. AIU coverage sorts by the fraction of records reporting AIU;
 unavailable AIU and undefined coverage stay last. Sorting applies to the rows
 selected by Top, which ranks phase groups by record count. Set Top to 0 for all
 groups. The preference persists across reloads and is shared between normal and
@@ -390,7 +470,7 @@ scope applies; permission filters and Top do not. No question/answer text is exp
 Older payloads without `AskUser` do not display invented question metrics.
 
 CLI `PERMISSION_WAIT` (`PermissionWait` in JSON) also reports request-to-completion
-elapsed time in the Permissions panel, separately from User questions. `HumanResponses`
+elapsed time in the Permissions Summary panel, separately from User questions. `HumanResponses`
 contains only recorded `human_response` decisions. `NonHumanDecisions` and
 `UnknownSourceDecisions` keep other and missing-source decision times separate; never
 infer human wait from result or duration. Each group exposes completed/timed/untimed

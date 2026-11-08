@@ -33,7 +33,7 @@ input (all fields are optional):
 
 | Field | Type | Default | CLI flag |
 | --- | --- | --- | --- |
-| `filters` | `object` | none | `session`: `operation`, `kind`, `command`, `path`, `url`, `decisionSource` (`--decision-source`); `vscode`: `tool`, `model`, `agent` |
+| `filters` | `object` | none | Filter groups listed below |
 | `fusionOnly` | `boolean` | `false` | Locally show only explicitly Fusion-tagged usage records on the Copilot CLI tab; no CLI flag |
 | `path` | `string` | empty | `--cwd` when `scope` is `cwd`, `--worktree` when `scope` is `worktree` |
 | `period` | `string` | `30d` | `--period` (mutually exclusive with `since`) |
@@ -44,9 +44,17 @@ input (all fields are optional):
 | `top` | `integer` | `20` | `--top` (`0` keeps every entry) |
 | `until` | `string` | empty | `--until` |
 
-The `path` and `url` session filters and all `vscode` filters are regular expressions in
-Go's RE2 syntax. Constructs RE2 does not support, such as lookaround and backreferences, are
-rejected before the command runs.
+The `session` filters are `operation`, `agentMode` (`--agent-mode`), `result`,
+`commandAccess` (`--command-access`), `kind`, `command`, `path`, `url`, and
+`decisionSource` (`--decision-source`). The `vscode` filters are `tool`, `model`,
+and `agent`.
+
+The `path` and `url` session filters and all `vscode` filters are regular
+expressions in Go's RE2 syntax. Constructs RE2 does not support, such as
+lookaround and backreferences, are rejected before the command runs.
+Agent modes are matched exactly, including case and surrounding spaces;
+`unknown` selects requests with missing or invalid modes. Values within a
+filter are alternatives; different filters are combined.
 VS Code Agent filters are evaluated locally with the bundled RE2JS matcher. No npm install
 is required to run the canvas.
 
@@ -68,6 +76,8 @@ is required to run the canvas.
   untruncated log details using `--include-log-stats`. Top is applied after local filtering.
   The last data-fetch time is retained while local filters change; Refresh reads new logs.
   An unsupported CLI reports an error rather than falling back to per-click commands.
+  Result and command-access filters require a CLI version that supports
+  `--result` and `--command-access`; update it or choose the `source` runner.
   Display, `get_data`, `get_summary`, and Ask agent share the same projected results.
   The footer shows an equivalent CLI command; its tooltip and summary `fetchCommand`
   identify the actual data-fetch command for VS Code local filtering.
@@ -78,6 +88,30 @@ is required to run the canvas.
   rather than advancing automatically next month. Editing either bound returns
   the calendar selection to None. Selecting a rolling period clears both bounds;
   selecting None preserves them.
+- **Session activity** — the normal Copilot CLI view shows distinct sessions
+  with recorded events for each date and hour in the CLI host's local time zone.
+  The panel appears last and can be collapsed using its heading. It starts
+  expanded and keeps its disclosure state across dashboard updates.
+  Multiple events from one session count once per cell; repeated clock hours are
+  combined. This is not a duration or continuous-activity estimate. Session,
+  directory, and event-time bounds apply. When Agent mode filters are selected,
+  cells count matching `permission.requested` events by their request timestamp;
+  other permission filters and Top do not affect the heatmap.
+  Navigate the entire range in 30-day pages and scroll horizontally for all
+  hours. Zero means no event was recorded as of the scan, `*` marks a partially
+  selected hour, `–` marks an hour outside the time window, and `×` marks a
+  nonexistent local hour. Total and Average rows summarize each hour for the
+  displayed page. Totals add daily counts, so the same session can be counted
+  on multiple days. Averages include zeros and partial hours once per covered
+  day; outside and nonexistent hours are excluded. An asterisk in a summary
+  means it includes partial hours. Footer cell colors use the heatmap scale and
+  are relative to the highest value in each summary row. Untimed and malformed
+  events are reported as coverage gaps across the scoped logs. Future timestamps can extend the
+  range; the scan time is not an implicit upper bound. Older CLI payloads need
+  an updated CLI or the `source` runner. VS Code and Fusion-only views do not
+  show this panel.
+  `get_data` includes the versioned aggregate; `get_summary` and Ask agent
+  include at most ten recent dates with recorded events and report omissions.
 - **Fusion usage only** — the Copilot CLI filter projects only explicitly
   Fusion-tagged usage records, not all usage in sessions that used Fusion.
   Permission statistics, user questions, resolution events, planned phases, and
@@ -122,18 +156,21 @@ is required to run the canvas.
   CLI reports an explicit error; update it or use the `source` runner. The
   footer shows the unfiltered data-fetch command, not an equivalent filtered CLI
   command.
-- **Panel Clear** — filterable panel headers clear only their corresponding filter group:
-  VS Code Models (including model shares), Tools, and Subagents; CLI Decision sources,
-  Read-only vs read-write, Tool kinds, Commands, Paths, and URLs. Workspaces, workspace
-  shares, and Working directories clear directory scope to all workspaces. Other
-  filters, period/time bounds, session, Top, and display preferences remain unchanged.
-  Clear is disabled without an active matching condition, including panels with no rows.
+- **Panel Clear** — filterable panel headers clear only their corresponding
+  filter group: VS Code Models (including model shares), Tools, and Subagents;
+  CLI Results, Decision sources, Command access, Tool kinds, Commands, Paths,
+  and URLs. Workspaces, workspace shares, and Working directories clear
+  directory scope to all workspaces. Other filters, period/time bounds, session,
+  Top, and display preferences remain unchanged. Clear is disabled without an
+  active matching condition, including panels with no rows. Clear remains
+  available when its panel is collapsed and does not toggle the panel.
   CLI model, role, and Fusion panels do not have Clear buttons because those
   axes are not filters.
-- **Usage panel order** — both views show the model AIU share, Models table,
-  workspace AIU share, then the Workspaces table, when data is available. In
-  the normal CLI view, User questions and Agent usage follow, then the Fusion
-  panel and Permissions summary. Fusion-only excludes user questions and
+- **Usage panel order** — views show the model AIU share, Models table,
+  workspace AIU share, then the Workspaces table, when data is available.
+  Copilot Fusion appears immediately before Models in the normal CLI and
+  Fusion-only views. In the normal CLI view, User questions and Agent usage
+  follow the Workspaces table. Fusion-only excludes user questions and
   permissions. CLI, Fusion-only, and VS Code summary cards use the same compact,
   responsive, equal-width layout and start with sessions, AIU, and a request or
   record count. Usage card titles stay on one line; other content may wrap.
@@ -142,6 +179,45 @@ is required to run the canvas.
   Count semantics remain source-specific.
   Table column headings can wrap to two lines to reduce horizontal scrolling.
   Panels use the same bordered style as the other panels.
+- **Collapsible categories and panels** — the dashboard groups panels into
+  categories whose headings toggle them: Usage, Permissions, and Session
+  activity in the normal CLI view; Fusion usage in the Fusion-only view; and
+  Usage and Tools (Tools and Subagents) on the VS Code tab. The Permissions
+  category groups the Summary (permission cards, decision legend, and response
+  wait), Agent modes, Results, Decision sources, Read-only vs read-write, Tool
+  kinds, Commands, Paths, URLs, and Working directories panels. Each panel,
+  including Models, Workspaces, and Copilot Fusion, can also be toggled
+  independently. Categories and panels start expanded and retain their state
+  across dashboard updates and view changes. CLI and VS Code panels keep
+  separate states; matching CLI panels share state with the Fusion-only view.
+  Option-clicking any category or panel heading expands all included
+  disclosures when any are collapsed, or collapses all when they are already
+  expanded. The Usage and Permissions categories are excluded; their inner
+  panels are still included.
+- **Agent modes** — the normal CLI permission view groups requests and their
+  approval, location-approval, denial, and unresolved outcomes by the mode
+  recorded at permission evaluation. This is separate from main/subagent
+  usage roles and session-wide settings.
+  Missing modes appear as `unknown`; unlogged requests cannot be reconstructed.
+  Click a mode to filter permission statistics, or use Clear to remove only
+  the mode filter. Other permission filters and Top apply. Usage is limited to
+  sessions with a matching request; the Usage hint notes CLI results that do
+  not confirm this. Fusion and user-question statistics are not filtered by
+  mode.
+  Display, `get_data`, `get_summary`, and Ask agent share the breakdown.
+  Older `gh copilot-attendant` builds without `ByAgentMode` omit the panel.
+  Older Copilot CLI logs without modes contribute to `unknown` in
+  supported builds. If the selected CLI does not support `--agent-mode`,
+  `--result`, or `--command-access`, update it or choose an up-to-date source
+  runner. Reload the dashboard extension if a previously running provider
+  does not yet support the filter.
+  Fusion-only excludes this permission breakdown and preserves the filter
+  for the normal view.
+  Click a Results row to filter by that exact recorded result, or a
+  Read-only/read-write row to select requests containing commands with that
+  access attribute. Mixed requests can match both command-access values.
+  Operation remains a separate request-level classification filter. These
+  permission filters do not affect usage totals.
 - **Copilot CLI usage** — AIU, premium requests, prompt/output tokens, cache
   read/write, uncached input, cache hit rate, API requests, and API time,
   including unfinished sessions. Across CLI and VS Code, AIU totals and unit
@@ -152,8 +228,10 @@ is required to run the canvas.
   Fusion-level completeness. Request usage records and cumulative
   checkpoints/shutdown snapshots are combined without double counting.
   Refresh reads the latest recorded totals; logs are not continuously polled.
-  Incomplete model/request/token breakdowns are noted explicitly. Permission filters
-  do not apply to usage totals. With Fusion-capable CLI builds, time bounds
+  Incomplete model/request/token breakdowns are noted explicitly. Agent mode
+  filters limit usage, workspace, model, and agent usage to sessions with a
+  matching permission request, counting all usage of those sessions; other
+  permission filters do not apply to usage totals. With Fusion-capable CLI builds, time bounds
   select recorded usage updates; cumulative snapshots are differenced against
   earlier recorded totals and may include usage before the selected period.
 - **Copilot CLI agent usage** — an Agent usage table separates main, subagent,
@@ -211,8 +289,9 @@ is required to run the canvas.
   the CLI does not support `session stats --model`.
 - **Copilot CLI permissions** — sessions, permission requests, and approved/denied/unresolved totals, with
   stacked bars per result, decision source (when the CLI reports it), read-only/read-write,
-  tool kind, command, path, URL, and working directory. Click a decision source, tool kind,
-  command, path, or URL entry to add it as a filter, or a working directory to scope to it.
+  tool kind, command, path, URL, and working directory. Click an Agent mode,
+  decision source, tool kind, command, path, or URL entry to add it as a
+  filter, or a working directory to scope to it.
   The same panel shows human permission response wait (total/average/maximum) from
   paired request/completion timestamps. Only `human_response` decisions contribute;
   other and unknown-source decision timing stays separate. Completed/timed/untimed

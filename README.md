@@ -12,7 +12,8 @@ Copilot app dashboard.
   model and workspace, inspect main-agent and subagent activity, and explore
   explicitly recorded Copilot Fusion usage.
 - **Understand agent interactions.** Review tool and permission activity,
-  approval/denial outcomes, and recorded user-question and permission wait times.
+  approval/denial outcomes by recorded Agent mode, and user-question
+  and permission wait times.
 - **Share insights beyond the metrics dashboard.** Turn organization or enterprise
   metrics into Markdown or self-contained HTML reports with trends and breakdowns.
   Publish them as GitHub issue artifacts when needed.
@@ -86,11 +87,20 @@ initialization, permissions, and privacy details.
 
 ```sh
 gh copilot-attendant session stats --period 7d
+gh copilot-attendant session stats --period 7d --agent-mode plan
+gh copilot-attendant session stats --period 7d --result denied
 ```
 
 Inspect the last seven days of local Copilot CLI activity in the current git
 worktree (the default scope). Add `--all` to include every working directory,
-or `--format json` for structured output.
+or `--format json` for structured output. The second command filters permission
+requests by their recorded Agent mode and limits usage to sessions with a
+matching request. Filter permission outcomes by exact result with `--result`;
+the dashboard also filters permission requests by clicking Results or
+Read-only/read-write rows.
+The dashboard also shows sessions with recorded events by local date and hour;
+this is not a continuous-activity measurement. When `--agent-mode` is selected,
+the heatmap counts matching permission requests by their recorded request time.
 
 ### vscode
 
