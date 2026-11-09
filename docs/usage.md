@@ -7,6 +7,7 @@ dashboard behavior.
 ## Contents
 
 - [Copilot extensions and code review settings](#copilot)
+- [Copilot CLI permission hook](#hook)
 - [Organization and enterprise metrics](#metrics)
 - [Local Copilot CLI sessions](#session)
 - [Agent skills](#skills)
@@ -205,6 +206,110 @@ inherits the coding agent configuration. The output shows `runner_type`,
 `runner_labels`, `runner_group_name`, `allow_repository_customization`, and
 `configured_by` when reported. JSON, jq, and template output use one
 API-shaped object and preserve null values.
+
+### hook
+
+The `hook` commands let a GitHub Copilot CLI
+[`permissionRequest` hook](https://docs.github.com/en/copilot/reference/hooks-reference#permissionrequest-decision-control)
+approve or deny tool calls from rules in a config file. Unlike
+`permissions-config.json`, which is scoped per location, these rules apply to
+every session that loads the hook.
+
+The config file is YAML. It is read from `--config`, then
+`$GH_COPILOT_ATTENDANT_CONFIG`, then
+`$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml` (default
+`~/.config/gh-copilot-attendant/config.yaml`):
+
+```yaml
+hooks:
+  permissionRequest:
+    allow:
+      commands:
+        - "git status:*"
+        - "git log"
+        - "ls:*"
+        - "go test:*"
+      tools:
+        - "web_fetch"
+    deny:
+      commands:
+        - "rm:*"
+        - "git push:*"
+      tools:
+        - "example-mcp-delete_*"
+```
+
+- `commands` match bash command lines. A rule is split on whitespace and
+  compared with the command's arguments after quote removal. `git log` matches
+  only that exact command; a trailing `:*` (`git status:*`) also allows any
+  additional arguments.
+- `tools` are glob patterns (`*`, `?`, `[...]`) matched against the hook
+  `toolName`, such as `web_fetch` or an MCP tool name.
+- Deny rules win over allow rules. A request that matches no rule produces no
+  decision, so Copilot CLI continues with its normal permission flow.
+- A bash command line is split into simple commands at `;`, `&`, `&&`, `||`,
+  `|`, `|&`, and newlines. It is allowed only when every simple command matches
+  an allow rule, and denied when any simple command matches a deny rule.
+- Command lines with `$` expansions, command substitution, subshells, brace
+  groups, `!`, comments, input redirection, or output redirection other than
+  `/dev/null` or a file descriptor (`2>&1`) are never decided.
+- Environment variable prefixes such as `PAGER=less git log` are not matched by
+  `git log` rules.
+- `powershell` commands are never allowed, and `tools` rules never allow the
+  `bash` or `powershell` tools. Requests that ask to bypass the sandbox are
+  never allowed.
+- Unknown config keys and invalid rules are errors.
+
+An allowed command name does not guarantee a read-only operation. A `:*` rule
+authorizes all remaining arguments; for example, `git diff:*` also permits
+`git diff --output=<file>`. Git configuration, such as `core.fsmonitor`, can
+run programs even for `git status`. Allow only commands you trust in every
+workspace, and prefer exact rules for commands with dangerous options.
+
+#### hook install
+
+```sh
+gh copilot-attendant hook install [--config <path>] [--force] \
+  [--path <file>] [--timeout <seconds>]
+```
+
+Writes a user-level Copilot CLI hook config that runs
+`gh copilot-attendant hook permission-request` for every `permissionRequest`
+event. The file is written to `$COPILOT_HOME/hooks/gh-copilot-attendant.json`
+(default `~/.copilot/hooks/gh-copilot-attendant.json`). Copilot CLI loads hooks
+when a session starts.
+
+- `--config`: config file path, passed to the hook as an absolute path.
+  Default: none, so the hook uses its own resolution order.
+- `--force`: overwrite an existing hook config file. Default: `false`.
+- `--path`: destination hook config file. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
+- `--timeout`: hook `timeoutSec` in seconds. Default: `10`.
+
+#### hook permission-request
+
+```sh
+gh copilot-attendant hook permission-request [--config <path>]
+```
+
+Reads a `permissionRequest` hook payload from stdin and prints
+`{"behavior":"allow"}` or `{"behavior":"deny","message":"..."}` according to
+the config rules. Nothing is printed when no rule decides the request or the
+config file does not exist. Copilot CLI invokes this command; run it manually
+only to test rules:
+
+```sh
+echo '{"toolName":"bash","toolInput":{"command":"git status"}}' |
+  gh copilot-attendant hook permission-request
+```
+
+The payload may use `toolName`/`toolInput`, `tool_name`/`tool_input`, or
+`toolArgs`; tool input may be an object or a JSON-encoded string. Invalid JSON,
+duplicate keys, conflicting values, or an invalid config file make the command
+exit with status 1 without a decision.
+
+- `--config`: config file path. Default: `$GH_COPILOT_ATTENDANT_CONFIG`, then
+  `$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml`.
 
 ### metrics
 
