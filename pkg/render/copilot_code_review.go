@@ -95,7 +95,7 @@ func RenderCopilotCodeReviewPolicy(r *sharedrender.Renderer, policy *copilotsett
 // RenderCopilotCodeReviewRunner renders an organization's runner configuration.
 func RenderCopilotCodeReviewRunner(r *sharedrender.Renderer, runner *gh.OrganizationCopilotCodeReviewRunner) error {
 	if runner == nil {
-		return fmt.Errorf("Copilot code review runner must not be nil")
+		return fmt.Errorf("expected a non-nil Copilot code review runner")
 	}
 	if r.HasExporter() {
 		return r.RenderExportedData(runner)

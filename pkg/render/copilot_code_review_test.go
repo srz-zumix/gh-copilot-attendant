@@ -87,7 +87,7 @@ func TestRenderCopilotCodeReviewRunner(t *testing.T) {
 	assert.Equal(t, false, body["allow_repository_customization"])
 	assert.Nil(t, body["runner_group_name"])
 	assert.Equal(t, "coding_agent", body["configured_by"])
-	require.Error(t, RenderCopilotCodeReviewRunner(&output.Renderer, nil))
+	require.ErrorContains(t, RenderCopilotCodeReviewRunner(&output.Renderer, nil), "non-nil Copilot code review runner")
 }
 
 type shortOutputWriter struct{}
