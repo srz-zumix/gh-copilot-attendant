@@ -6,6 +6,7 @@ require (
 	github.com/cli/cli/v2 v2.103.0
 	github.com/cli/go-gh/v2 v2.17.0
 	github.com/google/go-github/v93 v93.0.0
+	github.com/itchyny/gojq v0.12.19
 	github.com/spf13/cobra v1.10.2
 	github.com/srz-zumix/go-gh-extension v0.7.8
 	github.com/stretchr/testify v1.12.1
@@ -54,7 +55,6 @@ require (
 	github.com/henvic/httpretty v0.2.0 // indirect
 	github.com/huandu/xstrings v1.6.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/itchyny/gojq v0.12.19 // indirect
 	github.com/itchyny/timefmt-go v0.1.9 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
