@@ -4,7 +4,8 @@
 
 A GitHub CLI extension that brings local Copilot activity and organization or
 enterprise usage metrics into your terminal, shareable reports, and an interactive
-Copilot app dashboard.
+Copilot app dashboard. It also manages Copilot code review policies and
+organization runner settings.
 
 ## Why gh-copilot-attendant?
 
@@ -20,6 +21,8 @@ Copilot app dashboard.
 - **Explore visually with your agent.** Browse local usage in the Copilot app
   dashboard, click entries to filter, compare usage costs, and ask the agent to
   analyze the selected data.
+- **Manage code review settings.** View and update organization or enterprise
+  policies and organization runner configurations.
 
 Local statistics use recorded logs; missing data is not treated as zero.
 Organization and enterprise reports require access to the Copilot usage metrics
@@ -57,6 +60,20 @@ gh copilot-attendant copilot extension install attendant-dashboard
 Install the interactive dashboard for the current user (the default scope).
 In the GitHub Copilot app, ask: "Open the Copilot attendant dashboard for all
 sessions in the last 7 days."
+
+View or update Copilot code review policies and organization runner settings:
+
+```sh
+gh copilot-attendant copilot settings policy view --org example-org
+gh copilot-attendant copilot settings policy set --org example-org --state enabled
+gh copilot-attendant copilot settings runner view --org example-org
+gh copilot-attendant copilot settings runner set --org example-org \
+  --type labeled --labels self-hosted,linux
+```
+
+The `set` commands change live settings. Replace `example-org` with your
+organization and review the [usage guide](docs/usage.md#copilot-settings-policy-set)
+for permissions, enterprise policies, and runner inheritance.
 
 ### metrics
 

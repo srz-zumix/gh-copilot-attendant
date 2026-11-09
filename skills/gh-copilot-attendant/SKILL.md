@@ -1,13 +1,14 @@
 ---
 name: gh-copilot-attendant
-description: Basic skill package for the gh-copilot-attendant GitHub CLI extension.
-allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant copilot extension:*), Bash(gh copilot-attendant metrics report:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
+description: Use gh-copilot-attendant to inspect Copilot activity, generate usage reports, manage its dashboard, or view and update Copilot code review policies and organization runners.
+allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant copilot extension:*), Bash(gh copilot-attendant copilot settings policy view:*), Bash(gh copilot-attendant copilot settings policy set:*), Bash(gh copilot-attendant copilot settings runner view:*), Bash(gh copilot-attendant copilot settings runner set:*), Bash(gh copilot-attendant metrics report:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
 ---
 
 # gh-copilot-attendant
 
 Use `gh-copilot-attendant` to inspect local Copilot usage, explore the interactive
-dashboard, and generate shareable organization or enterprise metrics reports.
+dashboard, generate shareable metrics reports, and manage Copilot code review
+policies and organization runners.
 The [README](../../README.md) provides the overview and quick start; the
 [usage guide](../../docs/usage.md) contains detailed commands, defaults, and
 accounting semantics.
@@ -18,6 +19,27 @@ accounting semantics.
 
 Manages the bundled Copilot CLI canvas extension (`attendant-dashboard`). See the
 [usage guide](../../docs/usage.md#copilot-extension-install) for the full flag reference.
+
+### copilot settings policy view / set
+
+Views or updates organization and enterprise code review policies. Select an
+organization with `--org` or the owner of `--repo`; policy commands also accept
+`--enterprise`. With no selector, the current repository owner is used. The
+`set` command changes live policy; use it only when requested. Enterprise
+propagation is asynchronous, and an enterprise-managed organization can return
+a 409 conflict.
+
+### copilot settings runner view / set
+
+Views the effective organization code review runner or sets its configuration.
+The coding agent runner is inherited until a code review-specific configuration
+is set. Use `--type standard|labeled`, with labels and/or a group for labeled
+runners. Omit `--allow-repository-customization` to retain its effective value.
+`set` changes live settings; use it only when requested. The settings APIs
+require suitable owner or enterprise permissions and classic PAT/OAuth scopes;
+GitHub App tokens and fine-grained PATs are unsupported. For exact permissions,
+states, output flags, and inheritance, consult the
+[usage guide](../../docs/usage.md#copilot-settings-policy-set).
 
 ### metrics report
 
@@ -55,12 +77,13 @@ Missing counts and zero-denominator shares are `n/a`. Empty names appear as
 Requests per chat mode appears below Average chat
 requests per active user as a daily stacked bar chart using
 `user_initiated_interaction_count` for `chat_panel_*_mode` entries in each
-day's `totals_by_feature`, including Plan. Missing counts remain `n/a`; incomplete days are marked with `*` and
-show a subtotal of known counts (or `n/a` if none), without total shares. When
-no chat-mode feature is reported, the chart is omitted. Chart areas, points, and
-bars show labels and values in tooltips on hover or keyboard focus. Daily
-chart tooltips show all series for that day, with missing values shown as
-`n/a`. Stacked-bar tooltips list every displayed series and, when complete, the
+day's `totals_by_feature`, including Plan. Missing counts remain `n/a`;
+incomplete days are marked with `*` and show a subtotal of known counts (or
+`n/a` if none), without total shares. When no chat-mode feature is reported, the
+chart is omitted. Chart areas, points, and bars show labels and values in
+tooltips on hover or keyboard focus. Daily chart tooltips show all series for
+that day, with missing values shown as `n/a`. Stacked-bar tooltips list every
+displayed series and, when complete, the
 bar total with counts and shares; missing values are `n/a`. Tooltips omit chart
 titles. With JavaScript, they align numeric columns, and long tooltips can be
 scrolled over the chart or with arrow keys while focused. Model usage per day
@@ -106,9 +129,10 @@ active days (top seven, reported interactions divided by days with a user
 record, including zero-interaction days) beside users by
 surface (vertical bars; users may count in several), then reported days
 distribution (`1`, `2–3`, `4–7`, `8–14`, `15+` days) beside acceptance rate
-distribution (`<20%` to `≥80%`, including rates above 100%). Missing interaction values are excluded
-from totals; users without reported interactions are omitted. By repository includes
-horizontal stacked bars for reviewed, created, and merged pull requests. The
+distribution (`<20%` to `≥80%`, including rates above 100%). Missing
+interaction values are excluded from totals; users without reported interactions
+are omitted. By repository includes horizontal stacked bars for reviewed,
+created, and merged pull requests. The
 reviewed chart compares PRs reviewed with Copilot to those without a Copilot
 review; created and merged charts compare Copilot-created PRs with
 other-created PRs. Their tooltips show counts and shares. Copilot review
@@ -193,12 +217,13 @@ Per-user data may be sensitive, so confirm before requesting
 
 ### session stats
 
-Reports tool, path, and URL permission statistics, plus per-session usage totals (premium
-requests, AIU, token counts) from local GitHub Copilot CLI session history. Usage is broken
-down by working directory and model, including unfinished sessions. Request usage records
-and cumulative checkpoints/shutdown snapshots are combined without double counting.
-Model request counts are separate from permission requests. The model breakdown uses
-request records or `modelMetrics` and appears as `MODEL_USAGE` / `ByModelUsage`.
+Reports tool, path, and URL permission statistics, plus per-session usage
+totals (premium requests, AIU, token counts) from local GitHub Copilot CLI
+session history. Usage is broken down by working directory and model, including
+unfinished sessions. Request usage records and cumulative checkpoints/shutdown
+snapshots are combined without double counting. Model request counts are
+separate from permission requests. The model breakdown uses request records or
+`modelMetrics` and appears as `MODEL_USAGE` / `ByModelUsage`.
 `AGENT_MODE` / `ByAgentMode` groups permission requests and their approval,
 location-approval, denial, and unresolved outcomes by the `agentMode`
 snapshot at permission evaluation. First-seen request identities count
@@ -224,11 +249,12 @@ request. These filters affect permission statistics, not usage.
 `UsageAgentModes` lists the modes applied to usage. Other permission filters
 do not affect usage, and no permission filter affects Fusion or user-question
 statistics.
-`AGENT_USAGE` / `ByRoleUsage` separates main, subagent, and unknown usage from request
-metadata; do not infer roles from model names. Checkpoint-only usage may have no model,
-request, or token breakdown. `UsageIncompleteSessions` flags incomplete breakdowns,
-whose request/token counts are recorded subtotals. `UsageRequests` is the API request
-total. Usage time bounds select recorded updates; cumulative snapshots are
+`AGENT_USAGE` / `ByRoleUsage` separates main, subagent, and unknown usage from
+request metadata; do not infer roles from model names. Checkpoint-only usage may
+have no model, request, or token breakdown. `UsageIncompleteSessions` flags
+incomplete breakdowns, whose request/token counts are recorded subtotals.
+`UsageRequests` is the API request total. Usage time bounds select recorded
+updates; cumulative snapshots are
 differenced against earlier recorded totals and may include usage before the
 selected period. Role usage is never truncated by `--top`.
 JSON `SessionActivity` version 1 counts distinct sessions with timestamped
@@ -259,20 +285,21 @@ See the
 
 ### vscode stats
 
-Reports tool usage, LLM token/usage, turn, and subagent statistics from VS Code GitHub
-Copilot Chat debug logs for the Local harness, including recursively referenced
-subagent logs counted once each. Child activity contributes to the parent workspace
-without increasing parent session counts. Internal title-generation child logs and
-unreferenced files are excluded.
+Reports tool usage, LLM token/usage, turn, and subagent statistics from VS Code
+GitHub Copilot Chat debug logs for the Local harness, including recursively
+referenced subagent logs counted once each. Child activity contributes to the
+parent workspace without increasing parent session counts. Internal
+title-generation child logs and unreferenced files are excluded.
 Time bounds apply to individual events, even when the child invocation is older.
 `--agent` scopes models, AIU, tokens, tools, turns, and workspace totals to matching
 subagents' own logs. Main-agent and differently named descendant usage is excluded;
-multiple patterns include any matching name. Without `--agent`, all parent and referenced
-child activity is included. Tool and model filters apply independently within that scope.
+multiple patterns include any matching name. Without `--agent`, all parent and
+referenced child activity is included. Tool and model filters apply
+independently within that scope.
 Missing child logs produce warnings without dropping recorded matching invocations.
 `--include-log-stats` (optional, default false; incompatible with `--agent`) exports
-versioned, untruncated normalized per-log metrics and parent/invocation identities in JSON.
-No raw events or conversation content are exported.
+versioned, untruncated normalized per-log metrics and parent/invocation
+identities in JSON. No raw events or conversation content are exported.
 See the [usage guide](../../docs/usage.md#vscode-stats)
 for the full flag reference.
 
@@ -288,7 +315,8 @@ Previously saved Top values are preserved.
 In the GitHub Copilot app, the `copilot-attendant-dashboard` canvas (provided by
 `.github/extensions/attendant-dashboard` in this repository) visualizes the same
 `session stats` and `vscode stats` results. See its
-[README](../../.github/extensions/attendant-dashboard/README.md) for open inputs and actions.
+[README](../../.github/extensions/attendant-dashboard/README.md) for open inputs
+and actions.
 
 Period offers This month and Last month using the browser's local calendar
 boundaries. This month runs from month start to now; Last month ends exclusively
@@ -301,16 +329,17 @@ data. It reads Copilot Chat debug logs from the Local harness. Locally recorded
 VS Code Copilot harness (Agent Host) sessions are included in the Copilot CLI tab.
 The tab depends on the harness, not the VS Code version.
 
-Click a VS Code Subagents entry to scope all usage to that subagent's own logs, excluding
-the main agent and differently named descendants. Remove the Agent filter chip to return
-to the unfiltered agent scope; other filters remain in effect.
-VS Code Agent and Top changes project the cached dataset locally without invoking gh.
-Initial loading, explicit Refresh, and scope/time/session/tool/model changes fetch new
-log details. Parent chats and shared logs are deduplicated before Top is applied.
-`get_data`, `get_summary`, and Ask agent all use the same filtered projection. The displayed
-command is an equivalent CLI command; `fetchCommand` in summaries is the actual data fetch.
-Use `refresh` with `force: false` and a query patch to change Agent filters without fetching;
-the action's default `force: true` deliberately refreshes the dataset.
+Click a VS Code Subagents entry to scope all usage to that subagent's own logs,
+excluding the main agent and differently named descendants. Remove the Agent
+filter chip to return to the unfiltered agent scope; other filters remain in
+effect. VS Code Agent and Top changes project the cached dataset locally without
+invoking gh. Initial loading, explicit Refresh, and scope/time/session/tool/model
+changes fetch new log details. Parent chats and shared logs are deduplicated
+before Top is applied. `get_data`, `get_summary`, and Ask agent all use the same
+filtered projection. The displayed command is an equivalent CLI command;
+`fetchCommand` in summaries is the actual data fetch. Use `refresh` with
+`force: false` and a query patch to change Agent filters without fetching; the
+action's default `force: true` deliberately refreshes the dataset.
 
 On the Copilot CLI tab, enable **Fusion usage only** or set query
 `fusionOnly: true` to include only usage records explicitly tagged as Fusion,
@@ -329,9 +358,10 @@ view's order and notation where comparable, but usage records are not API
 requests. Both views show cache read, cache write, and uncached input totals.
 AIU and AIU unit costs use at most two decimal places in both CLI and VS Code
 views; positive values below 0.01 display as `<0.01`.
-Counts retain source-specific semantics. Fusion model and workspace token bars require complete prompt, cache read,
-cache write, uncached input, and output totals, with prompt equal to the sum
-of its components. Cache hit requires complete prompt and cache-read totals
+Counts retain source-specific semantics. Fusion model and workspace token bars
+require complete prompt, cache read, cache write, uncached input, and output
+totals, with prompt equal to the sum of its components. Cache hit requires
+complete prompt and cache-read totals
 and a valid nonzero denominator; otherwise it is unavailable.
 Token counts use the normal view's compact notation. Hover over a token total
 for its exact recorded count and coverage. Partial token, AIU, and API-time
@@ -351,9 +381,10 @@ suggestion preset is unavailable. The displayed command fetches unfiltered
 stats, so it is not equivalent to the local Fusion filter. Unsupported CLI
 builds fail explicitly; update the CLI or use the `source` runner.
 
-In the normal view, both tabs have a Models table comparing AIU per session, per API request (default),
-or per 1M tokens. Session units use each model's recorded `Sessions` count, never
-the overall session count. Missing counts or zero denominators show a dash;
+In the normal view, both tabs have a Models table comparing AIU per session,
+per API request (default), or per 1M tokens. Session units use each model's
+recorded `Sessions` count, never the overall session count. Missing counts or
+zero denominators show a dash;
 missing counts also display an explanation. Current VS Code statistics do not
 report model session counts.
 The normal CLI view has a Session activity heatmap with 30-day navigation and
@@ -421,11 +452,11 @@ latest recorded totals; it does not continuously poll logs.
 Click any column heading to sort the listed models, and click again to reverse
 the order. Set Top to 0 to include all models in the comparison.
 
-In the normal view, both Workspaces tables compare AIU per session, per API request, or per 1M tokens
-(default: session), with comparison bars and clickable metric headings. The default
-sort is AIU descending; missing metrics and zero denominators show a dash and sort
-last. Set Top to 0 to include all workspaces. Preferences are independent per tab
-and per table.
+In the normal view, both Workspaces tables compare AIU per session, per API
+request, or per 1M tokens (default: session), with comparison bars and clickable
+metric headings. The default sort is AIU descending; missing metrics and zero
+denominators show a dash and sort last. Set Top to 0 to include all workspaces.
+Preferences are independent per tab and per table.
 Filterable panels have a Clear button that clears only their corresponding filter
 group. Workspaces, workspace shares, and Working directories clear scope to all
 workspaces. Other filter groups, period/time bounds, session, and Top are preserved.
@@ -458,42 +489,48 @@ groups. The preference persists across reloads and is shared between normal and
 Fusion-only views. Older CLI builds omit the panel; use an updated CLI or the
 canvas `source` runner to view it.
 
-CLI `session stats` also reports `ASK_USER` (`AskUser` in JSON), and the CLI canvas shows
-a User questions panel. Start/completion events are paired by session, agent, and tool
-call identity; replayed events count once. Outcomes distinguish answered, cancelled,
-failed, unresolved, and unknown. Only valid answered pairs contribute to total/average/
-maximum wait in milliseconds. `TimedAnswers` and `UntimedAnswers` expose missing timing;
-average/maximum are null without timed answers. Elapsed tool time includes UI/transport
-overhead and sums overlapping waits, not unique wall-clock idle time. Question starts
-are selected by time bounds, and later completions still resolve them. Session/directory
-scope applies; permission filters and Top do not. No question/answer text is exported.
+CLI `session stats` also reports `ASK_USER` (`AskUser` in JSON), and the CLI
+canvas shows a User questions panel. Start/completion events are paired by
+session, agent, and tool call identity; replayed events count once. Outcomes
+distinguish answered, cancelled, failed, unresolved, and unknown. Only valid
+answered pairs contribute to total/average/maximum wait in milliseconds.
+`TimedAnswers` and `UntimedAnswers` expose missing timing; average/maximum are
+null without timed answers. Elapsed tool time includes UI/transport overhead and
+sums overlapping waits, not unique wall-clock idle time. Question starts are
+selected by time bounds, and later completions still resolve them.
+Session/directory scope applies; permission filters and Top do not. No
+question/answer text is exported.
 Older payloads without `AskUser` do not display invented question metrics.
 
-CLI `PERMISSION_WAIT` (`PermissionWait` in JSON) also reports request-to-completion
-elapsed time in the Permissions Summary panel, separately from User questions. `HumanResponses`
-contains only recorded `human_response` decisions. `NonHumanDecisions` and
-`UnknownSourceDecisions` keep other and missing-source decision times separate; never
-infer human wait from result or duration. Each group exposes completed/timed/untimed
-counts and total/average/maximum milliseconds; average/maximum are null without timed
-decisions. Invalid timing and unresolved requests have no inferred duration. Replayed
-events count once by session/agent/request identity. All permission filters, session/
-directory scope, and request start-time bounds apply; Top does not. Later completions
-still resolve selected requests. Intervals include UI/transport overhead and sum overlaps,
-not unique idle time. Older payloads without this field omit the metrics.
+CLI `PERMISSION_WAIT` (`PermissionWait` in JSON) also reports
+request-to-completion elapsed time in the Permissions Summary panel, separately
+from User questions. `HumanResponses` contains only recorded `human_response`
+decisions. `NonHumanDecisions` and `UnknownSourceDecisions` keep other and
+missing-source decision times separate; never infer human wait from result or
+duration. Each group exposes completed/timed/untimed counts and
+total/average/maximum milliseconds; average/maximum are null without timed
+decisions. Invalid timing and unresolved requests have no inferred duration.
+Replayed events count once by session/agent/request identity. All permission
+filters, session/directory scope, and request start-time bounds apply; Top does
+not. Later completions still resolve selected requests. Intervals include
+UI/transport overhead and sum overlaps, not unique idle time. Older payloads
+without this field omit the metrics.
 VS Code Local harness debug logs do not independently identify ordinary permission
 request/response waits; confirmation-tool or operation duration is not a substitute
 for human approval wait.
 
-VS Code `vscode stats` also reports `USER_QUESTIONS` (`UserQuestions` in JSON), shown in
-the VS Code canvas's User questions panel. `Calls` counts completed `vscode_askQuestions`
-tool invocations, not individual questions in a batch. Outcomes distinguish answered,
-fully skipped, cancelled, failed, and unknown calls. Partially skipped batches with an
-answer count as answered. Only answered calls with valid recorded duration contribute
-to total/average/maximum wait; missing timing is recorded in `UntimedAnswers`.
-Average/maximum remain null without timed answers. In-flight questions are unavailable.
-Directory/session/agent/tool filters and call start-time bounds apply; model filters and
-Top do not. Agent filtering projects untruncated per-log metrics locally, deduplicates
-shared logs, and counts each parent chat once. UI, summaries, and Ask agent agree.
-Older datasets without `UserQuestions` omit the panel rather than inventing zero counts.
-Elapsed tool duration includes UI/transport overhead and sums overlapping intervals,
-not unique wall-clock idle time. Question and answer text is not exported.
+VS Code `vscode stats` also reports `USER_QUESTIONS` (`UserQuestions` in JSON),
+shown in the VS Code canvas's User questions panel. `Calls` counts completed
+`vscode_askQuestions` tool invocations, not individual questions in a batch.
+Outcomes distinguish answered, fully skipped, cancelled, failed, and unknown
+calls. Partially skipped batches with an answer count as answered. Only
+answered calls with valid recorded duration contribute to total/average/maximum
+wait; missing timing is recorded in `UntimedAnswers`. Average/maximum remain
+null without timed answers. In-flight questions are unavailable.
+Directory/session/agent/tool filters and call start-time bounds apply; model
+filters and Top do not. Agent filtering projects untruncated per-log metrics
+locally, deduplicates shared logs, and counts each parent chat once. UI,
+summaries, and Ask agent agree. Older datasets without `UserQuestions` omit the
+panel rather than inventing zero counts. Elapsed tool duration includes
+UI/transport overhead and sums overlapping intervals, not unique wall-clock
+idle time. Question and answer text is not exported.

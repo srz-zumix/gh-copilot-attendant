@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/srz-zumix/gh-copilot-attendant/cmd/copilot"
 	"github.com/srz-zumix/gh-copilot-attendant/version"
 	"github.com/srz-zumix/go-gh-extension/pkg/copilotext"
 )
@@ -10,7 +11,7 @@ import (
 func NewCopilotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "copilot",
-		Short: "Manage GitHub Copilot CLI integrations bundled with this extension",
+		Short: "Manage GitHub Copilot integrations and code review settings",
 	}
 	cmd.AddCommand(copilotext.NewExtensionCmd(copilotext.Config{
 		ToolName:    "gh-copilot-attendant",
@@ -22,6 +23,7 @@ func NewCopilotCmd() *cobra.Command {
 			},
 		},
 	}))
+	cmd.AddCommand(copilot.NewSettingsCmd())
 	return cmd
 }
 

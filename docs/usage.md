@@ -6,7 +6,7 @@ dashboard behavior.
 
 ## Contents
 
-- [Copilot extensions](#copilot)
+- [Copilot extensions and code review settings](#copilot)
 - [Organization and enterprise metrics](#metrics)
 - [Local Copilot CLI sessions](#session)
 - [Agent skills](#skills)
@@ -83,6 +83,128 @@ different commit than the installed one. Fails if an extension is not installed
 yet. `--scope` defaults to `user`. `--ref` overrides the default git ref
 (`main`). `--dry-run` prints what would be updated. `--force` re-installs even
 when already up to date, or overwrites an unmanaged directory.
+
+#### copilot settings policy set
+
+```sh
+gh copilot-attendant copilot settings policy set --state <state> \
+  [--enterprise [HOST/]ENTERPRISE | --org [HOST/]ORG \
+   | --repo [HOST/]OWNER/REPO]
+```
+
+Sets an organization's or enterprise's Copilot code review policy. Target
+selectors are optional and mutually exclusive; explicitly empty selectors are
+invalid. Without one, the current repository's owner is used as the
+organization; `GH_REPO` can override that repository. Unless a host is
+specified, the existing GitHub host resolution is used. Options other than
+`--labels` take the last value when repeated; `--labels` combines values as
+described under
+[runner set](#copilot-settings-runner-set).
+
+- `--enterprise`: select an enterprise as `[HOST/]ENTERPRISE` (optional).
+- `--org`: select an organization as `[HOST/]ORG` (optional).
+- `--repo` / `-R`: select the organization owning `[HOST/]OWNER/REPO`
+  (optional). This does not update repository-level settings.
+- `--state` / `-s`: required policy state. For an organization, use `enabled`
+  or `disabled`. For an enterprise, use `enabled_for_all_organizations`,
+  `disabled_for_all_organizations`, or `configured_by_organization_admins`.
+  The last value is unavailable for standalone enterprises; the API reports
+  an error without a separate preflight request.
+
+The update is sent even if the requested state matches the current state.
+The API returns no policy object; a successful enterprise update is accepted
+for asynchronous propagation. If an enterprise manages the organization policy,
+the API may return `409 POLICY_MANAGED_BY_ENTERPRISE` with policy details.
+
+For all four settings commands, organization operations require an organization
+owner and a classic PAT or OAuth token with `read:org` or
+`manage_billing:copilot` for reads, or `admin:org` or `manage_billing:copilot`
+for writes. Enterprise policy operations require an enterprise owner or the
+corresponding `read_enterprise_ai_controls` or `write_enterprise_ai_controls`
+permission, together with the respective `read:enterprise` or
+`admin:enterprise` scope. These APIs do not support GitHub App tokens or
+fine-grained PATs. Check the returned details for 403 errors, which can have
+causes other than token permissions.
+
+#### copilot settings policy view
+
+```sh
+gh copilot-attendant copilot settings policy view \
+  [--enterprise [HOST/]ENTERPRISE | --org [HOST/]ORG \
+   | --repo [HOST/]OWNER/REPO] [--format json] [--jq <expression>] \
+  [--template <template>]
+```
+
+Views an organization's or enterprise's Copilot code review policy. Target
+selection and authentication follow [policy set](#copilot-settings-policy-set).
+Human-readable output is the default. Organization output includes
+`configured_state`, `effective_state`, `editable`, and `managed_by`; enterprise
+output includes `policy_state`. A null state remains `null`, not `disabled`.
+An organization response missing the required `effective_state` is an error.
+
+- `--format`: output a single API-shaped JSON object when set to `json`
+  (optional; default is human-readable output).
+- `--jq` / `-q`: filter JSON with a jq expression (optional; requires
+  `--format json`).
+- `--template` / `-t`: format JSON with a Go template (optional; requires
+  `--format json`). If both expressions are nonempty, `--jq` takes precedence.
+
+#### copilot settings runner set
+
+```sh
+gh copilot-attendant copilot settings runner set --type <standard|labeled> \
+  [--allow-repository-customization[=true|false]] [--format json] \
+  [--group <name>] [--jq <expression>] [--labels <label[,label...]>]... \
+  [--org [HOST/]ORG | --repo [HOST/]OWNER/REPO] [--template <template>]
+```
+
+Sets an organization's Copilot code review runner. Select the organization
+with `--org` or `--repo`, or use the current repository owner by default, as
+described under [policy set](#copilot-settings-policy-set). Enterprise runner
+selection is not supported. The update is sent even when the values match the
+current configuration; no confirmation GET is made.
+
+- `--allow-repository-customization`: allow repositories to use their own
+  runner configuration. The bare flag and `=true` enable it; `=false` disables
+  it. When omitted, the current effective value is retained.
+- `--format`: use `json` for a single API-shaped object (optional; default is
+  human-readable output).
+- `--group`: runner group name (optional; must not be empty or whitespace).
+- `--jq` / `-q`: filter JSON with a jq expression (optional; requires
+  `--format json`).
+- `--labels`: comma-separated runner labels (optional; may be repeated).
+  Every label must be nonempty and contain more than whitespace.
+- `--org`: select an organization as `[HOST/]ORG` (optional).
+- `--repo` / `-R`: select the organization owning `[HOST/]OWNER/REPO`
+  (optional; mutually exclusive with `--org`).
+- `--template` / `-t`: format JSON with a Go template (optional; requires
+  `--format json`). A nonempty `--jq` expression takes precedence.
+- `--type`: required `standard` or `labeled`. A labeled runner requires at
+  least one label or a group; a standard runner accepts neither option.
+  `--type` has no short flag because `-t` selects `--template`.
+
+Before a code review-specific runner is configured, the effective coding agent
+runner is inherited. A successful update creates a code review-specific
+configuration, and output includes the resulting `configured_by` value. If
+the successful response cannot be decoded, lacks `runner_type`, or cannot be
+rendered, the error reports that the update succeeded so that it is not
+mistaken for a failed PUT.
+
+#### copilot settings runner view
+
+```sh
+gh copilot-attendant copilot settings runner view \
+  [--org [HOST/]ORG | --repo [HOST/]OWNER/REPO] [--format json] \
+  [--jq <expression>] [--template <template>]
+```
+
+Views the effective runner configuration for an organization. Target selection,
+authentication, and output flags follow
+[runner set](#copilot-settings-runner-set). An unconfigured code review runner
+inherits the coding agent configuration. The output shows `runner_type`,
+`runner_labels`, `runner_group_name`, `allow_repository_customization`, and
+`configured_by` when reported. JSON, jq, and template output use one
+API-shaped object and preserve null values.
 
 ### metrics
 
