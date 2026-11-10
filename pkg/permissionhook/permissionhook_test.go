@@ -83,6 +83,7 @@ func TestDecide(t *testing.T) {
 		{"deny wins", Request{ToolName: "bash", Command: "ls && rm -rf build"}, BehaviorDeny},
 		{"deny exact prefix", Request{ToolName: "bash", Command: "git push origin main"}, BehaviorDeny},
 		{"unsupported syntax", Request{ToolName: "bash", Command: "ls $(rm -rf /)"}, BehaviorNone},
+		{"glob cannot bypass deny", Request{ToolName: "bash", Command: "git p?sh origin main"}, BehaviorNone},
 		{"redirect to file", Request{ToolName: "bash", Command: "ls > out.txt"}, BehaviorNone},
 		{"env prefix not matched", Request{ToolName: "bash", Command: "PAGER=evil git log"}, BehaviorNone},
 		{"empty command", Request{ToolName: "bash"}, BehaviorNone},

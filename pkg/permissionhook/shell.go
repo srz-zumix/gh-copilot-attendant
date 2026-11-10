@@ -15,7 +15,7 @@ var ErrUnsupportedSyntax = errors.New("unsupported shell syntax")
 //
 // The parser is intentionally conservative: any construct whose meaning depends on
 // runtime expansion (parameter/command/arithmetic expansion, subshells, brace groups,
-// history expansion, comments, input redirection, or output redirection to anything
+// history expansion, unquoted pathname expansion (*, ?, [), comments, input redirection, or output redirection to anything
 // other than /dev/null or a file descriptor) yields ErrUnsupportedSyntax.
 func ParseBashCommand(s string) ([][]string, error) {
 	p := &bashParser{src: s}
@@ -83,6 +83,7 @@ func (p *bashParser) parse() error {
 			if s[i+1] != '\n' {
 				p.word.WriteByte(s[i+1])
 				p.inWord = true
+				p.wordQuoted = true
 			}
 			i += 2
 		case '\'':
@@ -147,6 +148,8 @@ func (p *bashParser) parse() error {
 			return unsupported("grouping %q", c)
 		case '!':
 			return unsupported("history expansion or negation")
+		case '*', '?', '[':
+			return unsupported("pathname expansion %q", c)
 		case '#':
 			if !p.inWord {
 				return unsupported("comment")

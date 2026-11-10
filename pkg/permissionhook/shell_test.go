@@ -34,7 +34,9 @@ func TestParseBashCommand(t *testing.T) {
 		{"amp dev null", "ls &>/dev/null", [][]string{{"ls"}}},
 		{"append dev null", "ls >> /dev/null", [][]string{{"ls"}}},
 		{"quoted digit is word", `echo "2">/dev/null`, [][]string{{"echo", "2"}}},
-		{"glob literal", "ls *.go", [][]string{{"ls", "*.go"}}},
+		{"quoted glob literal", `ls '*.go' "p?sh" \[a]`, [][]string{{"ls", "*.go", "p?sh", "[a]"}}},
+		{"escaped digit is word before redirect", `rm \3>/dev/null build.tmp`, [][]string{{"rm", "3", "build.tmp"}}},
+		{"escaped digit command before redirect", `\3>/dev/null`, [][]string{{"3"}}},
 		{"hash inside word", "echo a#b", [][]string{{"echo", "a#b"}}},
 	}
 	for _, tt := range tests {
@@ -75,6 +77,9 @@ func TestParseBashCommandUnsupported(t *testing.T) {
 		"echo 'unterminated",
 		`echo "unterminated`,
 		"echo \\",
+		"ls *.go",
+		"git p?sh origin main",
+		"ls [ab].txt",
 	}
 	for _, in := range inputs {
 		t.Run(in, func(t *testing.T) {
