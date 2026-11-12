@@ -1456,7 +1456,10 @@ function renderSession(data) {
             data.BySandbox != null
                 ? panel("Sandbox (requests)", "click to filter", h("div", null,
                     h("p", { class: "muted small" }, "Permission requests grouped by the recorded sandbox state of their tool call. Unknown means no sandbox outcome was recorded."),
-                    decisionRows(data.BySandbox, { onPick: (k) => addFilter("sandbox", k), pickTitle: "Filter by this sandbox state" })), { filter: "sandbox" })
+                    decisionRows(data.BySandbox, {
+                        onPick: sandboxFilterSupported("session") ? (k) => addFilter("sandbox", k) : undefined,
+                        pickTitle: "Filter by this sandbox state",
+                    })), { filter: sandboxFilterSupported("session") ? "sandbox" : undefined })
                 : null,
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" }), { filter: "kind" }),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" }), { filter: "command" }),
@@ -1469,8 +1472,14 @@ function renderSession(data) {
     ];
 }
 
+// An older provider may not advertise the sandbox filter; render without filter controls then.
+function sandboxFilterSupported(source) {
+    return meta?.filters?.[source]?.includes("sandbox") === true;
+}
+
 function sandboxPanel(sb, source) {
     const vscode = source === "vscode";
+    const filterSupported = sandboxFilterSupported(source);
     const states = [
         ["applied", "Applied", sb.Applied],
         ["not-applied", "Not applied", sb.NotApplied],
@@ -1478,7 +1487,8 @@ function sandboxPanel(sb, source) {
     ];
     const byTool = sb.ByTool ?? [];
     const max = Math.max(...byTool.map((e) => e.Total ?? 0), 1);
-    return panel("Sandbox", vscode ? "run_in_terminal · click to filter" : "tool executions · click to filter", [
+    const scopeHint = vscode ? "run_in_terminal" : "tool executions";
+    return panel("Sandbox", filterSupported ? `${scopeHint} · click to filter` : scopeHint, [
         h("p", { class: "muted small" }, vscode
             ? "Terminal tool calls by isSandboxWrapped recorded in chatSessions. Unknown means no value was recorded. Session scope, time bounds, and the Sandbox filter apply; tool, model, and agent filters do not."
             : "Completed shell executions and other tools with a recorded sandboxApplied outcome. Shell executions without an outcome are unknown; unfinished calls are excluded. Session scope, completion-time bounds, and the Sandbox filter apply; other permission filters do not."),
@@ -1488,7 +1498,7 @@ function sandboxPanel(sb, source) {
             ...states.map(([, label, value]) => card(label, num(value), pct(value, sb.Executions))),
             !vscode && sb.OptOutRequested !== undefined ? card("Opt-out requested", num(sb.OptOutRequested)) : null),
         simpleRows(states.map(([key, , value]) => ({ Key: key, Total: value ?? 0 })), (e) => e.Total, {
-            onPick: (k) => addFilter("sandbox", k),
+            onPick: filterSupported ? (k) => addFilter("sandbox", k) : undefined,
             pickTitle: "Filter by this sandbox state",
         }),
         byTool.length
@@ -1506,7 +1516,7 @@ function sandboxPanel(sb, source) {
                     h("td", null, num(e.NotApplied)),
                     h("td", null, num(e.Unknown))))))
             : null,
-    ], { wide: true, filter: "sandbox" });
+    ], { wide: true, filter: filterSupported ? "sandbox" : undefined });
 }
 
 function permissionWaitDetails(wait) {
