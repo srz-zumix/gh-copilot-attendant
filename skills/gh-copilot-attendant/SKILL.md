@@ -240,12 +240,37 @@ values are alternatives, combined with the other permission filters. The
 mode filter also limits usage totals and the CWD, model, and agent usage
 breakdowns to sessions with a matching in-window permission request; all usage
 of those sessions is counted because usage records have no mode.
+`PERMISSION_MODE` / `ByPermissionMode` groups the same request outcomes by the
+`permissionMode` snapshot at evaluation start, separately from Agent mode.
+Missing, null, empty, or malformed values are `unknown`; future nonempty
+values remain distinct. Do not infer this mode from defaults or assessments.
+Repeatable `--permission-mode <mode>` matches exactly, including case and
+whitespace. To select human decisions while Assisted Permissions was enabled:
+
+```sh
+gh copilot-attendant session stats --period 7d \
+  --permission-mode assisted --decision-source human_response
+```
+
+Human decisions include denials; add `--result approved --kind shell` for
+approved shell requests. Results match exactly, so approved variants such as
+`approved-for-location` require separate `--result` values. Command breakdowns
+count identifiers once per request, not full command lines or execution history.
+An `assisted` snapshot does not prove that a safety review ran.
 Use repeatable `--result <value>` to match exact recorded permission results,
 including specific denied variants. Use repeatable
 `--command-access <read-only|read-write>` to select requests containing
 commands with those attributes; a mixed request can match both. This command
 attribute filter is distinct from `--operation`, which classifies each whole
 request. These filters affect permission statistics, not usage.
+Use repeatable `--sandbox <applied|not-applied|unknown>` to select requests by
+the `sandboxApplied` outcome recorded for their tool execution. `SANDBOX` /
+`SANDBOX_TOOL` (`Sandbox` in JSON) count completed shell executions and other
+completed tools with a usable outcome (`unknown` for shell executions with no
+recorded outcome; opt-out requests are counted in `OptOutRequested`), and
+`SANDBOX_REQUEST` (`BySandbox`) groups permission requests. Unfinished calls are
+excluded. Execution statistics follow session scope, completion-time bounds, and
+`--sandbox` only.
 `UsageAgentModes` lists the modes applied to usage. Other permission filters
 do not affect usage, and no permission filter affects Fusion or user-question
 statistics.
@@ -260,7 +285,12 @@ selected period. Role usage is never truncated by `--top`.
 JSON `SessionActivity` version 1 counts distinct sessions with timestamped
 events per CLI-host-local date/hour, not continuous activity or idle time.
 Repeated local clock hours are combined. Scope and inclusive-since /
-exclusive-until event bounds apply; permission filters and `--top` do not.
+exclusive-until bounds apply. Agent mode alone selects permission requests by
+request time. Sandbox selects completed executions in its states by completion
+time; unfinished calls are excluded and missing outcomes are `unknown`. With
+both filters, the execution must link to a request in a selected Agent mode;
+the request can be outside the time window. `AgentModes` and `SandboxStates`
+record the applied selections. Other permission filters and `--top` do not apply.
 Coverage identifies partial, outside, and nonexistent local hours. Untimed
 and malformed events are counted across scoped logs and cannot be placed in a
 time window. The scan time is not an implicit upper bound; future timestamps
@@ -300,6 +330,11 @@ Missing child logs produce warnings without dropping recorded matching invocatio
 `--include-log-stats` (optional, default false; incompatible with `--agent`) exports
 versioned, untruncated normalized per-log metrics and parent/invocation
 identities in JSON. No raw events or conversation content are exported.
+`SANDBOX` / `SANDBOX_TOOL` (`Sandbox` in JSON) count terminal tool calls by the
+`isSandboxWrapped` value recorded in chat session logs (`applied`,
+`not-applied`, or `unknown`). Repeatable `--sandbox` restricts only these
+statistics; `--tool`, `--model`, and `--agent` do not apply, and `--top` limits
+only per-tool rows.
 See the [usage guide](../../docs/usage.md#vscode-stats)
 for the full flag reference.
 
@@ -391,9 +426,11 @@ The normal CLI view has a Session activity heatmap with 30-day navigation and
 horizontal scrolling at the bottom of the dashboard. Its heading toggles the
 panel, which starts expanded and stays expanded or collapsed across dashboard
 updates. Each cell counts distinct sessions with an event in the host-local
-hour, not active time. When Agent mode filters are active, it counts matching
-`permission.requested` events by their request timestamps instead. `*`, `–`,
-and `×` identify partial, outside, and nonexistent hours. Footer totals add the
+hour, not active time. Agent mode alone counts matching `permission.requested`
+events by request time. Sandbox counts matching completed executions by
+completion time; with both filters, the execution must link to a request with
+a selected Agent mode. `*`, `–`, and `×` identify partial, outside, and
+nonexistent hours. Footer totals add the
 daily counts for each hour on the displayed page, so a session can count on
 multiple days. Averages include zeros and partial hours once per covered day;
 outside and nonexistent hours are excluded. A summary asterisk means it includes
@@ -410,8 +447,9 @@ Panels are grouped into collapsible categories whose headings toggle them:
 Usage, Permissions, and Session activity in the normal CLI view; Fusion usage
 in the Fusion-only view; and Usage and Tools on the VS Code tab. The
 Permissions category holds the Summary panel (permission cards, legend, and
-response wait), Agent modes, Results, Decision sources, Read-only vs
-read-write, Tool kinds, Commands, Paths, URLs, and Working directories.
+response wait), Agent modes, Permission modes, Results, Decision sources,
+Read-only vs read-write, Sandbox (requests), Tool kinds, Commands, Paths, URLs,
+and Working directories.
 Each panel, including Models, Workspaces, and Copilot Fusion, also collapses
 independently. Categories and panels start expanded and keep their state across
 dashboard updates and view changes. CLI and VS Code panels keep separate
@@ -426,15 +464,25 @@ It shares `ByAgentMode` with `get_data`, `get_summary`, and Ask agent.
 Click a mode to add an exact permission filter; Clear removes only the mode
 filter. Other permission filters and Top apply. Usage is limited to sessions
 with a matching request; Fusion and user-question statistics are unaffected.
+Older attendant builds without `ByAgentMode` omit the panel. Older CLI logs
+without modes contribute to `unknown`. If the selected attendant CLI does not
+support `--agent-mode`, update it or choose an up-to-date source runner.
+Reload the dashboard extension if an older running provider does not support
+the filter. Fusion-only excludes Agent modes with the other permission
+statistics and retains the selection for the normal view.
 Click Results and Read-only/read-write rows to filter by exact result or
 matching command access; a mixed request can match both command-access values.
-Older attendant builds without this field omit the panel. Older CLI logs
-without modes contribute to `unknown`.
-If the selected attendant CLI does not support `--agent-mode`, update it or
-choose an up-to-date source runner. Reload the dashboard extension if an older
-running provider does not support the filter.
-Fusion-only excludes Agent modes with the other permission statistics and
-retains the selection for the normal view.
+The Permission modes panel shows request outcomes by recorded permission mode.
+Select `assisted` and `human_response` in Decision sources to filter human
+decisions while Assisted Permissions was enabled; optionally select `approved`
+in Results and `shell` in Tool kinds. Clear removes only the permission-mode
+filter. This filter does not affect usage, session activity, Fusion, sandbox
+execution, or user-question statistics. `get_data`, `get_summary`, and Ask
+agent share the breakdown. Older CLI results omit the panel; unsupported
+`--permission-mode` requires an updated CLI or the `source` runner.
+Sandbox panels (Copilot CLI and VS Code tabs) show sandbox outcomes; click a
+state to add a `sandbox` filter. Older attendant builds without `--sandbox`
+report an error; update the CLI or choose the `source` runner.
 The CLI tab also shows Agent usage (main / subagent / unknown) and incomplete-usage
 notices. Normal-view agent unit costs require available row inputs and no
 reported incomplete session breakdowns; this is not per-record coverage.

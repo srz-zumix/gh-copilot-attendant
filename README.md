@@ -106,6 +106,9 @@ initialization, permissions, and privacy details.
 gh copilot-attendant session stats --period 7d
 gh copilot-attendant session stats --period 7d --agent-mode plan
 gh copilot-attendant session stats --period 7d --result denied
+gh copilot-attendant session stats --period 7d --permission-mode assisted \
+  --decision-source human_response --result approved --kind shell
+gh copilot-attendant session stats --period 7d --sandbox applied
 ```
 
 Inspect the last seven days of local Copilot CLI activity in the current git
@@ -114,19 +117,27 @@ or `--format json` for structured output. The second command filters permission
 requests by their recorded Agent mode and limits usage to sessions with a
 matching request. Filter permission outcomes by exact result with `--result`;
 the dashboard also filters permission requests by clicking Results or
-Read-only/read-write rows.
+Read-only/read-write rows. `--sandbox` filters by the recorded
+sandbox outcome (`applied`, `not-applied`, or `unknown`).
+The assisted example selects human-approved shell permission requests while
+Assisted Permissions was enabled; it does not prove a safety review ran.
+Command breakdowns contain identifiers, not full command lines.
 The dashboard also shows sessions with recorded events by local date and hour;
 this is not a continuous-activity measurement. When `--agent-mode` is selected,
-the heatmap counts matching permission requests by their recorded request time.
+the heatmap counts matching permission requests by request time. With `--sandbox`,
+it counts completed executions by completion time instead. With both filters,
+the execution must be linked to a request in a selected Agent mode.
 
 ### vscode
 
 ```sh
 gh copilot-attendant vscode stats --period 7d
+gh copilot-attendant vscode stats --period 7d --sandbox applied
 ```
 
 Inspect VS Code Copilot Chat Local harness activity for the current git worktree
 over the last seven days. This log source supports stable VS Code on macOS only.
+Both commands report how many terminal executions ran in a sandbox.
 Locally recorded Copilot harness (Agent Host) sessions use `session stats` instead.
 
 ## Documentation

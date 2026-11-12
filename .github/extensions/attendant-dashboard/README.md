@@ -44,17 +44,19 @@ input (all fields are optional):
 | `top` | `integer` | `20` | `--top` (`0` keeps every entry) |
 | `until` | `string` | empty | `--until` |
 
-The `session` filters are `operation`, `agentMode` (`--agent-mode`), `result`,
-`commandAccess` (`--command-access`), `kind`, `command`, `path`, `url`, and
-`decisionSource` (`--decision-source`). The `vscode` filters are `tool`, `model`,
-and `agent`.
+The `session` filters are `operation`, `agentMode` (`--agent-mode`),
+`permissionMode` (`--permission-mode`), `result`, `commandAccess`
+(`--command-access`), `kind`, `command`, `path`, `url`,
+`decisionSource` (`--decision-source`), and `sandbox` (`applied`, `not-applied`,
+or `unknown`). The `vscode` filters are `tool`, `model`, `agent`, and `sandbox`;
+the VS Code `sandbox` filter restricts only the sandbox statistics.
 
 The `path` and `url` session filters and all `vscode` filters are regular
 expressions in Go's RE2 syntax. Constructs RE2 does not support, such as
 lookaround and backreferences, are rejected before the command runs.
-Agent modes are matched exactly, including case and surrounding spaces;
-`unknown` selects requests with missing or invalid modes. Values within a
-filter are alternatives; different filters are combined.
+Agent and permission modes are matched exactly, including case and surrounding
+spaces; `unknown` selects requests with missing or invalid modes. Values within
+a filter are alternatives; different filters are combined.
 VS Code Agent filters are evaluated locally with the bundled RE2JS matcher. No npm install
 is required to run the canvas.
 
@@ -94,22 +96,26 @@ is required to run the canvas.
   expanded and keeps its disclosure state across dashboard updates.
   Multiple events from one session count once per cell; repeated clock hours are
   combined. This is not a duration or continuous-activity estimate. Session,
-  directory, and event-time bounds apply. When Agent mode filters are selected,
-  cells count matching `permission.requested` events by their request timestamp;
-  other permission filters and Top do not affect the heatmap.
+  directory, and time bounds apply. With Agent mode alone, cells count matching
+  `permission.requested` events by their request timestamp. With Sandbox, cells
+  count completed executions in the selected states by their completion time;
+  unfinished calls are excluded and missing outcomes are `unknown`. If both
+  filters are selected, an execution must link to a permission request with a
+  selected Agent mode. The request itself may be outside the time window.
+  Other permission filters and Top do not affect the heatmap.
   Navigate the entire range in 30-day pages and scroll horizontally for all
-  hours. Zero means no event was recorded as of the scan, `*` marks a partially
-  selected hour, `–` marks an hour outside the time window, and `×` marks a
+  hours. Zero means no matching event was recorded as of the scan, `*` marks a
+  partially selected hour, `–` marks an hour outside the time window, and `×` marks a
   nonexistent local hour. Total and Average rows summarize each hour for the
   displayed page. Totals add daily counts, so the same session can be counted
   on multiple days. Averages include zeros and partial hours once per covered
   day; outside and nonexistent hours are excluded. An asterisk in a summary
   means it includes partial hours. Footer cell colors use the heatmap scale and
   are relative to the highest value in each summary row. Untimed and malformed
-  events are reported as coverage gaps across the scoped logs. Future timestamps can extend the
-  range; the scan time is not an implicit upper bound. Older CLI payloads need
-  an updated CLI or the `source` runner. VS Code and Fusion-only views do not
-  show this panel.
+  events are reported as coverage gaps across the scoped logs. Future timestamps
+  can extend the range; the scan time is not an implicit upper bound. Older or
+  mismatched CLI payloads need an updated CLI or the `source` runner. VS Code and
+  Fusion-only views do not show this panel.
   `get_data` includes the versioned aggregate; `get_summary` and Ask agent
   include at most ten recent dates with recorded events and report omissions.
 - **Fusion usage only** — the Copilot CLI filter projects only explicitly
@@ -218,6 +224,27 @@ is required to run the canvas.
   access attribute. Mixed requests can match both command-access values.
   Operation remains a separate request-level classification filter. These
   permission filters do not affect usage totals.
+- **Permission modes** — the normal CLI permission view groups requests by the
+  `permissionMode` recorded when evaluation began. Missing or invalid values are
+  `unknown`; the mode is not inferred from defaults or assessment events.
+  Click `assisted` and select `human_response` in Decision sources to filter
+  human decisions while Assisted Permissions was enabled. Human decisions
+  include denials; select `approved` in Results and `shell` in Tool kinds to
+  narrow to approved shell requests. Results match exactly, so other approved
+  variants require separate selections. Assisted mode does not prove that a
+  safety review ran. Command rows contain identifiers counted once per request,
+  not full command lines or execution history.
+  Clear removes only the permission-mode filter. Permission mode does not
+  restrict usage, session activity, Fusion, sandbox execution, or user-question
+  statistics. Display, `get_data`, `get_summary`, and Ask agent share the
+  breakdown. Older CLI results omit the panel; an unsupported
+  `--permission-mode` requires an updated CLI or the `source` runner.
+- **Sandbox** — the Copilot CLI tab shows a Sandbox (requests) breakdown in the
+  Permissions panel and a Sandbox panel counting tool executions by their
+  recorded `sandboxApplied` outcome; the VS Code tab shows terminal calls by
+  `isSandboxWrapped`. Click a state to filter. `unknown` means no outcome was
+  recorded. If the selected CLI does not support `--sandbox`, update it or
+  choose the `source` runner.
 - **Copilot CLI usage** — AIU, premium requests, prompt/output tokens, cache
   read/write, uncached input, cache hit rate, API requests, and API time,
   including unfinished sessions. Across CLI and VS Code, AIU totals and unit

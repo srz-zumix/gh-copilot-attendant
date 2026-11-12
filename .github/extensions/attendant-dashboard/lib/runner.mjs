@@ -282,7 +282,7 @@ export async function runStats(runner, argv, options = {}) {
                 { stderr: result.stderr, code: result.code },
             );
         }
-        for (const flag of ["result", "command-access"]) {
+        for (const flag of ["result", "command-access", "sandbox", "permission-mode"]) {
             const requested = argv.some((arg) => arg === `--${flag}` || arg.startsWith(`--${flag}=`));
             if (requested && new RegExp(`unknown flag:\\s*--${flag}(?:\\s|$)`, "i").test(result.stderr)) {
                 throw new RunError(
