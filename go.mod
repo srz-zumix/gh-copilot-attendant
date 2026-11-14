@@ -8,7 +8,7 @@ require (
 	github.com/google/go-github/v93 v93.0.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/spf13/cobra v1.10.2
-	github.com/srz-zumix/go-gh-extension v0.7.8
+	github.com/srz-zumix/go-gh-extension v0.7.10
 	github.com/stretchr/testify v1.12.1
 )
 

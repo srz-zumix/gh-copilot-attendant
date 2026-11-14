@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { buildArgv, checkGoRegexp, COMMAND_ACCESS, defaultQuery, exactPattern, MAX_TOP, normalizeQuery, OPERATIONS, QueryError, SCOPES, SOURCES } from "../lib/query.mjs";
+import { buildArgv, checkGoRegexp, COMMAND_ACCESS, SANDBOX_STATES, defaultQuery, exactPattern, MAX_TOP, normalizeQuery, OPERATIONS, QueryError, SCOPES, SOURCES } from "../lib/query.mjs";
 import { RUNNERS } from "../lib/runner.mjs";
 
 test("default query builds the worktree-scoped session command", () => {
@@ -79,6 +79,18 @@ test("result and command access filters map to exact repeatable session flags", 
     assert.throws(() => normalizeQuery({ filters: { session: { commandAccess: ["read"] } } }), /commandAccess must be one of/);
 });
 
+test("sandbox filters map to repeatable --sandbox flags for both sources", () => {
+    const q = normalizeQuery({ filters: { session: { sandbox: ["applied", "unknown"] }, vscode: { sandbox: ["not-applied"] } } });
+    const session = buildArgv(q, "session");
+    assert.ok(session.includes("--sandbox=applied"));
+    assert.ok(session.includes("--sandbox=unknown"));
+    assert.ok(!session.includes("--sandbox=not-applied"));
+    assert.deepEqual(buildArgv(q, "vscode").filter((arg) => arg.startsWith("--sandbox")), ["--sandbox=not-applied"]);
+    for (const source of SOURCES) {
+        assert.throws(() => normalizeQuery({ filters: { [source]: { sandbox: ["on"] } } }), /sandbox must be one of/);
+    }
+});
+
 test("Agent modes preserve exact values and map to repeatable session-only flags", () => {
     const values = [" plan ", "plan", "future,mode", " ", " plan "];
     const q = normalizeQuery({ filters: { session: { agentMode: values, kind: ["shell"] } } });
@@ -97,12 +109,27 @@ test("Agent modes preserve exact values and map to repeatable session-only flags
     assert.throws(() => normalizeQuery({ filters: { session: { agentMode: ["plan\nother"] } } }), /control characters/);
 });
 
+test("permission modes combine with human decisions and preserve exact values", () => {
+    const values = ["assisted", "unknown", " future,mode ", "assisted"];
+    const q = normalizeQuery({ filters: { session: {
+        permissionMode: values, decisionSource: ["human_response"], result: ["approved"], kind: ["shell"],
+    } } });
+    assert.deepEqual(q.filters.session.permissionMode, values.slice(0, -1));
+    const argv = buildArgv(q, "session");
+    for (const value of q.filters.session.permissionMode) assert.ok(argv.includes(`--permission-mode=${value}`));
+    for (const arg of ["--decision-source=human_response", "--result=approved", "--kind=shell"]) assert.ok(argv.includes(arg));
+    assert.ok(!buildArgv(q, "vscode").some((arg) => arg.startsWith("--permission-mode")));
+    assert.deepEqual(normalizeQuery({}, q).filters.session.permissionMode, q.filters.session.permissionMode);
+    assert.deepEqual(normalizeQuery({}, { filters: { session: { kind: ["shell"] } } }).filters.session.permissionMode, []);
+    assert.throws(() => normalizeQuery({ filters: { session: { permissionMode: ["assisted\nmanual"] } } }), /control characters/);
+});
+
 test("canvas open and refresh schemas accept the CLI permission query filters", () => {
     const source = readFileSync(new URL("../extension.mjs", import.meta.url), "utf8")
         .replace(/^import .*;\n/gm, "")
         .replace("session = await joinSession({ canvases: [canvas] });", "");
     const canvas = vm.runInNewContext(`${source}\ncanvas`, {
-        SOURCES, SCOPES, OPERATIONS, COMMAND_ACCESS, MAX_TOP, RUNNERS,
+        SOURCES, SCOPES, OPERATIONS, COMMAND_ACCESS, SANDBOX_STATES, MAX_TOP, RUNNERS,
         QueryStore: class {}, createCanvas: (value) => value,
     });
     const openQuery = canvas.inputSchema.properties.query;
@@ -112,8 +139,13 @@ test("canvas open and refresh schemas accept the CLI permission query filters", 
     assert.equal(session.properties.agentMode.type, "array");
     assert.equal(session.properties.agentMode.items.type, "string");
     assert.equal(session.properties.agentMode.maxItems, 20);
+    assert.equal(session.properties.permissionMode.type, "array");
+    assert.equal(session.properties.permissionMode.items.type, "string");
+    assert.equal(session.properties.permissionMode.maxItems, 20);
     assert.equal(session.properties.result.items.type, "string");
     assert.deepEqual(session.properties.commandAccess.items.enum, COMMAND_ACCESS);
+    assert.deepEqual(session.properties.sandbox.items.enum, SANDBOX_STATES);
+    assert.deepEqual(openQuery.properties.filters.properties.vscode.properties.sandbox.items.enum, SANDBOX_STATES);
     assert.equal(refreshQuery, openQuery);
 });
 

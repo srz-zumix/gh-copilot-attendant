@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { panelClearPatch } from "../ui/filter-view.mjs";
+import { activityFilterError, panelClearPatch } from "../ui/filter-view.mjs";
 import { normalizeQuery, FILTERS } from "../lib/query.mjs";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { vscodeDataset } from "./fixtures/vscode.mjs";
@@ -50,7 +50,7 @@ function renderedPanels(query, data, { storage, filters = FILTERS } = {}) {
     const submitted = [];
     const warnings = [];
     const context = vm.createContext({
-        ...modelView, ...workspaceView, ...tableView, panelClearPatch, Intl,
+        ...modelView, ...workspaceView, ...tableView, activityFilterError, panelClearPatch, Intl,
         Node: Element, document: {
             querySelector: (selector) => selector === 'meta[name="dashboard-token"]' ? { content: "test" } : null,
             createElement: (tag) => new Element(tag),
@@ -247,9 +247,9 @@ function filteredQuery(source = "vscode") {
         source, scope: "cwd", path: "/repo", period: "7d", until: "2026-10-11",
         session: "parent", top: 3,
         filters: {
-            vscode: { agent: ["Explore", "executionSubagent"], model: ["a", "b"], tool: ["read", "write"] },
-            session: { operation: ["read", "write"], agentMode: ["interactive", "plan"], result: ["approved"],
-                commandAccess: ["read-only", "read-write"], kind: ["shell", "read"], command: ["git", "go"],
+            vscode: { agent: ["Explore", "executionSubagent"], model: ["a", "b"], tool: ["read", "write"], sandbox: ["applied"] },
+            session: { operation: ["read", "write"], agentMode: ["interactive", "plan"], permissionMode: ["assisted"], result: ["approved"],
+                commandAccess: ["read-only", "read-write"], sandbox: ["applied", "unknown"], kind: ["shell", "read"], command: ["git", "go"],
                 path: ["/src", "/test"], url: ["example"], decisionSource: ["human_response"] },
         },
     });
@@ -347,11 +347,11 @@ test("VS Code renders enabled per-panel buttons, and clicks submit only the matc
 
 test("CLI clear buttons cover permission filters and directories but not unsupported usage axes", () => {
     const query = filteredQuery("session");
-    const data = { UsageSessions: 0, ByModelUsage: [], ByRoleUsage: [], ByAgentMode: [], ByDecisionSource: [], ByCWDUsage: [] };
+    const data = { UsageSessions: 0, ByModelUsage: [], ByRoleUsage: [], ByAgentMode: [], ByPermissionMode: [], ByDecisionSource: [], ByCWDUsage: [] };
     const { panels, submitted, walk } = renderedPanels(query, data);
     const expected = {
         Workspaces: "workspace", "Working directories": "workspace",
-        "Agent modes": "agentMode", Results: "result", "Decision sources": "decisionSource",
+        "Agent modes": "agentMode", "Permission modes": "permissionMode", Results: "result", "Decision sources": "decisionSource",
         "Read-only vs read-write": "commandAccess",
         "Tool kinds": "kind", Commands: "command", Paths: "path", URLs: "url",
     };
@@ -2378,7 +2378,7 @@ test("Fusion-only switch disables permission filters and persists across source 
     assert.equal(vm.runInContext("state.query.filters.session.agentMode[0]", context), "plan");
 });
 
-test("Agent mode filter input keeps literal whitespace and removes only its own chips", () => {
+test("mode filter inputs keep literal whitespace and remove only their own chips", () => {
     const query = filteredQuery("session");
     const { context, submitted, walk } = renderedPanels(query, {});
     const root = new Element("section");
@@ -2393,6 +2393,13 @@ test("Agent mode filter input keeps literal whitespace and removes only its own 
     walk(root).find((node) => node.attributes["aria-label"] === "Remove plan").events.click();
     assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { agentMode: ["interactive"] } } });
     assert.deepEqual(query.filters.session.agentMode, ["interactive", "plan"]);
+    const permissionInput = walk(root).find((node) => node.attributes["aria-label"] === "Add Permission mode filter");
+    assert.equal(permissionInput.attributes.placeholder, "exact value");
+    permissionInput.events.keydown({ key: "Enter", preventDefault() {}, target: { value: " future,mode " } });
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { permissionMode: ["assisted", " future,mode "] } } });
+    walk(root).find((node) => node.attributes["aria-label"] === "Remove assisted").events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { permissionMode: [] } } });
+    assert.deepEqual(query.filters.session.permissionMode, ["assisted"]);
 });
 
 test("a stale dashboard provider disables the Fusion switch and explains that a reload is needed", () => {
@@ -2761,6 +2768,42 @@ test("Agent modes distinguishes empty results from older builds and stays outsid
     assert.equal(panels.some((panel) => walk(panel).some((node) => node.tag === "h2" && node.children[0] === "Agent modes")), false);
 });
 
+test("Permission modes combine with other filters and clear only their own values", () => {
+    const query = filteredQuery("session");
+    const before = structuredClone(query);
+    const data = { ByPermissionMode: [
+        { Key: "assisted", Total: 2, Approved: 1, Denied: 1 },
+        { Key: "unknown", Total: 1, Unresolved: 1 },
+        { Key: " future,mode ", Total: 1, Approved: 1 },
+    ] };
+    const { panels, walk, submitted } = renderedPanels(query, data);
+    const panel = panels.find((entry) => walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Permission modes"));
+    assert.ok(panel);
+    const nodes = walk(panel);
+    const rows = nodes.filter((node) => node.className === "row");
+    const text = nodes.flatMap((node) => node.children.filter((child) => typeof child === "string")).join("\n");
+    assert.match(text, /Missing modes are unknown/);
+    assert.match(text, /does not imply a safety review ran/);
+    rows[2].children[0].events.click();
+    assert.deepEqual(structuredClone(submitted.at(-1)), { filters: { session: { permissionMode: ["assisted", " future,mode "] } } });
+    nodes.find((node) => node.attributes["data-clear-filter"] === "permissionMode").events.click();
+    assert.deepEqual(submitted.at(-1), { filters: { session: { permissionMode: [] } } });
+    assert.deepEqual(query, before);
+    assert.deepEqual(query.filters.session.decisionSource, ["human_response"]);
+
+    for (const oldData of [{}, { ByPermissionMode: null }]) {
+        const old = renderedPanels(query, oldData);
+        assert.equal(old.panels.some((entry) => old.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Permission modes")), false);
+    }
+    const filters = { ...FILTERS, session: FILTERS.session.filter((name) => name !== "permissionMode") };
+    const stale = renderedPanels(query, data, { filters });
+    const stalePanel = stale.panels.find((entry) => stale.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Permission modes"));
+    const staleNodes = stale.walk(stalePanel);
+    assert.ok(staleNodes.some((node) => node.children.some((child) =>
+        typeof child === "string" && child.includes("Reload the dashboard extension"))));
+    assert.equal(staleNodes.some((node) => node.tag === "button"), false);
+});
+
 function activityDataset() {
     const hours = Array(24).fill(0);
     hours[1] = 2;
@@ -2925,6 +2968,52 @@ test("session activity counts selected Agent-mode permission requests at request
     assert.match(row.children[5].attributes["aria-label"], /1 session with a matching permission request/);
     const [total] = activityFooter(panel, walk);
     assert.equal(total.children[5].children[0], "1");
+});
+
+test("session activity describes sandbox-filtered completions and linked Agent modes", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { sandbox: ["applied"], agentMode: ["plan"] } } });
+    const activity = {
+        ...activityDataset(), AgentModes: ["plan"], SandboxStates: ["applied"],
+        Days: [{ Date: "2026-03-02", Hours: Array.from({ length: 24 }, (_, hour) => hour === 4 ? 1 : 0) }],
+    };
+    const { panels, walk } = renderedPanels(query, { SessionActivity: activity });
+    const panel = panels.at(-1);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join(" ") : "";
+    const content = text(panel);
+    for (const phrase of ["completed tool execution", "completion timestamp", "Unrecorded outcomes are unknown",
+        "unfinished calls are excluded", "linked permission request with a selected Agent mode",
+        "2 matching completed tool executions", "no matching completed executions recorded"]) {
+        assert.ok(content.includes(phrase), phrase);
+    }
+    const table = walk(panel).find((node) => node.tag === "table");
+    const row = walk(table).find((node) => node.tag === "tr" &&
+        node.children[0]?.children?.[0] === "2026-03-02");
+    assert.match(row.children[5].attributes["aria-label"], /1 session with a matching completed tool execution/);
+});
+
+test("session activity hides legacy or mismatched Sandbox-filtered results", () => {
+    const query = normalizeQuery({ source: "session", filters: { session: { sandbox: ["applied"] } } });
+    for (const [states, message] of [
+        [undefined, "does not confirm"],
+        [[], "no Sandbox filter"],
+        [["not-applied"], '"not-applied"'],
+    ]) {
+        const view = renderedPanels(query, { SessionActivity: { ...activityDataset(), SandboxStates: states } });
+        const panel = view.panels.at(-1);
+        const text = view.walk(panel).map((node) => typeof node.children?.[0] === "string" ? node.children[0] : "").join(" ");
+        assert.ok(text.includes(message), message);
+        assert.equal(view.walk(panel).some((node) => node.tag === "table"), false);
+    }
+    const noFilter = renderedPanels(normalizeQuery({ source: "session" }), {
+        SessionActivity: { ...activityDataset(), SandboxStates: ["applied"] },
+    });
+    assert.equal(noFilter.walk(noFilter.panels.at(-1)).some((node) => node.tag === "table"), false);
+    const legacy = renderedPanels(normalizeQuery({ source: "session" }), { SessionActivity: activityDataset() });
+    assert.ok(legacy.walk(legacy.panels.at(-1)).some((node) => node.tag === "table"));
+    const duplicate = renderedPanels(query, {
+        SessionActivity: { ...activityDataset(), SandboxStates: ["applied", "applied"] },
+    });
+    assert.ok(duplicate.walk(duplicate.panels.at(-1)).some((node) => node.tag === "table"));
 });
 
 test("session activity hides data collected for a different or unverified Agent-mode filter", () => {

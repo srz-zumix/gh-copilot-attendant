@@ -461,10 +461,12 @@ gh copilot-attendant metrics report --enterprise my-enterprise \
 gh copilot-attendant session stats \
   [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] \
   [--since <time> | --period <period>] [--until <time>] \
-  [--operation <read|write>]... [--agent-mode <mode>]... [--result <value>]... \
+  [--operation <read|write>]... [--agent-mode <mode>]... \
+  [--permission-mode <mode>]... [--result <value>]... \
   [--command-access <read-only|read-write>]... [--kind <kind>]... \
   [--decision-source <source>]... [--command <identifier>]... \
-  [--path <pattern>]... [--url <pattern>]... [--top <n>] \
+  [--path <pattern>]... [--sandbox <applied|not-applied|unknown>]... \
+  [--url <pattern>]... [--top <n>] \
   [--format <format>] [--jq <expression>] [--template <template>]
 ```
 
@@ -493,6 +495,27 @@ time, and permission filters apply. Completion events after `--until`
 still resolve selected requests. Rows are sorted by request total
 descending, then mode name ascending; `--top` limits the rows, not
 overall request totals.
+
+`PERMISSION_MODE` (`ByPermissionMode` in JSON) groups requests by the
+`permissionMode` recorded when permission evaluation began, independently of
+Agent mode. It uses the first request snapshot and the same outcome, sorting,
+time-bound, filter, and `--top` rules as `AGENT_MODE`. Missing, null, empty, or
+malformed modes are `unknown`; other nonempty values remain distinct. Modes are
+not inferred from session defaults or assessment events. An `assisted` snapshot
+means Assisted Permissions was enabled, not that a safety review actually ran.
+
+To select human decisions made while Assisted Permissions was enabled:
+
+```sh
+gh copilot-attendant session stats --period 7d \
+  --permission-mode assisted --decision-source human_response
+```
+
+Human decisions include denials. Add `--result approved --kind shell` to select
+approved shell permission requests. The result filter is exact: other approved
+variants, including `approved-for-location`, require their own `--result` value.
+The `COMMAND` / `ByCommand` breakdown counts command identifiers once per
+request, not full command lines or executed-command history.
 
 Request-level `session.usage_record` events and cumulative
 `session.usage_checkpoint` and `session.shutdown` snapshots are combined without
@@ -527,48 +550,78 @@ specific denied variants. `--command-access` selects requests containing at
 least one command with the selected `read-only` or `read-write` attribute; a
 mixed request can match both values and its commands can appear in both rows.
 `--agent-mode` matches the recorded Agent mode exactly and case-sensitively; use
-`unknown` to include requests whose mode is missing or invalid. Empty mode
-filter values are rejected. `--kind` restricts to an exact tool kind (e.g.
-`shell`, `read`, `write`); `--decision-source` restricts to permission outcomes
+`--permission-mode` to match the recorded permission mode in the same way.
+By default, neither mode is filtered. `unknown` includes requests whose
+corresponding mode is missing or invalid. Empty mode filter values are rejected.
+`--kind` restricts to an exact tool kind (e.g. `shell`, `read`, `write`);
+`--decision-source` restricts to permission outcomes
 with an exact decision source (e.g. `human_response`, `unattended_fallback`, or
 `unknown` when no decision source was recorded, including older CLI versions and
 unresolved requests). `--command` restricts to requests that include an exact
 command identifier; `--path` and `--url` restrict to requests with a recorded
 path or URL matching the given regular expression (a plain substring is also a
-valid, unanchored regular expression). `--operation`, `--agent-mode`, `--result`,
-`--command-access`, `--kind`, `--decision-source`, `--command`, `--path`, and
-`--url` may each be repeated to match any of multiple values; different filter
-types are combined. `--command-access` describes command-level attributes and
-is distinct from `--operation`, which classifies the request as a whole.
-`--agent-mode` also restricts usage totals and the working directory, model,
-and agent usage breakdowns to sessions with at least one matching permission
-request in the selected time window. Usage is not recorded per mode, so every
-usage update of a matching session is counted, including usage from other
-modes in that session. Other permission filters do not affect usage, and
-permission filters do not affect Fusion or user-question statistics. JSON
-output reports the Agent modes applied to usage in `UsageAgentModes`. `--top`
-keeps only the top N entries per statistic (default `10`; `0` keeps every entry).
-`--format`, `--jq`, and `--template` follow the standard `gh` JSON export flags;
-without `--format json`, results are printed as tables.
+valid, unanchored regular expression). `--sandbox` restricts to requests whose
+matched tool execution recorded `sandboxApplied` as `applied` or `not-applied`,
+or `unknown` when no outcome was recorded. `--operation`, `--agent-mode`,
+`--permission-mode`, `--result`, `--command-access`, `--kind`,
+`--decision-source`, `--command`, `--path`, `--sandbox`, and `--url` may each
+be repeated to match any of multiple values; different filter types are combined.
+`--command-access` describes
+command-level attributes and is distinct from `--operation`, which classifies
+the request as a whole. `--agent-mode` also restricts usage totals and the
+working directory, model, and agent usage breakdowns to sessions with at least
+one matching permission request in the selected time window. Usage is not
+recorded per mode, so every usage update of a matching session is counted,
+including usage from other modes in that session. Other permission filters do
+not affect usage, and permission filters do not affect Fusion or user-question
+statistics. JSON output reports the Agent modes applied to usage in
+`UsageAgentModes`. `--top` keeps only the top N entries per statistic (default
+`10`; `0` keeps every entry). `--format`, `--jq`, and `--template` follow the
+standard `gh` JSON export flags; without `--format json`, results are printed as
+tables.
+
+`SANDBOX_REQUEST` (`BySandbox` in JSON) groups permission requests by the
+`sandboxApplied` value recorded in the telemetry of the matching
+`tool.execution_complete` event. `SANDBOX` and `SANDBOX_TOOL` (`Sandbox` in
+JSON) count completed shell executions and other completed tools with a usable
+`sandboxApplied` outcome, including search tools such as `rg`, `glob`, and
+`grep`. Shell completions without an outcome are `unknown`. Executions that
+requested a sandbox opt-out are counted separately in `OptOutRequested`.
+Execution statistics follow the session scope, completion-time bounds, and
+`--sandbox`; other permission filters do not apply. Unknown outcomes are never
+inferred, and unfinished calls are excluded.
 
 JSON output includes versioned `SessionActivity` data for the CLI dashboard.
-Each local date has 24 hourly counts of distinct sessions with at least one
-timestamped event in that hour. Multiple events and repeated clock hours count a
-session once per cell; the result does not infer continuous activity or idle
-time. `Days` contains dates with recorded events, while `StartDate` and
-`EndDate` define the display range. Dates and hours use the CLI host's local
-time zone, identified by `TimeZone`, not the browser's time zone.
+By default, each local date has 24 hourly counts of distinct sessions with at
+least one timestamped event in that hour. Multiple events and repeated clock
+hours count a session once per cell; the result does not infer continuous
+activity or idle time. `Days` contains dates with matching events, while
+`StartDate` and `EndDate` define the display range. Dates and hours use the CLI
+host's local time zone, identified by `TimeZone`, not the browser's time zone.
 `Coverage` reports `full`, `partial`, `outside`, or `nonexistent` for affected
 hours on boundary or clock-transition dates; dates omitted from `Coverage` have
 full coverage. A partial cell includes only events within the selected window,
 including when a repeated hour is only partly selected.
 
-Directory and session scope apply; event timestamps are selected with inclusive
-`--since` and exclusive `--until`. Permission filters and `--top` do not affect
-these counts. `UntimedEvents` and `MalformedEvents` count events that cannot be
-placed in any hour; `UntimedSessions` counts scoped sessions with untimed
-events. These diagnostics cover the scoped logs, including when a time window is
-selected. Missing timestamps cannot be assigned to that window. `AsOf` is the
+Directory and session scope apply; timestamps are selected with inclusive
+`--since` and exclusive `--until`. With `--agent-mode` but no `--sandbox`, cells
+count matching `permission.requested` events by their request timestamps. With
+`--sandbox`, cells instead count completed shell executions and other executions
+with recognized sandbox telemetry, using their completion timestamps. Selected
+sandbox states are alternatives; `unknown` means no usable outcome was recorded.
+Unfinished calls are excluded. When both filters are selected, an execution must
+be linked to at least one permission request in a selected Agent mode. Exact
+agent/tool-call identity is used, or a tool-call ID unique among started and
+completed executions in the same session; ambiguous or unlinked calls do not
+match an Agent mode. Only the completion time must be in the selected window,
+not the request time. Other
+permission filters and `--top` do not affect these counts. `AgentModes` and
+`SandboxStates` record the sorted, deduplicated filters applied to the activity.
+`UntimedEvents` counts matching events or executions with no usable timestamp;
+`MalformedEvents` counts malformed event envelopes. `UntimedSessions` counts
+scoped sessions with untimed matching records. These diagnostics cover the
+scoped logs, including when a time window is selected. Missing timestamps cannot
+be assigned to that window. `AsOf` is the
 scan completion time, not an implicit upper bound; active logs may change
 while scanning, and recorded future timestamps can extend the displayed range.
 With no lower bound, the display is anchored at the earliest dated event and
@@ -650,6 +703,7 @@ gh copilot-attendant vscode stats \
   [--all | --cwd <path> | --worktree <path> | -W <path>] [--session <id>] \
   [--since <time> | --period <period>] [--until <time>] \
   [--tool <pattern>]... [--model <pattern>]... [--agent <pattern>]... \
+  [--sandbox <applied|not-applied|unknown>]... \
   [--include-log-stats] [--top <n>] [--format <format>] \
   [--jq <expression>] [--template <template>]
 ```
@@ -687,18 +741,19 @@ with `--since`. `--tool` and `--model` restrict tool calls and LLM requests;
 `--agent` scopes activity by subagent name. All three are optional and default
 to no filter. They match the given regular expression (a plain substring is also
 a valid, unanchored regular expression) and may each be repeated to match any of
-multiple values. `--include-log-stats` is optional (default `false`) and adds
-versioned `LogDetails` to JSON output. Details contain each parent chat's
-identity and workspace, unique log identities, main/child classification, all
-referencing agent names, normalized own-activity metrics, and invocation
-identities in traversal order. These details are not truncated by `--top` and
-contain no raw events or conversation content. They support local agent
-filtering without double-counting shared logs or parent chats; positive TTFT
-sample counts and sums are retained for accurate averaging. This flag cannot be
-combined with `--agent`. `--top` keeps only the top N entries per statistic
-(default `10`; `0` keeps every entry). `--format`, `--jq`, and `--template`
-follow the standard `gh` JSON export flags; without `--format json`, results are
-printed as tables.
+multiple values. `--sandbox` is optional and repeatable; it restricts only the
+sandbox statistics described below. `--include-log-stats` is optional (default
+`false`) and adds versioned `LogDetails` to JSON output. Details contain each
+parent chat's identity and workspace, unique log identities, main/child
+classification, all referencing agent names, normalized own-activity metrics,
+and invocation identities in traversal order. These details are not truncated by
+`--top` and contain no raw events or conversation content. They support local
+agent filtering without double-counting shared logs or parent chats; positive
+TTFT sample counts and sums are retained for accurate averaging. This flag
+cannot be combined with `--agent`. `--top` keeps only the top N entries per
+statistic (default `10`; `0` keeps every entry). `--format`, `--jq`, and
+`--template` follow the standard `gh` JSON export flags; without `--format
+json`, results are printed as tables.
 
 For example, report only Explore agents' own usage across all workspaces over
 the last seven days:
@@ -706,6 +761,14 @@ the last seven days:
 ```sh
 gh copilot-attendant vscode stats --all --period 7d --agent '^Explore$'
 ```
+
+`SANDBOX` and `SANDBOX_TOOL` (`Sandbox` in JSON) report terminal tool executions
+by the `isSandboxWrapped` value recorded in chat session logs
+(`chatSessions/*.jsonl`): `applied`, `not-applied`, or `unknown` when nothing
+was recorded. Each tool call counts once. Totals, sessions, and a per-tool
+breakdown are reported; tool IDs are shown as recorded, including localized
+names. Session, directory, and time filters apply; `--tool`, `--model`, and
+`--agent` do not. `--top` limits only the per-tool rows.
 
 `USER_QUESTIONS` (`UserQuestions` in JSON) reports completed
 `vscode_askQuestions` calls, sessions with calls, and
@@ -753,29 +816,33 @@ VS Code counts completed tool calls, while CLI pairs recorded question events.
 User questions follows Workspaces on both tabs and precedes Agent usage on CLI.
 The normal Copilot CLI view also shows a date/hour Session activity heatmap,
 with 30-day navigation, host-local time, and explicit boundary and missing-hour
-states. Without an Agent mode filter, cells count all recorded events. With
-one or more `--agent-mode` values, they count distinct sessions that recorded
-matching `permission.requested` events in each hour, using each request event's
-timestamp; selected modes are alternatives. Other permission filters and `--top`
-do not apply to the heatmap. Older CLI results need an updated CLI or the canvas
-`source` runner. Total and Average rows summarize each hour on the displayed
-page. Totals add daily counts, so a session can count on multiple days.
-Averages include zeros and partial hours once per covered day; outside and
-nonexistent hours are excluded. A summary asterisk means it includes partial
-hours. Footer cell colors use the heatmap scale relative to the largest value
-in each summary row.
-Fusion-only and VS Code views do not show this full-session activity.
-The dashboard groups CLI permission panels into a collapsible Permissions
-category; its Summary panel uses the same bordered panel style as the other
-panels and also shows confirmed human permission wait and separate
-other/unknown-source decision timing. Each panel, including Models and
-Workspaces, can be collapsed independently of its category. Panel states persist
-across dashboard updates and view changes; CLI and VS Code panels keep separate
-states, while matching CLI panels share state with the Fusion-only view. Panel
-Clear buttons remain available when collapsed. Option-clicking any category or
-panel heading expands all included disclosures when any are collapsed, or
-collapses all when they are already expanded. The Usage and Permissions
-categories are excluded; their inner panels are still included. VS Code Local
-harness debug logs do not independently identify ordinary permission
-request/response waits; confirmation-tool or execution durations are not
-substituted.
+states. Without Agent mode or Sandbox filters, cells count all recorded events.
+With Agent mode alone they count matching requests by request time; with Sandbox
+they count matching completed executions by completion time. When both are
+selected, the execution must link to a matching Agent mode request. Other
+permission filters and `--top` do not apply to the heatmap. Older or mismatched
+CLI results need an updated CLI or the canvas `source` runner. Total and Average
+rows summarize each hour on the displayed page. Totals add daily counts, so a
+session can count on multiple days. Averages
+include zeros and partial hours once per covered day; outside and nonexistent
+hours are excluded. A summary asterisk means it includes partial hours. Footer
+cell colors use the heatmap scale relative to the largest value in each summary
+row. Fusion-only and VS Code views do not show this full-session activity. The
+dashboard groups CLI permission panels into a collapsible Permissions category;
+its Summary panel uses the same bordered panel style as the other panels and
+also shows confirmed human permission wait and separate other/unknown-source
+decision timing. Select `assisted` in Permission modes and `human_response` in
+Decision sources to filter human decisions while Assisted Permissions was
+enabled; optionally select `approved` in Results and `shell` in Tool kinds.
+The Permission modes filter does not restrict usage, session activity, Fusion,
+sandbox execution, or user-question statistics. Each panel, including Models
+and Workspaces, can be collapsed
+independently of its category. Panel states persist across dashboard updates and
+view changes; CLI and VS Code panels keep separate states, while matching CLI
+panels share state with the Fusion-only view. Panel Clear buttons remain
+available when collapsed. Option-clicking any category or panel heading expands
+all included disclosures when any are collapsed, or collapses all when they are
+already expanded. The Usage and Permissions categories are excluded; their inner
+panels are still included. VS Code Local harness debug logs do not independently
+identify ordinary permission request/response waits; confirmation-tool or
+execution durations are not substituted.

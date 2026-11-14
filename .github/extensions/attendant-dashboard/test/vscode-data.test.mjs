@@ -37,6 +37,24 @@ test("projection preserves totals and averages only positive TTFT samples", () =
     assert.deepEqual(data, original);
 });
 
+test("projection keeps sandbox totals independent of Agent and truncates its tools to Top", () => {
+    const data = vscodeDataset();
+    data.Sandbox = {
+        Sessions: 2, Executions: 4, Applied: 1, NotApplied: 2, Unknown: 1,
+        ByTool: [
+            { Key: "run_in_terminal", Total: 3, Applied: 1, NotApplied: 1, Unknown: 1 },
+            { Key: "other_terminal", Total: 1, Applied: 0, NotApplied: 1, Unknown: 0 },
+        ],
+    };
+    const full = projectVscode(data, query(["^Explore$"]));
+    assert.equal(full.Sandbox.Executions, 4);
+    assert.equal(full.Sandbox.ByTool.length, 2);
+    const limited = projectVscode(data, query([], 1));
+    assert.deepEqual(limited.Sandbox.ByTool.map((row) => row.Key), ["run_in_terminal"]);
+    assert.equal(data.Sandbox.ByTool.length, 2);
+    assert.equal(projectVscode(vscodeDataset(), query()).Sandbox, undefined);
+});
+
 test("multiple names deduplicate shared logs and parent chats, then apply Top", () => {
     const full = projectVscode(vscodeDataset(), query(["Explore", "Other", "executionSubagent"]));
     assert.deepEqual([full.Sessions, full.LLMRequests, full.ToolCalls, full.Turns], [2, 5, 5, 4]);

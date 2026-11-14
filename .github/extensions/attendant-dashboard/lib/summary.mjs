@@ -6,6 +6,8 @@
 
 import { sessionModelEntry, unitCost } from "../ui/model-view.mjs";
 import { workspaceEntry, workspaceUnitCost } from "../ui/workspace-view.mjs";
+import { activityFilterError } from "../ui/filter-view.mjs";
+import { SANDBOX_STATES } from "./query.mjs";
 
 const MAX_KEY = 200;
 
@@ -33,10 +35,13 @@ function counts(list, limit) {
     }));
 }
 
-function sessionActivity(data, limit) {
+function sessionActivity(data, limit, query) {
     const activity = data.SessionActivity;
     if (activity == null) return {};
     const invalid = () => ({ sessionActivityError: "Session activity data is invalid or unsupported" });
+    const filters = query?.filters?.session;
+    const filterError = filters && activityFilterError(activity, filters);
+    if (filterError) return { sessionActivityError: filterError };
     const count = (value) => Number.isSafeInteger(value) && value >= 0;
     const validDate = (value) => {
         if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -47,6 +52,8 @@ function sessionActivity(data, limit) {
         typeof activity.AsOf !== "string" || !Number.isFinite(Date.parse(activity.AsOf)) ||
         (activity.AgentModes !== undefined &&
             (!Array.isArray(activity.AgentModes) || !activity.AgentModes.every((mode) => typeof mode === "string" && mode.length > 0))) ||
+        (activity.SandboxStates !== undefined &&
+            (!Array.isArray(activity.SandboxStates) || !activity.SandboxStates.every((state) => SANDBOX_STATES.includes(state)))) ||
         !["", "empty-window", "no-dated-events"].includes(activity.EmptyReason) ||
         !["ScannedSessions", "UntimedSessions", "UntimedEvents", "MalformedEvents"].every((key) => count(activity[key])) ||
         activity.UntimedSessions > activity.ScannedSessions ||
@@ -81,6 +88,7 @@ function sessionActivity(data, limit) {
             timeZone: cap(activity.TimeZone),
             asOf: cap(activity.AsOf),
             ...(Array.isArray(activity.AgentModes) ? { agentModes: activity.AgentModes.map(cap) } : {}),
+            ...(Array.isArray(activity.SandboxStates) ? { sandboxStates: activity.SandboxStates.map(cap) } : {}),
             startDate: activity.StartDate || null,
             endDate: activity.EndDate || null,
             emptyReason: activity.EmptyReason || null,
@@ -93,7 +101,9 @@ function sessionActivity(data, limit) {
             latestRecordedDays: selected.map((entry) => ({
                 date: entry.Date, hours: entry.Hours, coverage: coverage.get(entry.Date) ?? null,
             })),
-            note: Array.isArray(activity.AgentModes) && activity.AgentModes.length
+            note: Array.isArray(activity.SandboxStates) && activity.SandboxStates.length
+                ? `Each hour counts distinct sessions with a completed tool execution matching the listed Sandbox states at its completion timestamp. Unrecorded outcomes are unknown; unfinished calls are excluded. ${activity.AgentModes?.length ? "The execution must have a linked permission request with a listed Agent mode. " : ""}Repeated local clock hours are combined. Dates without matching executions are omitted from this capped list. A null coverage array means all hours are within the selected window and exist; partial, outside, and nonexistent mark other hours. Untimed and malformed events cannot be placed in any period. Other permission filters and Top do not apply.`
+                : Array.isArray(activity.AgentModes) && activity.AgentModes.length
                 ? "Each hour counts distinct sessions with matching permission.requested events at their request timestamp for the listed Agent modes. Repeated local clock hours are combined. Dates without recorded requests are omitted from this capped list. A null coverage array means all hours are within the selected window and exist; partial, outside, and nonexistent mark other hours. Other permission filters and Top do not apply."
                 : "Each hour counts distinct sessions with recorded timestamped events, not continuous activity. Repeated local clock hours are combined. Dates without recorded events are omitted from this capped list. A null coverage array means all hours are within the selected window and exist; partial, outside, and nonexistent mark other hours. Untimed and malformed events cannot be placed in any period. Scope and event-time bounds apply; other permission filters and Top do not.",
         },
@@ -206,6 +216,21 @@ function permissionDecisionWait(wait) {
     };
 }
 
+function sandboxSummary(sandbox, limit, note) {
+    if (sandbox == null) return {};
+    return {
+        sandbox: {
+            sessions: sandbox.Sessions, executions: sandbox.Executions,
+            applied: sandbox.Applied, notApplied: sandbox.NotApplied, unknown: sandbox.Unknown,
+            ...(sandbox.OptOutRequested !== undefined ? { optOutRequested: sandbox.OptOutRequested } : {}),
+            byTool: (sandbox.ByTool ?? []).slice(0, limit).map((e) => ({
+                key: cap(e.Key), total: e.Total, applied: e.Applied, notApplied: e.NotApplied, unknown: e.Unknown,
+            })),
+            note,
+        },
+    };
+}
+
 function fusionSummary(data, limit) {
     const fusion = data.Fusion;
     if (fusion == null) return {};
@@ -315,8 +340,9 @@ function fusionOnlySummary(data, limit) {
  * @param {"session"|"vscode"} source
  * @param {object} data Parsed JSON from `<source> stats --format json`.
  * @param {number} [limit] Maximum entries per breakdown.
+ * @param {object} [query] Dashboard query used to validate activity filters.
  */
-export function summarize(source, data, limit = 10) {
+export function summarize(source, data, limit = 10, query) {
     if (!data) return null;
     if (source === "session") {
         if (data.FusionOnly) return fusionOnlySummary(data, limit);
@@ -331,13 +357,19 @@ export function summarize(source, data, limit = 10) {
                 byAgentMode: counts(data.ByAgentMode, limit),
                 agentModeNote: "Agent modes are captured at permission evaluation, not main/subagent roles or session-wide modes. Missing modes are unknown; unlogged requests cannot be reconstructed. Permission filters and Top apply.",
             } : {}),
+            ...(data.ByPermissionMode != null ? {
+                byPermissionMode: counts(data.ByPermissionMode, limit),
+                permissionModeNote: "Permission modes are captured at evaluation start; unknown means no usable mode was recorded. Assisted mode does not imply a safety review ran. Permission filters and Top apply; usage is unaffected.",
+            } : {}),
+            ...(data.BySandbox != null ? { bySandbox: counts(data.BySandbox, limit) } : {}),
+            ...sandboxSummary(data.Sandbox, limit, "Completed shell executions and other tools with a recorded sandboxApplied outcome. Shell executions without an outcome are unknown; unfinished calls are excluded. Session scope, completion-time bounds, and the sandbox filter apply; other permission filters do not."),
             byReadOnly: counts(data.ByReadOnly, limit),
             byKind: counts(data.ByKind, limit),
             byCommand: counts(data.ByCommand, limit),
             byPath: counts(data.ByPath, limit),
             byURL: counts(data.ByURL, limit),
             byCWD: counts(data.ByCWD, limit),
-            ...sessionActivity(data, limit),
+            ...sessionActivity(data, limit, query),
             ...usage(data, limit),
             ...fusionSummary(data, limit),
             ...(data.PermissionWait != null ? {
@@ -382,6 +414,7 @@ export function summarize(source, data, limit = 10) {
                 note: "Completed vscode_askQuestions calls only; multi-question batches share one interval. Partially skipped batches with an answer count as answered. In-flight questions are unavailable. Call start-time bounds, directory/session/agent/tool filters apply; model filters and Top do not. Tool duration includes UI/transport overhead; overlapping waits are summed",
             },
         } : {}),
+        ...sandboxSummary(data.Sandbox, limit, "Terminal calls by recorded isSandboxWrapped in chatSessions; unknown means no value was recorded. Session scope, time bounds, and the sandbox filter apply; tool, model, and agent filters do not."),
         byTool: (data.ByTool ?? []).slice(0, limit).map((e) => ({
             key: cap(e.Key),
             total: e.Total,
@@ -457,7 +490,7 @@ export function escapeForPrompt(value) {
 
 /** Composes the message sent to the agent from the dashboard. */
 export function composePrompt({ source, query, argv, data, text }) {
-    const summary = summarize(source, data);
+    const summary = summarize(source, data, 10, query);
     const label = source === "session" ? "Copilot CLI session" : "VS Code Copilot Chat";
     // The command embeds filter values, so it is delimited as data as well.
     const command = `gh copilot-attendant ${argv.join(" ")}`;
