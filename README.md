@@ -23,6 +23,8 @@ organization runner settings.
   analyze the selected data.
 - **Manage code review settings.** View and update organization or enterprise
   policies and organization runner configurations.
+- **Approve trusted commands everywhere.** Use a Copilot CLI permission hook to
+  allow or deny commands and tools in every session from one config file.
 
 Local statistics use recorded logs; missing data is not treated as zero.
 Organization and enterprise reports require access to the Copilot usage metrics
@@ -74,6 +76,30 @@ gh copilot-attendant copilot settings runner set --org example-org \
 The `set` commands change live settings. Replace `example-org` with your
 organization and review the [usage guide](docs/usage.md#copilot-settings-policy-set)
 for permissions, enterprise policies, and runner inheritance.
+
+### hook
+
+Approve or deny Copilot CLI tool calls in every session from rules in
+`~/.config/gh-copilot-attendant/config.yaml`:
+
+```yaml
+hooks:
+  permissionRequest:
+    allow:
+      commands: ["git status:*", "go test:*"]
+    deny:
+      commands: ["rm:*"]
+```
+
+```sh
+gh copilot-attendant hook install
+```
+
+The install command registers a `permissionRequest` hook in
+`~/.copilot/hooks/gh-copilot-attendant.json`. Bash command lines are allowed
+only when every command in them matches an allow rule; unmatched requests fall
+back to the normal permission prompt. See the
+[usage guide](docs/usage.md#hook) for rule syntax and safety notes.
 
 ### metrics
 

@@ -1,7 +1,7 @@
 ---
 name: gh-copilot-attendant
-description: Use gh-copilot-attendant to inspect Copilot activity, generate usage reports, manage its dashboard, or view and update Copilot code review policies and organization runners.
-allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant copilot extension:*), Bash(gh copilot-attendant copilot settings policy view:*), Bash(gh copilot-attendant copilot settings policy set:*), Bash(gh copilot-attendant copilot settings runner view:*), Bash(gh copilot-attendant copilot settings runner set:*), Bash(gh copilot-attendant metrics report:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
+description: Use gh-copilot-attendant to inspect Copilot activity, generate usage reports, manage its dashboard, or view and update Copilot code review policies and organization runners, or configure a Copilot CLI permission hook.
+allowed-tools: Bash(git status:*), Bash(git branch --show-current:*), Bash(gh copilot-attendant skills:*), Bash(gh copilot-attendant copilot extension:*), Bash(gh copilot-attendant copilot settings policy view:*), Bash(gh copilot-attendant copilot settings policy set:*), Bash(gh copilot-attendant copilot settings runner view:*), Bash(gh copilot-attendant copilot settings runner set:*), Bash(gh copilot-attendant hook install:*), Bash(gh copilot-attendant hook permission-request:*), Bash(gh copilot-attendant metrics report:*), Bash(gh copilot-attendant session stats:*), Bash(gh copilot-attendant vscode stats:*)
 ---
 
 # gh-copilot-attendant
@@ -40,6 +40,28 @@ require suitable owner or enterprise permissions and classic PAT/OAuth scopes;
 GitHub App tokens and fine-grained PATs are unsupported. For exact permissions,
 states, output flags, and inheritance, consult the
 [usage guide](../../docs/usage.md#copilot-settings-policy-set).
+
+### hook install / permission-request
+
+`hook install` writes `$COPILOT_HOME/hooks/gh-copilot-attendant.json` (default
+`~/.copilot/hooks/`) so Copilot CLI runs `hook permission-request` for every
+`permissionRequest` event. That command reads the hook payload from stdin and
+prints `{"behavior":"allow"}`, `{"behavior":"deny",...}`, or nothing (normal
+prompt) from `hooks.permissionRequest.allow|deny.commands|tools` in
+`~/.config/gh-copilot-attendant/config.yaml` (override with `--config` or
+`$GH_COPILOT_ATTENDANT_CONFIG`). Command rules use exact words or a trailing
+`:*` prefix; tool rules are globs on `toolName`. Deny wins. A bash command line
+is allowed only when every simple command matches; expansions, subshells, and
+file redirections are never decided, PowerShell is never allowed, and tool rules
+never allow shell tools. Do not install the hook or add allow rules unless the
+user asks; a `:*` rule authorizes every remaining argument. Test a rule with:
+
+```sh
+echo '{"toolName":"bash","toolInput":{"command":"git status"}}' |
+  gh copilot-attendant hook permission-request
+```
+
+See the [usage guide](../../docs/usage.md#hook).
 
 ### metrics report
 
