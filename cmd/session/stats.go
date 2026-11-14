@@ -108,8 +108,8 @@ requests. Use --result to match an exact recorded result, --command-access to ma
 requests containing commands with the selected read-only/read-write attribute, and
 --agent-mode, --permission-mode, --kind, --sandbox, --command, --path, or --url to
 restrict requests matching that recorded mode, tool kind, command, path, or URL.
---agent-mode, --permission-mode, and --result match exactly; use unknown for missing or
-invalid recorded modes. --path and --url match as regular expressions (a
+--agent-mode, --permission-mode, and --result match exactly. For --agent-mode and
+--permission-mode, use unknown for missing or invalid recorded modes. --path and --url match as regular expressions (a
 plain substring is also a valid, unanchored regular expression). --decision-source restricts
 to permission outcomes whose recorded decision source matches exactly (e.g. human_response,
 unattended_fallback, or unknown when no decision source was recorded, including older CLI

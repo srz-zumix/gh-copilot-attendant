@@ -7,6 +7,7 @@
 import { sessionModelEntry, unitCost } from "../ui/model-view.mjs";
 import { workspaceEntry, workspaceUnitCost } from "../ui/workspace-view.mjs";
 import { activityFilterError } from "../ui/filter-view.mjs";
+import { SANDBOX_STATES } from "./query.mjs";
 
 const MAX_KEY = 200;
 
@@ -52,7 +53,7 @@ function sessionActivity(data, limit, query) {
         (activity.AgentModes !== undefined &&
             (!Array.isArray(activity.AgentModes) || !activity.AgentModes.every((mode) => typeof mode === "string" && mode.length > 0))) ||
         (activity.SandboxStates !== undefined &&
-            (!Array.isArray(activity.SandboxStates) || !activity.SandboxStates.every((state) => ["applied", "not-applied", "unknown"].includes(state)))) ||
+            (!Array.isArray(activity.SandboxStates) || !activity.SandboxStates.every((state) => SANDBOX_STATES.includes(state)))) ||
         !["", "empty-window", "no-dated-events"].includes(activity.EmptyReason) ||
         !["ScannedSessions", "UntimedSessions", "UntimedEvents", "MalformedEvents"].every((key) => count(activity[key])) ||
         activity.UntimedSessions > activity.ScannedSessions ||
