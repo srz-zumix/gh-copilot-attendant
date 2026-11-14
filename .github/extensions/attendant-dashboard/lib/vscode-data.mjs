@@ -163,6 +163,10 @@ export function projectVscode(data, query) {
         delete entry.totalTTFT;
         delete entry.samples;
     }
+    if (data.Sandbox != null) {
+        const byTool = Array.isArray(data.Sandbox.ByTool) ? data.Sandbox.ByTool : [];
+        result.Sandbox = { ...data.Sandbox, ByTool: query.top > 0 ? byTool.slice(0, query.top) : byTool };
+    }
     result.ByTool = ordered(tools, (row) => row.Total, query.top);
     result.ByModel = ordered(models, (row) => row.Requests, query.top);
     result.ByAgent = ordered(agents, (row) => row.Total, query.top);

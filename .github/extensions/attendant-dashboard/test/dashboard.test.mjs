@@ -102,6 +102,21 @@ test("an unsupported Agent mode flag reports an error without presenting stale d
     assert.ok(calls[1].includes("--agent-mode=plan"));
 });
 
+test("dashboard summary does not attribute legacy activity to a Sandbox filter", async () => {
+    const activity = {
+        Version: 1, TimeZone: "UTC", AsOf: "2026-01-03T00:00:00Z", AgentModes: [],
+        StartDate: "2026-01-02", EndDate: "2026-01-02", EmptyReason: "",
+        ScannedSessions: 1, UntimedSessions: 0, UntimedEvents: 0, MalformedEvents: 0,
+        Days: [{ Date: "2026-01-02", Hours: Array(24).fill(0) }], Coverage: [],
+    };
+    const dashboard = makeDashboard(async () => ({ data: { SessionActivity: activity }, warnings: [], durationMs: 1 }));
+    await dashboard.setQuery({ filters: { session: { sandbox: ["applied"] } } });
+    assert.equal(dashboard.isFresh("session"), true);
+    const summary = dashboard.summary().summary;
+    assert.match(summary.sessionActivityError, /selected Sandbox filter/);
+    assert.equal("sessionActivity" in summary, false);
+});
+
 test("ensureFresh skips re-running when the result matches the query", async () => {
     let runs = 0;
     const dashboard = makeDashboard(async () => {

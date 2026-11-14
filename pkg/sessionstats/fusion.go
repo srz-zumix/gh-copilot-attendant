@@ -258,6 +258,7 @@ type sessionCollector struct {
 	seenResolved map[string]struct{}
 	hasActivity  bool
 	activitySeen map[activityHour]struct{}
+	sandbox      *copilotext.SandboxActivityCollector
 	untimed      bool
 }
 
@@ -304,6 +305,9 @@ func collectFusion(opts copilotext.PermissionStatsOptions, activity *activityCol
 		if activity != nil {
 			activity.scannedSessions++
 			sc.activitySeen = make(map[activityHour]struct{})
+			if len(activity.sandboxStates) > 0 {
+				sc.sandbox = copilotext.NewSandboxActivityCollector(s)
+			}
 		}
 		if err := sc.scan(); err != nil {
 			return FusionStats{}, fmt.Errorf("read Fusion events for session %q: %w", s.ID, err)
@@ -361,7 +365,7 @@ func (sc *sessionCollector) scan() (rerr error) {
 		if len(line) == 0 {
 			continue
 		}
-		if sc.collector.activity != nil && sc.collector.activity.record(line, sc.activitySeen) {
+		if sc.collector.activity != nil && sc.collector.activity.record(line, sc.activitySeen, sc.sandbox) {
 			sc.untimed = true
 		}
 		// Avoid decoding unrelated event payloads, while accepting escaped JSON type names.
@@ -387,6 +391,9 @@ func (sc *sessionCollector) scan() (rerr error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read %q: %w", path, err)
+	}
+	if sc.sandbox != nil && sc.collector.activity.recordSandbox(sc.sandbox.Records(), sc.activitySeen) {
+		sc.untimed = true
 	}
 	return nil
 }

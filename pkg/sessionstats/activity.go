@@ -17,6 +17,7 @@ type SessionActivity struct {
 	TimeZone        string
 	AsOf            time.Time
 	AgentModes      []string
+	SandboxStates   []string
 	StartDate       string
 	EndDate         string
 	EmptyReason     string
@@ -49,6 +50,7 @@ type activityCollector struct {
 	opts            copilotext.PermissionStatsOptions
 	location        *time.Location
 	agentModes      map[string]struct{}
+	sandboxStates   map[string]struct{}
 	days            map[string]*ActivityDay
 	firstEvent      time.Time
 	lastEvent       time.Time
@@ -63,15 +65,21 @@ func newActivityCollector(opts copilotext.PermissionStatsOptions, location *time
 	for _, mode := range opts.AgentMode {
 		agentModes[mode] = struct{}{}
 	}
+	sandboxStates := make(map[string]struct{}, len(opts.Sandbox))
+	for _, state := range opts.Sandbox {
+		sandboxStates[state] = struct{}{}
+	}
 	return &activityCollector{
-		opts: opts, location: location, agentModes: agentModes, days: make(map[string]*ActivityDay),
+		opts: opts, location: location, agentModes: agentModes, sandboxStates: sandboxStates,
+		days: make(map[string]*ActivityDay),
 	}
 }
 
-// record returns whether the event lacks a usable timestamp.
-func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}) bool {
+// record reports untimed events; sandbox execution times are checked after the scan.
+func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}, sandbox *copilotext.SandboxActivityCollector) bool {
 	var envelope struct {
 		Type      json.RawMessage `json:"type"`
+		AgentID   json.RawMessage `json:"agentId"`
 		Timestamp json.RawMessage `json:"timestamp"`
 		Data      json.RawMessage `json:"data"`
 	}
@@ -84,6 +92,18 @@ func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}) 
 		c.malformedEvents++
 		return false
 	}
+	if sandbox != nil {
+		if eventType != "permission.requested" && eventType != "tool.execution_start" && eventType != "tool.execution_complete" {
+			return false
+		}
+		var agentID string
+		if len(envelope.AgentID) > 0 && json.Unmarshal(envelope.AgentID, &agentID) != nil {
+			c.malformedEvents++
+			return false
+		}
+		sandbox.Observe(eventType, agentID, envelope.Timestamp, envelope.Data)
+		return false
+	}
 	if !c.matchesAgentMode(eventType, envelope.Data) {
 		return false
 	}
@@ -92,9 +112,14 @@ func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}) 
 		c.untimedEvents++
 		return true
 	}
+	c.recordTimestamp(timestamp, seen)
+	return false
+}
+
+func (c *activityCollector) recordTimestamp(timestamp time.Time, seen map[activityHour]struct{}) {
 	if (!c.opts.Since.IsZero() && timestamp.Before(c.opts.Since)) ||
 		(!c.opts.Until.IsZero() && !timestamp.Before(c.opts.Until)) {
-		return false
+		return
 	}
 	if c.firstEvent.IsZero() || timestamp.Before(c.firstEvent) {
 		c.firstEvent = timestamp
@@ -105,7 +130,7 @@ func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}) 
 	local := timestamp.In(c.location)
 	key := activityHour{date: local.Format(activityDateFormat), hour: local.Hour()}
 	if _, ok := seen[key]; ok {
-		return false
+		return
 	}
 	seen[key] = struct{}{}
 	day := c.days[key.date]
@@ -114,7 +139,34 @@ func (c *activityCollector) record(line []byte, seen map[activityHour]struct{}) 
 		c.days[key.date] = day
 	}
 	day.Hours[key.hour]++
-	return false
+}
+
+func (c *activityCollector) recordSandbox(records []copilotext.SandboxActivityExecution, seen map[activityHour]struct{}) bool {
+	untimed := false
+	for _, execution := range records {
+		if _, ok := c.sandboxStates[execution.State]; !ok {
+			continue
+		}
+		if len(c.agentModes) > 0 {
+			matched := false
+			for _, mode := range execution.AgentModes {
+				if _, ok := c.agentModes[mode]; ok {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if execution.CompletedAt.IsZero() {
+			c.untimedEvents++
+			untimed = true
+			continue
+		}
+		c.recordTimestamp(execution.CompletedAt, seen)
+	}
+	return untimed
 }
 
 func (c *activityCollector) matchesAgentMode(eventType string, data json.RawMessage) bool {
@@ -146,6 +198,7 @@ func (c *activityCollector) finish(asOf time.Time) (SessionActivity, error) {
 	result := SessionActivity{
 		Version: 1, TimeZone: c.location.String(), AsOf: asOf.In(c.location),
 		AgentModes:      make([]string, 0, len(c.agentModes)),
+		SandboxStates:   make([]string, 0, len(c.sandboxStates)),
 		ScannedSessions: c.scannedSessions, UntimedSessions: c.untimedSessions,
 		UntimedEvents: c.untimedEvents, MalformedEvents: c.malformedEvents,
 		Days: make([]ActivityDay, 0, len(c.days)), Coverage: []ActivityDayCoverage{},
@@ -154,6 +207,10 @@ func (c *activityCollector) finish(asOf time.Time) (SessionActivity, error) {
 		result.AgentModes = append(result.AgentModes, mode)
 	}
 	sort.Strings(result.AgentModes)
+	for state := range c.sandboxStates {
+		result.SandboxStates = append(result.SandboxStates, state)
+	}
+	sort.Strings(result.SandboxStates)
 	for _, day := range c.days {
 		result.Days = append(result.Days, *day)
 	}

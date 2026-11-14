@@ -330,7 +330,7 @@ export class Dashboard {
             durationMs: result.durationMs,
             warningCount: result.warnings?.length ?? 0,
             query: this.query,
-            summary: summarize(source, result.data),
+            summary: summarize(source, result.data, 10, this.query),
         };
     }
 

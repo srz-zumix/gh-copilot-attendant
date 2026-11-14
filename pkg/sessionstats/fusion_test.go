@@ -451,7 +451,11 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 	writeSession(t, root, "session-a", "/work", resolution(t, "resolution", at, "turn", "single")+
 		usage(t, "record", at, "source", "usage", "model-a", "single", "turn", "phase", "primary", "solver", int64ptr(1e9))+
 		testEvent(t, "permission.requested", "request-a", at, map[string]any{"requestId": "a", "agentMode": "interactive", "permissionRequest": map[string]any{"kind": "read"}})+
-		testEvent(t, "permission.requested", "request-b", at, map[string]any{"requestId": "b", "agentMode": "plan", "permissionRequest": map[string]any{"kind": "read"}}))
+		testEvent(t, "permission.requested", "request-b", at, map[string]any{"requestId": "b", "agentMode": "plan", "permissionRequest": map[string]any{"kind": "read"}})+
+		testEvent(t, "tool.execution_start", "shell-start", at, map[string]any{"toolCallId": "shell", "toolName": "bash"})+
+		testEvent(t, "tool.execution_complete", "shell-end", at, map[string]any{"toolCallId": "shell", "toolTelemetry": map[string]any{"properties": map[string]any{"sandboxApplied": "true"}}})+
+		testEvent(t, "tool.execution_start", "question-start", at, map[string]any{"toolCallId": "question", "toolName": "ask_user"})+
+		testEvent(t, "tool.execution_complete", "question-end", at, map[string]any{"toolCallId": "question", "success": true, "result": map[string]any{"content": "User selected: Yes"}}))
 	stats, err := Collect(copilotext.PermissionStatsOptions{Root: root})
 	if err != nil {
 		t.Fatal(err)
@@ -472,6 +476,16 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 	if stats.Requests != 2 || stats.UsageRequests != 1 || stats.UsageAIU != 1 || stats.Fusion.ResolvedTurns != 1 || stats.Fusion.UsageRecords != 1 {
 		t.Fatalf("combined stats = %+v", stats)
 	}
+	modeFiltered, err := Collect(copilotext.PermissionStatsOptions{Root: root, PermissionMode: []string{"assisted"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modeFiltered.Requests != 0 || modeFiltered.UsageRequests != stats.UsageRequests || modeFiltered.UsageAIU != stats.UsageAIU ||
+		stats.Sandbox.Executions != 1 || !reflect.DeepEqual(modeFiltered.Sandbox, stats.Sandbox) ||
+		stats.AskUser.Questions != 1 || !reflect.DeepEqual(modeFiltered.AskUser, stats.AskUser) ||
+		!reflect.DeepEqual(modeFiltered.Fusion, stats.Fusion) {
+		t.Fatalf("permission mode changed unrelated totals: %+v", modeFiltered)
+	}
 	filtered, err := Collect(copilotext.PermissionStatsOptions{Root: root, AgentMode: []string{"plan"}})
 	if err != nil {
 		t.Fatal(err)
@@ -479,6 +493,18 @@ func TestCollectPreservesSharedStatsAndAddsFusion(t *testing.T) {
 	if filtered.Requests != 1 || filtered.UsageRequests != stats.UsageRequests || filtered.UsageAIU != stats.UsageAIU ||
 		!reflect.DeepEqual(filtered.Fusion, stats.Fusion) || !reflect.DeepEqual(filtered.UsageAgentModes, []string{"plan"}) {
 		t.Fatalf("mode filter changed matching session usage or Fusion: %+v", filtered)
+	}
+	combined, err := Collect(copilotext.PermissionStatsOptions{
+		Root: root, AgentMode: []string{"plan"}, PermissionMode: []string{"assisted"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined.Requests != 0 || combined.UsageRequests != filtered.UsageRequests || combined.UsageAIU != filtered.UsageAIU ||
+		!reflect.DeepEqual(combined.UsageAgentModes, filtered.UsageAgentModes) ||
+		!reflect.DeepEqual(combined.Fusion, filtered.Fusion) || !reflect.DeepEqual(combined.Sandbox, filtered.Sandbox) ||
+		!reflect.DeepEqual(combined.AskUser, filtered.AskUser) {
+		t.Fatalf("permission mode changed Agent-mode usage or unrelated totals: %+v", combined)
 	}
 	unmatched, err := Collect(copilotext.PermissionStatsOptions{Root: root, AgentMode: []string{"autopilot", "autopilot"}})
 	if err != nil {

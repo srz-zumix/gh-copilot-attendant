@@ -9,7 +9,7 @@
 
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 import { Dashboard } from "./lib/dashboard.mjs";
-import { QueryError, SOURCES, SCOPES, OPERATIONS, COMMAND_ACCESS, MAX_TOP, normalizeQuery } from "./lib/query.mjs";
+import { QueryError, SOURCES, SCOPES, OPERATIONS, COMMAND_ACCESS, SANDBOX_STATES, MAX_TOP, normalizeQuery } from "./lib/query.mjs";
 import { RUNNERS } from "./lib/runner.mjs";
 import { startServer } from "./lib/server.mjs";
 import { QueryStore, storeKey } from "./lib/store.mjs";
@@ -47,9 +47,17 @@ const QUERY_SCHEMA = {
                         operation: { type: "array", items: { type: "string", enum: OPERATIONS }, maxItems: 2 },
                         result: { ...stringArray, description: "Exact recorded permission result values" },
                         commandAccess: { type: "array", items: { type: "string", enum: COMMAND_ACCESS }, maxItems: 2 },
+                        sandbox: {
+                            type: "array", items: { type: "string", enum: SANDBOX_STATES }, maxItems: 3,
+                            description: "Recorded sandbox states of tool calls; also filters Session activity by completion",
+                        },
                         agentMode: {
                             ...stringArray,
                             description: "Exact recorded Agent modes; unknown includes missing or invalid values",
+                        },
+                        permissionMode: {
+                            ...stringArray,
+                            description: "Exact recorded permission modes; unknown includes missing or invalid values",
                         },
                         kind: stringArray,
                         command: stringArray,
@@ -68,6 +76,10 @@ const QUERY_SCHEMA = {
                         tool: { ...stringArray, description: "Regular expressions" },
                         model: { ...stringArray, description: "Regular expressions" },
                         agent: { ...stringArray, description: "Regular expressions" },
+                        sandbox: {
+                            type: "array", items: { type: "string", enum: SANDBOX_STATES }, maxItems: 3,
+                            description: "Recorded sandbox states; restricts only the sandbox statistics",
+                        },
                     },
                 },
             },

@@ -91,6 +91,41 @@ test("session activity summaries cap recent recorded days and retain clock cover
     assert.ok(!prompt.includes('"</dashboard-data>"'));
 });
 
+test("sandbox activity summaries and prompts require matching recorded filter metadata", () => {
+    const query = { filters: { session: { sandbox: ["applied"], agentMode: ["plan"] } } };
+    const activity = {
+        Version: 1, TimeZone: "UTC", AsOf: "2026-01-03T00:00:00Z",
+        AgentModes: ["plan"], SandboxStates: ["applied"],
+        StartDate: "2026-01-02", EndDate: "2026-01-02", EmptyReason: "",
+        ScannedSessions: 1, UntimedSessions: 0, UntimedEvents: 0, MalformedEvents: 0,
+        Days: [{ Date: "2026-01-02", Hours: Array(24).fill(1) }], Coverage: [],
+    };
+    const data = { SessionActivity: activity };
+    const summary = summarize("session", data, 10, query).sessionActivity;
+    assert.deepEqual(summary.sandboxStates, ["applied"]);
+    assert.deepEqual(summary.agentModes, ["plan"]);
+    assert.match(summary.note, /completion timestamp/);
+    assert.match(summary.note, /linked permission request with a listed Agent mode/);
+    assert.match(summary.note, /unfinished calls are excluded/);
+    const prompt = composePrompt({ source: "session", query, argv: [], data, text: "Summarize activity" });
+    assert.match(prompt, /"sandboxStates":/);
+    assert.match(prompt, /completion timestamp/);
+
+    for (const states of [undefined, [], ["not-applied"]]) {
+        const stale = { SessionActivity: { ...activity, SandboxStates: states } };
+        const result = summarize("session", stale, 10, query);
+        assert.match(result.sessionActivityError, /Sandbox/);
+        assert.equal("sessionActivity" in result, false);
+        const stalePrompt = composePrompt({ source: "session", query, argv: [], data: stale, text: "Summarize activity" });
+        assert.match(stalePrompt, /"sessionActivityError":/);
+        assert.doesNotMatch(stalePrompt, /"sessionActivity":/);
+    }
+    const mismatchedMode = { SessionActivity: { ...activity, AgentModes: ["interactive"] } };
+    assert.match(summarize("session", mismatchedMode, 10, query).sessionActivityError, /Agent mode/);
+    assert.equal(summarize("session", { SessionActivity: { ...activity, SandboxStates: ["invalid"] } }).sessionActivityError,
+        "Session activity data is invalid or unsupported");
+});
+
 test("permission wait summaries preserve provenance, exact timing, coverage, and unknown-source nulls", () => {
     const empty = { Completed: 0, Timed: 0, Untimed: 0, TotalWaitMs: 0, AvgWaitMs: null, MaxWaitMs: null };
     const data = { PermissionWait: {
@@ -148,6 +183,24 @@ test("CLI agent-mode summaries preserve request outcomes, limits, and unknown co
     assert.equal("ByAgentMode" in fusion, false);
     assert.equal("byAgentMode" in summarize("session", fusion), false);
     assert.equal("agentModeNote" in summarize("session", fusion), false);
+});
+
+test("permission mode summaries preserve outcomes and omit unsupported data", () => {
+    const data = { ByPermissionMode: [
+        { Key: "assisted", Total: 2, Approved: 1, Denied: 1, ApprovedForLocation: 0, Unresolved: 0 },
+        { Key: "unknown", Total: 1, Approved: 0, Denied: 0, ApprovedForLocation: 0, Unresolved: 1 },
+    ] };
+    const summary = summarize("session", data, 1);
+    assert.deepEqual(summary.byPermissionMode, [
+        { key: "assisted", total: 2, approved: 1, approvedForLocation: 0, denied: 1, unresolved: 0 },
+    ]);
+    assert.match(summary.permissionModeNote, /unknown means no usable mode/);
+    assert.match(summary.permissionModeNote, /does not imply a safety review ran/);
+    assert.match(composePrompt({ source: "session", query: {}, argv: [], data, text: "Summarize permissions" }), /"byPermissionMode"/);
+    assert.equal("byPermissionMode" in summarize("session", {}), false);
+    assert.equal("byPermissionMode" in summarize("session", { ByPermissionMode: null }), false);
+    assert.equal("byPermissionMode" in summarize("vscode", data), false);
+    assert.equal("byPermissionMode" in summarize("session", projectFusion({ ...fusionDataset(), ...data })), false);
 });
 
 test("Fusion summaries retain distinct counts, AIU coverage, row limits and untrusted dimensions", () => {
@@ -228,4 +281,22 @@ test("Fusion-only summaries and prompts contain only selected records and preser
     const empty = summarize("session", projectFusion(emptyFusionDataset()));
     assert.equal(empty.usage.metrics.aiu.recordedTotal, null);
     assert.equal(empty.usage.metrics.aiu.complete, false);
+});
+
+test("sandbox statistics are summarized for both sources when present", () => {
+    const sandbox = {
+        Sessions: 1, Executions: 3, Applied: 1, NotApplied: 1, Unknown: 1, OptOutRequested: 0,
+        ByTool: [{ Key: "bash", Total: 3, Applied: 1, NotApplied: 1, Unknown: 1 }, { Key: "rg", Total: 1, Applied: 0, NotApplied: 1, Unknown: 0 }],
+    };
+    const cli = summarize("session", { Sessions: 1, Sandbox: sandbox, BySandbox: [{ Key: "applied", Total: 2, Approved: 2 }] }, 1);
+    assert.deepEqual(cli.sandbox.byTool, [{ key: "bash", total: 3, applied: 1, notApplied: 1, unknown: 1 }]);
+    assert.equal(cli.sandbox.optOutRequested, 0);
+    assert.match(cli.sandbox.note, /unfinished calls are excluded/);
+    assert.equal(cli.bySandbox.length, 1);
+    const { OptOutRequested, ...vscodeSandbox } = sandbox;
+    const vscode = summarize("vscode", { Sessions: 1, Sandbox: vscodeSandbox });
+    assert.equal(vscode.sandbox.executions, 3);
+    assert.equal("optOutRequested" in vscode.sandbox, false);
+    assert.equal(summarize("session", { Sessions: 1 }).sandbox, undefined);
+    assert.equal(summarize("vscode", { Sessions: 1 }).sandbox, undefined);
 });

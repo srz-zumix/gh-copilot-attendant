@@ -203,6 +203,41 @@ test("HTTP state and Ask agent share recorded Agent-mode outcomes", async (t) =>
     ]);
 });
 
+test("HTTP query combines assisted mode with human-approved shell requests", async (t) => {
+    const modes = [
+        { Key: "assisted", Total: 1, Approved: 1, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 },
+        { Key: "manual", Total: 1, Approved: 1, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 },
+    ];
+    const calls = [];
+    const { server, json, auth, dashboard, asked } = await setup(async (runner, argv) => {
+        calls.push(argv);
+        const selected = argv.includes("--permission-mode=assisted") ? modes.slice(0, 1) : modes;
+        return { data: { Sessions: 1, Requests: selected.length, ByPermissionMode: selected }, warnings: [], durationMs: 1 };
+    });
+    t.after(() => server.close());
+    await dashboard.refresh("session");
+    const filtered = await call(`${server.origin}/api/query`, {
+        method: "POST", headers: json,
+        body: JSON.stringify({ query: { filters: { session: {
+            permissionMode: ["assisted"], decisionSource: ["human_response"], result: ["approved"], kind: ["shell"],
+        } } } }),
+    });
+    assert.equal(filtered.status, 200);
+    await dashboard.refreshing("session");
+    const next = await call(`${server.origin}/api/state`, { headers: auth });
+    assert.deepEqual(next.json.results.session.data.ByPermissionMode, modes.slice(0, 1));
+    assert.equal(next.json.results.session.fresh, true);
+    for (const arg of ["--permission-mode=assisted", "--decision-source=human_response", "--result=approved", "--kind=shell"]) {
+        assert.ok(calls.at(-1).includes(arg));
+    }
+    assert.equal((await call(`${server.origin}/api/ask`, {
+        method: "POST", headers: json, body: JSON.stringify({ text: "Summarize the selection" }),
+    })).status, 200);
+    assert.deepEqual(asked[0].summary.summary.byPermissionMode, [
+        { key: "assisted", total: 1, approved: 1, approvedForLocation: 0, denied: 0, unresolved: 0 },
+    ]);
+});
+
 test("HTTP Ask agent rejects stale data when the selected CLI cannot filter Agent modes", async (t) => {
     const { server, json, dashboard, asked } = await setup(async (runner, argv) => {
         if (argv.includes("--agent-mode=plan")) throw new Error("update gh copilot-attendant or choose the source runner");

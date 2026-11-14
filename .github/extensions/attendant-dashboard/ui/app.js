@@ -6,7 +6,7 @@
 import { MODEL_UNITS, modelColumns, normalizeModelView, sessionModelEntry, sortModels, toggleModelSort, unitCost } from "./model-view.mjs";
 import { WORKSPACE_UNITS, hasWorkspaceUsage, normalizeWorkspaceView, sortWorkspaces, toggleWorkspaceSort, workspaceColumns, workspaceEntry, workspaceUnitCost } from "./workspace-view.mjs";
 import { normalizeTableView, sortTableEntries, toggleTableSort } from "./table-view.mjs";
-import { panelClearPatch } from "./filter-view.mjs";
+import { activityFilterError, panelClearPatch } from "./filter-view.mjs";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -17,8 +17,10 @@ const LABELS = {
     filters: {
         operation: "Operation",
         agentMode: "Agent mode",
+        permissionMode: "Permission mode",
         result: "Result",
         commandAccess: "Command access",
+        sandbox: "Sandbox",
         kind: "Kind",
         command: "Command",
         path: "Path",
@@ -31,7 +33,19 @@ const LABELS = {
 };
 
 /** Filters the CLI matches exactly rather than as regular expressions. */
-const EXACT_FILTERS = new Set(["agentMode", "result", "kind", "command", "decisionSource"]);
+const EXACT_FILTERS = new Set(["agentMode", "permissionMode", "result", "kind", "command", "decisionSource"]);
+
+/** Fixed-choice filters rendered as checkboxes. */
+const CHOICE_FILTERS = {
+    commandAccess: ["read-only", "read-write"],
+    sandbox: ["applied", "not-applied", "unknown"],
+};
+
+const SANDBOX_COLORS = {
+    applied: "var(--c-ok)",
+    "not-applied": "var(--c-unresolved)",
+    unknown: "var(--text-color-muted, #8c959f)",
+};
 
 let state = null;
 let meta = null;
@@ -376,12 +390,12 @@ function renderFilters(source) {
                 ),
             );
         }
-        if (name === "commandAccess") {
+        if (Object.hasOwn(CHOICE_FILTERS, name)) {
             return h(
                 "div",
                 { class: "filter" },
                 h("span", { class: "name" }, LABELS.filters[name]),
-                ["read-only", "read-write"].map((access) =>
+                CHOICE_FILTERS[name].map((access) =>
                     h(
                         "label",
                         { class: "toggle" },
@@ -405,7 +419,7 @@ function renderFilters(source) {
             onkeydown: (e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
-                const value = name === "agentMode" || name === "result" ? e.target.value : e.target.value.trim();
+                const value = name === "agentMode" || name === "permissionMode" || name === "result" ? e.target.value : e.target.value.trim();
                 if (value) addFilter(name, value);
             },
         });
@@ -620,6 +634,8 @@ function prepareActivity(activity) {
         typeof activity.AsOf !== "string" || !Number.isFinite(Date.parse(activity.AsOf)) ||
         (activity.AgentModes !== undefined &&
             (!Array.isArray(activity.AgentModes) || !activity.AgentModes.every((mode) => typeof mode === "string" && mode.length > 0))) ||
+        (activity.SandboxStates !== undefined &&
+            (!Array.isArray(activity.SandboxStates) || !activity.SandboxStates.every((value) => CHOICE_FILTERS.sandbox.includes(value)))) ||
         !["", "empty-window", "no-dated-events"].includes(activity.EmptyReason) ||
         !["ScannedSessions", "UntimedSessions", "UntimedEvents", "MalformedEvents"].every((key) => count(activity[key])) ||
         activity.UntimedSessions > activity.ScannedSessions ||
@@ -652,24 +668,16 @@ function prepareActivity(activity) {
 }
 
 function activityPanel(activity) {
-    const selectedModes = state?.query?.filters?.session?.agentMode ?? [];
+    const filters = state?.query?.filters?.session ?? {};
+    const selectedModes = filters.agentMode ?? [];
+    const selectedSandbox = filters.sandbox ?? [];
     if (activity == null) {
         return activitySection(null, h("p", { class: "muted small" },
             "Session activity is unavailable in this CLI result. Update gh copilot-attendant or choose the source runner."));
     }
-    if (selectedModes.length > 0 && !Array.isArray(activity.AgentModes)) {
-        return activitySection(null, h("p", { class: "muted small" },
-            "This result does not confirm that Session activity used the selected Agent mode filter. Refresh with an up-to-date CLI or choose the source runner."));
-    }
-    if (Array.isArray(activity.AgentModes)) {
-        const appliedModes = [...new Set(activity.AgentModes)].sort();
-        const expectedModes = [...new Set(selectedModes)].sort();
-        if (JSON.stringify(appliedModes) !== JSON.stringify(expectedModes)) {
-            const applied = appliedModes.length ? appliedModes.map((mode) => JSON.stringify(mode)).join(", ") : "no Agent mode filter";
-            const expected = expectedModes.length ? expectedModes.map((mode) => JSON.stringify(mode)).join(", ") : "no Agent mode filter";
-            return activitySection(null, h("p", { class: "muted small" },
-                `This Session activity result was collected with ${applied}; the current selection is ${expected}. Refresh to show matching data.`));
-        }
+    const filterError = activityFilterError(activity, filters);
+    if (filterError) {
+        return activitySection(null, h("p", { class: "muted small" }, filterError));
     }
     if (activity.Version !== 1) {
         return activitySection(null, h("p", { class: "muted small" },
@@ -681,12 +689,14 @@ function activityPanel(activity) {
             "The session activity data is invalid and cannot be displayed."));
     }
     const details = [
-        h("p", { class: "muted small" }, selectedModes.length
+        h("p", { class: "muted small" }, selectedSandbox.length
+            ? `Each cell counts distinct sessions with a completed tool execution matching the selected Sandbox state in that local hour, using its completion timestamp. Unrecorded outcomes are unknown; unfinished calls are excluded. ${selectedModes.length ? "The execution must have a linked permission request with a selected Agent mode. " : ""}Repeated clock hours are combined. Other permission filters and Top do not apply.`
+            : selectedModes.length
             ? "Each cell counts distinct sessions with a matching permission.requested event in that local hour. The Agent mode is read from the request and its timestamp determines the hour; repeated clock hours are combined. Other permission filters and Top do not apply."
             : "Each cell counts distinct sessions with at least one recorded event in that local hour, not continuous active time. Repeated clock hours are combined. Other permission filters and Top do not apply."),
         h("p", { class: "muted small" }, `CLI host time zone: ${activity.TimeZone} · scanned as of ${activity.AsOf}`),
         activity.UntimedEvents || activity.MalformedEvents
-            ? h("p", { class: "muted small" }, `${num(activity.UntimedEvents)} ${selectedModes.length ? "matching permission request" : "included event"}${activity.UntimedEvents === 1 ? "" : "s"} in ${num(activity.UntimedSessions)} scoped ${activity.UntimedSessions === 1 ? "session" : "sessions"} ${activity.UntimedEvents === 1 ? "has" : "have"} no usable timestamp; ${num(activity.MalformedEvents)} event ${activity.MalformedEvents === 1 ? "envelope" : "envelopes"} across the scoped logs could not be parsed. Untimed records cannot be placed on the chart, including when a time window is selected.`)
+            ? h("p", { class: "muted small" }, `${num(activity.UntimedEvents)} ${selectedSandbox.length ? "matching completed tool execution" : selectedModes.length ? "matching permission request" : "included event"}${activity.UntimedEvents === 1 ? "" : "s"} in ${num(activity.UntimedSessions)} scoped ${activity.UntimedSessions === 1 ? "session" : "sessions"} ${activity.UntimedEvents === 1 ? "has" : "have"} no usable timestamp; ${num(activity.MalformedEvents)} event ${activity.MalformedEvents === 1 ? "envelope" : "envelopes"} across the scoped logs could not be parsed. Untimed records cannot be placed on the chart, including when a time window is selected.`)
             : null,
     ];
     if (prepared.first === null) {
@@ -726,7 +736,9 @@ function activityPanel(activity) {
                 totals[hour].partial ||= status === "partial";
                 const level = value === 0 ? 0 : Math.max(1, Math.ceil(4 * value / prepared.maximum));
                 const partial = status === "partial";
-                const subject = selectedModes.length
+                const subject = selectedSandbox.length
+                    ? value === 1 ? "with a matching completed tool execution" : "with matching completed tool executions"
+                    : selectedModes.length
                     ? value === 1 ? "with a matching permission request" : "with matching permission requests"
                     : "with recorded events";
                 const label = `${date} ${hourLabel}: ${num(value)} ${value === 1 ? "session" : "sessions"} ${subject}${partial ? "; selected window covers only part of this hour" : ""}`;
@@ -745,7 +757,7 @@ function activityPanel(activity) {
                 type: "button", class: "btn small", "data-activity-page": "later", disabled: activityPageEnd >= prepared.last,
                 onclick: () => { activityPageEnd = Math.min(prepared.last, activityPageEnd + ACTIVITY_PAGE_DAYS * ACTIVITY_DAY_MS); render(); },
             }, "Later")),
-        h("p", { class: "muted small" }, "0: no events recorded as of the scan · *: partial time window · –: outside time window · ×: nonexistent local hour. Darker cells have more sessions."),
+        h("p", { class: "muted small" }, `0: no ${selectedSandbox.length ? "matching completed executions" : selectedModes.length ? "matching permission requests" : "events"} recorded as of the scan · *: partial time window · –: outside time window · ×: nonexistent local hour. Darker cells have more sessions.`),
         h("p", { class: "muted small", id: "activity-summary-note" },
             "Totals sum daily session counts on this page, so a session can be counted on multiple days. Averages include zeros and partial hours once per covered day; outside and nonexistent hours are excluded. A summary asterisk means it includes partial hours. Summary colors scale relative to the highest value in each row."),
         h("table", {
@@ -1379,6 +1391,7 @@ function renderSession(data) {
     const partial = covered < requests ? ` · listed kinds only (${num(covered)} of ${num(requests)})` : "";
     const cwdPick = (key) => patchQuery({ scope: "cwd", path: key });
     const modeFilterSupported = meta?.filters?.session?.includes("agentMode") === true;
+    const permissionModeFilterSupported = meta?.filters?.session?.includes("permissionMode") === true;
 
     return [
         ...renderSessionUsage(data),
@@ -1413,6 +1426,17 @@ function renderSession(data) {
                         pickTitle: "Filter by this Agent mode",
                     })), { filter: modeFilterSupported ? "agentMode" : undefined })
                 : null,
+            data.ByPermissionMode != null
+                ? panel("Permission modes", permissionModeFilterSupported ? "click to filter" : "permission requests", h("div", null,
+                    h("p", { class: "muted small" }, "Recorded when permission evaluation began, separately from Agent mode. Missing modes are unknown; assisted mode does not imply a safety review ran. Permission filters and Top apply; usage is unaffected."),
+                    !permissionModeFilterSupported
+                        ? h("p", { class: "muted small" }, "Reload the dashboard extension to enable permission mode filtering.")
+                        : null,
+                    decisionRows(data.ByPermissionMode, {
+                        onPick: permissionModeFilterSupported ? (k) => addFilter("permissionMode", k) : undefined,
+                        pickTitle: "Filter by this permission mode",
+                    })), { filter: permissionModeFilterSupported ? "permissionMode" : undefined })
+                : null,
             panel("Results", "click to filter", decisionRows(data.ByResult, {
                 onPick: (k) => addFilter("result", k),
                 pickTitle: "Filter by this exact result",
@@ -1429,14 +1453,70 @@ function renderSession(data) {
                 onPick: (k) => addFilter("commandAccess", k),
                 pickTitle: "Filter requests containing commands with this access",
             }), { filter: "commandAccess" }),
+            data.BySandbox != null
+                ? panel("Sandbox (requests)", "click to filter", h("div", null,
+                    h("p", { class: "muted small" }, "Permission requests grouped by the recorded sandbox state of their tool call. Unknown means no sandbox outcome was recorded."),
+                    decisionRows(data.BySandbox, {
+                        onPick: sandboxFilterSupported("session") ? (k) => addFilter("sandbox", k) : undefined,
+                        pickTitle: "Filter by this sandbox state",
+                    })), { filter: sandboxFilterSupported("session") ? "sandbox" : undefined })
+                : null,
             panel("Tool kinds", "click to filter", decisionRows(data.ByKind, { onPick: (k) => addFilter("kind", k), pickTitle: "Filter by this kind" }), { filter: "kind" }),
             panel("Commands", "click to filter", decisionRows(data.ByCommand, { onPick: (k) => addFilter("command", k), pickTitle: "Filter by this command" }), { filter: "command" }),
             panel("Paths", "click to filter", decisionRows(data.ByPath, { onPick: (k) => addFilter("path", exactPattern(k)), pickTitle: "Filter by this path" }), { wide: true, filter: "path" }),
             panel("URLs", "click to filter", decisionRows(data.ByURL, { onPick: (k) => addFilter("url", exactPattern(k)), pickTitle: "Filter by this URL" }), { wide: true, filter: "url" }),
             panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true, filter: "workspace" }),
         )]),
+        data.Sandbox != null ? h("div", { class: "grid" }, sandboxPanel(data.Sandbox, "session")) : null,
         h("div", { class: "grid" }, activityPanel(data.SessionActivity)),
     ];
+}
+
+// An older provider may not advertise the sandbox filter; render without filter controls then.
+function sandboxFilterSupported(source) {
+    return meta?.filters?.[source]?.includes("sandbox") === true;
+}
+
+function sandboxPanel(sb, source) {
+    const vscode = source === "vscode";
+    const filterSupported = sandboxFilterSupported(source);
+    const states = [
+        ["applied", "Applied", sb.Applied],
+        ["not-applied", "Not applied", sb.NotApplied],
+        ["unknown", "Unknown", sb.Unknown],
+    ];
+    const byTool = sb.ByTool ?? [];
+    const max = Math.max(...byTool.map((e) => e.Total ?? 0), 1);
+    const scopeHint = vscode ? "run_in_terminal" : "tool executions";
+    return panel("Sandbox", filterSupported ? `${scopeHint} · click to filter` : scopeHint, [
+        h("p", { class: "muted small" }, vscode
+            ? "Terminal tool calls by isSandboxWrapped recorded in chatSessions. Unknown means no value was recorded. Session scope, time bounds, and the Sandbox filter apply; tool, model, and agent filters do not."
+            : "Completed shell executions and other tools with a recorded sandboxApplied outcome. Shell executions without an outcome are unknown; unfinished calls are excluded. Session scope, completion-time bounds, and the Sandbox filter apply; other permission filters do not."),
+        h("div", { class: "cards" },
+            card("Sessions", num(sb.Sessions)),
+            card("Executions", num(sb.Executions)),
+            ...states.map(([, label, value]) => card(label, num(value), pct(value, sb.Executions))),
+            !vscode && sb.OptOutRequested !== undefined ? card("Opt-out requested", num(sb.OptOutRequested)) : null),
+        simpleRows(states.map(([key, , value]) => ({ Key: key, Total: value ?? 0 })), (e) => e.Total, {
+            onPick: filterSupported ? (k) => addFilter("sandbox", k) : undefined,
+            pickTitle: "Filter by this sandbox state",
+        }),
+        byTool.length
+            ? h("table", null,
+                h("thead", null, h("tr", null,
+                    ["Tool", "Total", "", "Applied", "Not applied", "Unknown"].map((label) => h("th", { scope: "col" }, label)))),
+                h("tbody", null, byTool.map((e) => h("tr", null,
+                    h("th", { class: "key", scope: "row" }, e.Key),
+                    h("td", null, num(e.Total)),
+                    h("td", null, stackedBar(states.map(([key, label]) => {
+                        const value = { applied: e.Applied, "not-applied": e.NotApplied, unknown: e.Unknown }[key] ?? 0;
+                        return [value, SANDBOX_COLORS[key], `${label}: ${num(value)}`];
+                    }), max)),
+                    h("td", null, num(e.Applied)),
+                    h("td", null, num(e.NotApplied)),
+                    h("td", null, num(e.Unknown))))))
+            : null,
+    ], { wide: true, filter: filterSupported ? "sandbox" : undefined });
 }
 
 function permissionWaitDetails(wait) {
@@ -1962,6 +2042,7 @@ function renderVscode(data) {
             { class: "grid" },
             panel("Tools", topNote ? `${topNote} · click to filter` : "click to filter", toolTable(tools), { wide: true, filter: "tool" }),
             panel("Subagents", "click to scope usage", simpleRows(data.ByAgent, (e) => e.Total, { onPick: (k) => addFilter("agent", exactPattern(k)), pickTitle: "Show only this subagent's own usage" }), { filter: "agent" }),
+            data.Sandbox != null ? sandboxPanel(data.Sandbox, "vscode") : null,
         )]),
     ];
 }

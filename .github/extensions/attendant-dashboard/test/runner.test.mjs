@@ -54,7 +54,7 @@ test("unsupported Agent mode flags produce an actionable error even before a lon
 });
 
 test("unsupported permission result and command-access flags suggest an updated CLI", async () => {
-    for (const flag of ["result", "command-access"]) {
+    for (const flag of ["result", "command-access", "sandbox", "permission-mode"]) {
         const script = `console.error("Error: unknown flag: --${flag}\\n" + "usage line\\n".repeat(20)); process.exit(1)`;
         await assert.rejects(
             runStats({ cmd: node, prefix: ["-e", script, "--"] }, ["session", "stats", `--${flag}=value`]),

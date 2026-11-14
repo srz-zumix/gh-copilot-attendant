@@ -23,6 +23,7 @@ func NewStatsCmd() *cobra.Command {
 	var tools []string
 	var models []string
 	var agents []string
+	var sandboxes []string
 	var includeLogStats bool
 	var top int
 	var exporter cmdutil.Exporter
@@ -60,6 +61,13 @@ Within that scope, --tool and --model independently restrict tool calls and LLM 
 Each name filter matches as a regular expression (a plain substring is also a valid,
 unanchored regular expression) and may be repeated to match any of multiple values.
 
+Sandbox statistics count terminal tool calls recorded in chatSessions by their
+"isSandboxWrapped" value: applied, not-applied, or unknown when no value was recorded.
+Session scope and time bounds apply (calls without a timestamp are excluded when a time
+bound is set); --tool, --model, and --agent do not, and --top limits only the per-tool
+table. Use --sandbox to restrict
+only these sandbox statistics to the selected states; other statistics are unaffected.
+
 Use --include-log-stats with JSON output to export untruncated normalized log metrics,
 referencing agent names, parent chat identities, and invocation identities for local
 filtering. It is optional (default false) and cannot be combined with --agent.
@@ -80,6 +88,7 @@ Only the stable, non-Insiders VS Code installation on macOS is supported.`,
 				Tool:            tools,
 				Model:           models,
 				Agent:           agents,
+				Sandbox:         sandboxes,
 				IncludeLogStats: includeLogStats,
 				Top:             top,
 			}
@@ -129,6 +138,7 @@ Only the stable, non-Insiders VS Code installation on macOS is supported.`,
 	f.StringArrayVar(&tools, "tool", nil, "only count tool calls matching this regular expression; may be repeated to match any of multiple patterns")
 	f.StringArrayVar(&models, "model", nil, "only count LLM requests matching this model regular expression; may be repeated to match any of multiple patterns")
 	f.StringArrayVar(&agents, "agent", nil, "scope usage and invocations to subagents matching this regular expression; may be repeated to match any of multiple patterns")
+	cmdutil.StringSliceEnumFlag(cmd, &sandboxes, "sandbox", "", nil, copilotext.SandboxStates, "only count terminal calls in sandbox statistics with this recorded sandbox state; may be repeated")
 	f.BoolVar(&includeLogStats, "include-log-stats", false, "export untruncated normalized log details for local filtering (JSON; incompatible with --agent)")
 	f.IntVar(&top, "top", 10, "keep only the top N entries per statistic (0 keeps every entry)")
 	cmd.MarkFlagsMutuallyExclusive("all", "cwd", "worktree")

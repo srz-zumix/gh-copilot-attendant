@@ -83,7 +83,7 @@ func TestSessionActivityDistinctSessionsAndScope(t *testing.T) {
 	opts := copilotext.PermissionStatsOptions{
 		Root: root, Scope: scope,
 		Since: activityTime(t, "2026-01-02T03:30:00Z"), Until: activityTime(t, "2026-01-02T04:45:00Z"),
-		Kind: []string{"read"}, Command: []string{"example"}, Top: 1,
+		Kind: []string{"read"}, Command: []string{"example"}, PermissionMode: []string{"assisted"}, Top: 1,
 	}
 	result := scanActivity(t, opts, activityLocation(t, "Asia/Kathmandu"), "2026-01-03T00:00:00Z")
 	if result.Version != 1 || result.TimeZone != "Asia/Kathmandu" ||
@@ -108,7 +108,7 @@ func TestSessionActivityDistinctSessionsAndScope(t *testing.T) {
 			t.Fatalf("activity output includes source identifier %q", secret)
 		}
 	}
-	opts.Kind, opts.Command, opts.Top = nil, nil, 0
+	opts.Kind, opts.Command, opts.PermissionMode, opts.Top = nil, nil, nil, 0
 	unfiltered := scanActivity(t, opts, activityLocation(t, "Asia/Kathmandu"), "2026-01-03T00:00:00Z")
 	if !reflect.DeepEqual(result, unfiltered) {
 		t.Fatalf("permission filters and Top changed activity: %+v vs %+v", result, unfiltered)
@@ -165,6 +165,12 @@ func TestSessionActivityFiltersByAgentModeAtPermissionRequestTime(t *testing.T) 
 		t.Fatalf("matching permission requests by hour = %+v", result.Days)
 	}
 
+	opts.PermissionMode = []string{"assisted"}
+	withPermissionMode := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if !reflect.DeepEqual(withPermissionMode, result) {
+		t.Fatalf("permission mode changed Agent-mode activity: %+v", withPermissionMode)
+	}
+	opts.PermissionMode = nil
 	opts.AgentMode = []string{"interactive", "plan", "plan"}
 	bothModes := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
 	if len(bothModes.Days) != 1 || bothModes.Days[0].Hours[3] != 3 {
@@ -188,6 +194,118 @@ func TestSessionActivityFiltersByAgentModeAtPermissionRequestTime(t *testing.T) 
 	if unbounded.StartDate != "2026-01-02" || unbounded.EndDate != "2026-01-03" ||
 		len(unbounded.Days) != 1 || unbounded.Days[0].Hours[3] != 2 || unbounded.Days[0].Hours[4] != 1 {
 		t.Fatalf("unmatched events affected filtered activity range or counts: %+v", unbounded)
+	}
+}
+
+func TestSessionActivitySandboxFilteringAndAgentIntersection(t *testing.T) {
+	root := t.TempDir()
+	writeSession(t, root, "session-a", "/work", `{"type":"message","timestamp":"2026-01-02T01:00:00Z"}
+{"type":"permission.requested","timestamp":"2026-01-02T02:00:00Z","data":{"requestId":"req-plan","agentMode":"plan","permissionRequest":{"toolCallId":"call-a"}}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T03:00:00Z","data":{"toolCallId":"call-a","toolTelemetry":{"properties":{"sandboxApplied":true}}}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T02:50:00Z","data":{"toolCallId":"call-a","toolName":"bash"}}
+{"type":"permission.requested","timestamp":"2026-01-02T03:01:00Z","data":{"requestId":"req-interactive","agentMode":"interactive","permissionRequest":{"toolCallId":"call-a"}}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T04:30:00Z","data":{"toolCallId":"unlinked","toolName":"bash"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T04:35:00Z","data":{"toolCallId":"unlinked","toolTelemetry":{"properties":{"sandboxApplied":true}}}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T03:45:00Z","data":{"toolCallId":"unlinked-unknown","toolName":"bash"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T03:50:00Z","data":{"toolCallId":"unlinked-unknown"}}
+{"type":"permission.requested","timestamp":"invalid","data":{"requestId":"req-unknown","permissionRequest":{"toolCallId":"call-c"}}}
+{"type":"tool.execution_start","timestamp":"invalid","data":{"toolCallId":"call-c","toolName":"bash"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T04:10:00Z","data":{"toolCallId":"call-c","toolTelemetry":{"properties":{"sandboxApplied":null}}}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T04:20:00Z","data":{"toolCallId":"call-d","toolName":"bash"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T04:25:00Z","data":{"toolCallId":"call-d","toolTelemetry":{"properties":{"sandboxApplied":false}}}}
+{"type":"permission.requested","timestamp":"invalid","data":{"requestId":"req-untimed","agentMode":"plan","permissionRequest":{"toolCallId":"untimed"}}}
+{"type":"tool.execution_start","timestamp":"invalid","data":{"toolCallId":"untimed","toolName":"powershell"}}
+{"type":"tool.execution_complete","timestamp":null,"data":{"toolCallId":"untimed"}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T04:30:00Z","data":{"toolCallId":"unrelated","toolName":"view"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T04:31:00Z","data":{"toolCallId":"unrelated"}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T04:40:00Z","data":{"toolCallId":"unfinished","toolName":"bash"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T05:00:00Z","data":{"toolCallId":"after","toolTelemetry":{"properties":{"sandboxApplied":true}}}}
+`)
+	writeSession(t, root, "session-b", "/work", `{"type":"permission.requested","timestamp":"2026-01-02T02:10:00Z","data":{"requestId":"req-b","agentMode":"plan","permissionRequest":{"toolCallId":"call-b"}}}
+{"type":"tool.execution_start","timestamp":"2026-01-02T02:55:00Z","data":{"toolCallId":"call-b","toolName":"powershell"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-02T03:20:00Z","data":{"toolCallId":"call-b","toolTelemetry":{"properties":{"sandboxApplied":"true"}}}}
+`)
+	opts := copilotext.PermissionStatsOptions{
+		Root: root, Since: activityTime(t, "2026-01-02T03:00:00Z"),
+		Until: activityTime(t, "2026-01-02T05:00:00Z"), Sandbox: []string{copilotext.SandboxApplied},
+	}
+	applied := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if applied.ScannedSessions != 2 || applied.UntimedEvents != 0 ||
+		len(applied.Days) != 1 || applied.Days[0].Hours[3] != 2 || applied.Days[0].Hours[4] != 1 ||
+		!reflect.DeepEqual(applied.SandboxStates, []string{copilotext.SandboxApplied}) {
+		t.Fatalf("applied executions at completion time = %+v", applied)
+	}
+	opts.Sandbox = []string{copilotext.SandboxUnknown, copilotext.SandboxApplied, copilotext.SandboxNotApplied, copilotext.SandboxApplied}
+	all := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(all.Days) != 1 || all.Days[0].Hours[3] != 2 || all.Days[0].Hours[4] != 1 || all.Days[0].Hours[5] != 0 ||
+		all.UntimedEvents != 1 || all.UntimedSessions != 1 ||
+		!reflect.DeepEqual(all.SandboxStates, []string{"applied", "not-applied", "unknown"}) {
+		t.Fatalf("OR of states, distinct sessions, and untimed completion = %+v", all)
+	}
+	opts.Kind, opts.Results, opts.PermissionMode, opts.Top = []string{"read"}, []string{"denied"}, []string{"assisted"}, 1
+	if withOtherFilters := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z"); !reflect.DeepEqual(withOtherFilters, all) {
+		t.Fatalf("unrelated permission filters changed sandbox activity: %+v", withOtherFilters)
+	}
+	opts.Kind, opts.Results, opts.PermissionMode, opts.Top = nil, nil, nil, 0
+	opts.Sandbox = []string{copilotext.SandboxApplied}
+	opts.AgentMode = []string{"interactive"}
+	interactive := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(interactive.Days) != 1 || interactive.Days[0].Hours[3] != 1 || interactive.Days[0].Hours[4] != 0 {
+		t.Fatalf("interactive mode should match one of multiple linked requests, not unlinked executions: %+v", interactive)
+	}
+	opts.AgentMode = []string{"plan", "interactive", "plan"}
+	bothModes := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(bothModes.Days) != 1 || bothModes.Days[0].Hours[3] != 2 || bothModes.Days[0].Hours[4] != 0 ||
+		!reflect.DeepEqual(bothModes.AgentModes, []string{"interactive", "plan"}) {
+		t.Fatalf("OR of linked Agent modes = %+v", bothModes)
+	}
+	opts.AgentMode = []string{"plan"}
+	plan := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(plan.Days) != 1 || plan.Days[0].Hours[3] != 2 || plan.Days[0].Hours[4] != 0 {
+		t.Fatalf("request timestamps outside the window should not exclude linked completions: %+v", plan)
+	}
+	opts.Sandbox = []string{copilotext.SandboxUnknown}
+	planUnknown := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(planUnknown.Days) != 0 || planUnknown.UntimedEvents != 1 || planUnknown.UntimedSessions != 1 {
+		t.Fatalf("untimed matching completion = %+v", planUnknown)
+	}
+	opts.AgentMode = []string{"unknown"}
+	unknown := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(unknown.Days) != 1 || unknown.Days[0].Hours[3] != 0 || unknown.Days[0].Hours[4] != 1 || unknown.UntimedEvents != 0 {
+		t.Fatalf("missing request mode matches unknown without treating unlinked calls as unknown: %+v", unknown)
+	}
+	opts.AgentMode, opts.Sandbox, opts.SessionID = nil, []string{copilotext.SandboxApplied}, "session-b"
+	oneSession := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if oneSession.ScannedSessions != 1 || len(oneSession.Days) != 1 || oneSession.Days[0].Hours[3] != 1 {
+		t.Fatalf("session scope on sandbox activity = %+v", oneSession)
+	}
+}
+
+func TestSessionActivitySandboxDoesNotMatchUnfinishedOrAmbiguousAgent(t *testing.T) {
+	root := t.TempDir()
+	writeSession(t, root, "session-a", "/work", `{"type":"tool.execution_start","agentId":"child-a","timestamp":"2026-01-02T02:00:00Z","data":{"toolCallId":"shared","toolName":"bash"}}
+{"type":"permission.requested","agentId":"child-b","timestamp":"2026-01-02T02:05:00Z","data":{"requestId":"plan","agentMode":"plan","permissionRequest":{"toolCallId":"shared"}}}
+{"type":"permission.requested","agentId":"child-b","timestamp":"2026-01-02T02:06:00Z","data":{"requestId":"unknown","permissionRequest":{"toolCallId":"shared"}}}
+{"type":"permission.requested","timestamp":"2026-01-02T02:07:00Z","data":{"requestId":"ambiguous","agentMode":"interactive","permissionRequest":{"toolCallId":"shared"}}}
+{"type":"permission.requested","agentId":"child-a","timestamp":"2026-01-02T02:08:00Z","data":{"requestId":"exact","agentMode":"exact","permissionRequest":{"toolCallId":"shared"}}}
+{"type":"tool.execution_complete","agentId":"child-a","timestamp":"2026-01-02T03:00:00Z","data":{"toolCallId":"shared","toolTelemetry":{"properties":{"sandboxApplied":true}}}}
+{"type":"tool.execution_start","agentId":"child-b","timestamp":"2026-01-02T02:00:00Z","data":{"toolCallId":"shared","toolName":"bash"}}
+`)
+	opts := copilotext.PermissionStatsOptions{
+		Root: root, Since: activityTime(t, "2026-01-02T00:00:00Z"),
+		Until: activityTime(t, "2026-01-03T00:00:00Z"), Sandbox: []string{copilotext.SandboxApplied},
+	}
+	for _, mode := range []string{"plan", "unknown", "interactive"} {
+		opts.AgentMode = []string{mode}
+		result := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+		if len(result.Days) != 0 {
+			t.Errorf("mode %q matched an unfinished or ambiguous execution: %+v", mode, result.Days)
+		}
+	}
+	opts.AgentMode = []string{"exact"}
+	exact := scanActivity(t, opts, time.UTC, "2026-01-03T00:00:00Z")
+	if len(exact.Days) != 1 || exact.Days[0].Hours[3] != 1 {
+		t.Fatalf("exact completed execution did not match: %+v", exact.Days)
 	}
 }
 
@@ -257,7 +375,7 @@ func TestSessionActivityRangeAndUntimedEvents(t *testing.T) {
 			collector := newActivityCollector(opts, time.UTC)
 			seen := make(map[activityHour]struct{})
 			for _, event := range tt.events {
-				collector.record([]byte(event), seen)
+				collector.record([]byte(event), seen, nil)
 			}
 			result, err := collector.finish(now)
 			if err != nil {
@@ -286,7 +404,7 @@ func TestSessionActivityDoesNotDeduplicateEventIdentities(t *testing.T) {
 		c := newActivityCollector(opts, time.UTC)
 		seen := make(map[activityHour]struct{})
 		for _, index := range order {
-			c.record([]byte(events[index]), seen)
+			c.record([]byte(events[index]), seen, nil)
 		}
 		result, err := c.finish(activityTime(t, "2026-01-03T00:00:00Z"))
 		if err != nil {
@@ -394,7 +512,7 @@ func TestSessionActivityRangeIncludesCrossMidnightRollback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newActivityCollector(copilotext.PermissionStatsOptions{Since: tt.since, Until: tt.until}, location)
 			if tt.events {
-				c.record([]byte(`{"type":"message","timestamp":"2010-03-04T14:00:00Z"}`), make(map[activityHour]struct{}))
+				c.record([]byte(`{"type":"message","timestamp":"2010-03-04T14:00:00Z"}`), make(map[activityHour]struct{}), nil)
 			}
 			result, err := c.finish(end)
 			if err != nil {
@@ -459,38 +577,52 @@ func TestSessionActivityCLIJSON(t *testing.T) {
 			testEvent(t, "message", "event-b", "2026-01-02T03:50:00Z", nil)+
 			testEvent(t, "message", "event-c", "2026-01-02T04:20:00Z", nil)+
 			testEvent(t, "permission.requested", "request-a", "2026-01-02T03:30:00Z",
-				map[string]any{"requestId": "request-a", "agentMode": "plan"})+
+				map[string]any{"requestId": "request-a", "agentMode": "plan", "permissionRequest": map[string]any{"toolCallId": "call-a"}})+
 			testEvent(t, "permission.requested", "request-b", "2026-01-02T03:50:00Z",
 				map[string]any{"requestId": "request-b", "agentMode": "plan"})+
 			testEvent(t, "permission.requested", "request-c", "2026-01-02T04:20:00Z",
-				map[string]any{"requestId": "request-c", "agentMode": "plan"}))
+				map[string]any{"requestId": "request-c", "agentMode": "plan"})+
+			testEvent(t, "tool.execution_start", "start-a", "2026-01-02T03:31:00Z",
+				map[string]any{"toolCallId": "call-a", "toolName": "bash"})+
+			testEvent(t, "tool.execution_complete", "complete-a", "2026-01-02T03:40:00Z",
+				map[string]any{"toolCallId": "call-a", "toolTelemetry": map[string]any{"properties": map[string]any{"sandboxApplied": true}}}))
 	writeSession(t, root, "session-b", "/work/example",
 		testEvent(t, "message", "event-d", "2026-01-02T03:30:00Z", nil)+
 			testEvent(t, "permission.requested", "request-d", "2026-01-02T03:30:00Z",
-				map[string]any{"requestId": "request-d", "agentMode": "plan"}))
+				map[string]any{"requestId": "request-d", "agentMode": "plan", "permissionRequest": map[string]any{"toolCallId": "call-b"}})+
+			testEvent(t, "tool.execution_start", "start-b", "2026-01-02T03:31:00Z",
+				map[string]any{"toolCallId": "call-b", "toolName": "bash"})+
+			testEvent(t, "tool.execution_complete", "complete-b", "2026-01-02T04:20:00Z",
+				map[string]any{"toolCallId": "call-b", "toolTelemetry": map[string]any{"properties": map[string]any{"sandboxApplied": true}}}))
 	writeSession(t, root, "session-message-only", "/work/example",
 		testEvent(t, "message", "event-only", "2026-01-02T04:20:00Z", nil))
-	cmd := exec.Command("go", "run", ".", "session", "stats", "--all", "--format", "json",
-		"--since", "2026-01-02T03:30:00Z", "--until", "2026-01-02T04:45:00Z",
-		"--agent-mode", "plan", "--top", "1")
-	cmd.Dir = filepath.Join("..", "..")
-	cmd.Env = append(os.Environ(), "COPILOT_HOME="+home, "TZ=Asia/Kathmandu")
-	output, err := cmd.Output()
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			t.Fatalf("run session stats: %v: %s", err, exit.Stderr)
+	run := func(extra ...string) SessionActivity {
+		t.Helper()
+		args := []string{"run", ".", "session", "stats", "--all", "--format", "json",
+			"--since", "2026-01-02T03:30:00Z", "--until", "2026-01-02T04:45:00Z",
+			"--agent-mode", "plan", "--top", "1"}
+		cmd := exec.Command("go", append(args, extra...)...)
+		cmd.Dir = filepath.Join("..", "..")
+		cmd.Env = append(os.Environ(), "COPILOT_HOME="+home, "TZ=Asia/Kathmandu")
+		output, err := cmd.Output()
+		if err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				t.Fatalf("run session stats: %v: %s", err, exit.Stderr)
+			}
+			t.Fatal(err)
 		}
-		t.Fatal(err)
+		var result struct {
+			SessionActivity SessionActivity
+		}
+		if err := json.Unmarshal(output, &result); err != nil {
+			t.Fatalf("decode session stats JSON: %v", err)
+		}
+		return result.SessionActivity
 	}
-	var result struct {
-		SessionActivity SessionActivity
-	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		t.Fatalf("decode session stats JSON: %v", err)
-	}
-	activity := result.SessionActivity
+	activity := run()
 	if activity.Version != 1 || activity.TimeZone != "Asia/Kathmandu" ||
 		!reflect.DeepEqual(activity.AgentModes, []string{"plan"}) ||
+		activity.SandboxStates == nil || len(activity.SandboxStates) != 0 ||
 		activity.StartDate != "2026-01-02" || activity.EndDate != "2026-01-02" ||
 		len(activity.Days) != 1 || activity.Days[0].Hours[9] != 2 || activity.Days[0].Hours[10] != 1 {
 		t.Fatalf("CLI activity = %+v", activity)
@@ -498,5 +630,11 @@ func TestSessionActivityCLIJSON(t *testing.T) {
 	hours := activityCoverage(t, activity, "2026-01-02")
 	if hours[8] != "outside" || hours[9] != "partial" || hours[10] != "partial" || hours[11] != "outside" {
 		t.Fatalf("CLI coverage = %v", hours)
+	}
+	sandbox := run("--sandbox", "applied")
+	if !reflect.DeepEqual(sandbox.AgentModes, []string{"plan"}) ||
+		!reflect.DeepEqual(sandbox.SandboxStates, []string{"applied"}) ||
+		len(sandbox.Days) != 1 || sandbox.Days[0].Hours[9] != 1 || sandbox.Days[0].Hours[10] != 1 {
+		t.Fatalf("CLI sandbox-filtered activity = %+v", sandbox)
 	}
 }
