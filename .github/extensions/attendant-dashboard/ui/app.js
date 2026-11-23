@@ -7,6 +7,7 @@ import { MODEL_UNITS, modelColumns, normalizeModelView, sessionModelEntry, sortM
 import { WORKSPACE_UNITS, hasWorkspaceUsage, normalizeWorkspaceView, sortWorkspaces, toggleWorkspaceSort, workspaceColumns, workspaceEntry, workspaceUnitCost } from "./workspace-view.mjs";
 import { normalizeTableView, sortTableEntries, toggleTableSort } from "./table-view.mjs";
 import { activityFilterError, panelClearPatch } from "./filter-view.mjs";
+import { hookActivityView } from "./hook-view.mjs";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -54,6 +55,7 @@ let filtersKey = "";
 let loadingTimer = null;
 const disclosureState = {
     activity: true, fusion: true, usage: true, permissions: true, "fusion-usage": true, "vscode-usage": true, "vscode-tools": true,
+    "hook-details": false,
 };
 const EXCLUDED_BULK_DISCLOSURES = new Set(["usage", "permissions"]);
 
@@ -1382,6 +1384,7 @@ function renderFusionOnly(data) {
 
 function renderSession(data) {
     if (data.FusionOnly) return renderFusionOnly(data);
+    const hook = hookActivityView(data.HookActivity);
     const totals = { Approved: 0, ApprovedForLocation: 0, Denied: 0, Unresolved: 0 };
     for (const e of data.ByKind ?? []) for (const k of Object.keys(totals)) totals[k] += e[k] ?? 0;
     const approved = totals.Approved + totals.ApprovedForLocation;
@@ -1468,8 +1471,88 @@ function renderSession(data) {
             panel("Working directories", "click to scope", decisionRows(data.ByCWD, { onPick: cwdPick, pickTitle: "Show only this directory", display: shortPath }), { wide: true, filter: "workspace" }),
         )]),
         data.Sandbox != null ? h("div", { class: "grid" }, sandboxPanel(data.Sandbox, "session")) : null,
+        hook ? h("div", { class: "grid" }, hookActivityPanel(hook)) : null,
         h("div", { class: "grid" }, activityPanel(data.SessionActivity)),
     ];
+}
+
+function hookTargetLabel(entry) {
+    if (entry.target === "") return "<not recorded>";
+    const text = entry.target.replace(/\s+/g, " ").trim();
+    return entry.truncated ? `${text} …` : text;
+}
+
+function hookToolShare(decision, entries, total) {
+    const title = decision === "allow" ? "Allow by tool" : "Deny by tool";
+    const rows = entries.map((entry) => ({ label: entry.key || "<unknown>", total: entry.total, kind: "tool" }));
+    const unlisted = total - rows.reduce((sum, entry) => sum + entry.total, 0);
+    if (unlisted > 0) rows.push({ label: "Other tools (not listed)", total: unlisted, kind: "unlisted" });
+    const color = decision === "allow" ? "var(--c-approved)" : "var(--c-denied)";
+    return h("div", { class: "hook-share", role: "group", "aria-labelledby": `hook-${decision}-share-title` },
+        h("h3", { id: `hook-${decision}-share-title` }, title),
+        total === 0 ? h("p", { class: "muted small" }, `No recorded ${decision} decisions.`)
+            : h("div", { class: "rows" }, rows.map((entry) => {
+                const share = usageSharePercent(entry.total, total);
+                const bar = stackedBar([[entry.total, color]], total);
+                bar.setAttribute("aria-hidden", "true");
+                return h("div", { class: "row", "data-hook-share-row": entry.kind },
+                    h("span", { class: "key", title: entry.label }, entry.label),
+                    bar,
+                    h("span", { class: "num" }, `${num(entry.total)} · ${share}`));
+            })));
+}
+
+function hookActivityPanel(activity) {
+    if (activity.error) return panel("Hook activity", "unavailable", h("p", { class: "muted small" }, activity.error), { wide: true });
+    if (activity.invocations === undefined) {
+        return panel("Hook activity", activity.state, h("p", { class: "muted small" }, activity.note), { wide: true });
+    }
+    const unidentified = activity.unidentified;
+    const tools = activity.byTool;
+    return panel("Hook activity", activity.state === "partial" ? "incomplete log read" : "recorded invocations", [
+        h("p", { class: "muted small" }, activity.note),
+        h("div", { class: "cards" },
+            card("Recorded decisions", num(activity.invocations)),
+            card("Calculated allow", num(activity.decisions.allow)),
+            card("Calculated deny", num(activity.decisions.deny))),
+        h("div", { class: "hook-shares" },
+            hookToolShare("allow", activity.byDecisionTool.allow, activity.decisions.allow),
+            hookToolShare("deny", activity.byDecisionTool.deny, activity.decisions.deny)),
+        h("p", { class: "muted small" },
+            `Events: ${num(activity.events.permissionRequests)} permissionRequest · ${num(activity.events.preToolUses)} preToolUse.`),
+        h("p", { class: "muted small" },
+            `Output: ${num(activity.outputs.writeSucceeded)} written · ${num(activity.outputs.writeFailed)} failed.`),
+        h("p", { class: "muted small" },
+            `Processing: ${num(activity.processing.success)} success · output errors: ${num(activity.processing.outputError)}.`),
+        h("p", { class: "muted small" },
+            `Unidentified in time window: ${num(unidentified.missing)} missing ID · ${num(unidentified.unmatched)} unmatched · ${num(unidentified.ambiguous)} ambiguous · ${num(unidentified.unscopable)} unscopable · ${num(unidentified.unavailable)} attribution unavailable.`),
+        h("p", { class: "muted small" },
+            `File coverage: ${num(activity.malformedRecords)} malformed · ${num(activity.unsupportedVersions)} unsupported version · session attribution ${activity.attribution}.`),
+        tools.length || activity.byTarget.length ? h("details", {
+            class: "hook-details", "data-hook-details-disclosure": true, open: disclosureState["hook-details"],
+        },
+        h("summary", { "data-hook-details-toggle": "hook-details" }, "Details"),
+        tools.length ? [
+            h("h3", null, "Tools"),
+            h("table", null,
+                h("thead", null, h("tr", null, h("th", { scope: "col" }, "Tool"), h("th", { scope: "col" }, "Recorded decisions"))),
+                h("tbody", null, tools.map((entry) => h("tr", null,
+                    h("th", { scope: "row", class: "key" }, entry.key || "<unknown>"),
+                    h("td", null, num(entry.total)))))),
+        ] : null,
+        activity.byTarget.length ? [
+            h("h3", null, "Targets"),
+            h("table", null,
+                h("thead", null, h("tr", null,
+                    h("th", { scope: "col" }, "Decision"), h("th", { scope: "col" }, "Tool"),
+                    h("th", { scope: "col" }, "Target"), h("th", { scope: "col" }, "Recorded decisions"))),
+                h("tbody", null, activity.byTarget.map((entry) => h("tr", null,
+                    h("td", null, entry.decision),
+                    h("td", null, entry.tool || "<unknown>"),
+                    h("th", { scope: "row", class: "key", title: entry.target || undefined }, hookTargetLabel(entry)),
+                    h("td", null, num(entry.total)))))),
+        ] : null) : null,
+    ], { wide: true });
 }
 
 // An older provider may not advertise the sandbox filter; render without filter controls then.

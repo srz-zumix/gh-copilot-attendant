@@ -1,5 +1,5 @@
-// Package permissionhook implements a GitHub Copilot CLI permissionRequest hook
-// that approves or denies tool calls based on rules loaded from a config file.
+// Package permissionhook implements GitHub Copilot CLI hooks that approve or
+// deny tool calls based on rules loaded from a config file.
 package permissionhook
 
 import (
@@ -25,13 +25,31 @@ type Config struct {
 
 // HooksConfig holds settings for each supported Copilot CLI hook event.
 type HooksConfig struct {
+	// Disabled makes every hook abstain without removing the rules or the hook registration.
+	Disabled          bool                    `yaml:"disabled"`
+	Logging           LoggingConfig           `yaml:"logging"`
 	PermissionRequest PermissionRequestConfig `yaml:"permissionRequest"`
 }
 
-// PermissionRequestConfig holds the allow and deny rules for the permissionRequest hook.
+// LoggingConfig controls local hook invocation logging.
+type LoggingConfig struct {
+	Disabled bool `yaml:"disabled"`
+}
+
+// PermissionRequestConfig holds permission and shell environment assignment rules.
 type PermissionRequestConfig struct {
-	Allow RuleSet `yaml:"allow"`
-	Deny  RuleSet `yaml:"deny"`
+	Allow                  AllowRuleSet                `yaml:"allow"`
+	Deny                   RuleSet                     `yaml:"deny"`
+	EnvironmentAssignments EnvironmentAssignmentConfig `yaml:"environmentAssignments"`
+}
+
+// AllowRuleSet includes command rules, read presets, and scoped tool rules.
+type AllowRuleSet struct {
+	RuleSet      `yaml:",inline"`
+	GHRead       bool             `yaml:"ghRead"`
+	GitRead      bool             `yaml:"gitRead"`
+	ShellDisplay bool             `yaml:"shellDisplay"`
+	ScopedTools  []ScopedToolRule `yaml:"scopedTools"`
 }
 
 // RuleSet is a group of shell command rules and tool name rules.
@@ -40,6 +58,14 @@ type RuleSet struct {
 	Commands []string `yaml:"commands"`
 	// Tools are glob patterns matched against the hook toolName.
 	Tools []string `yaml:"tools"`
+}
+
+// ScopedToolRule approves the named tools only for the configured paths or URLs.
+type ScopedToolRule struct {
+	Tools                  []string `yaml:"tools"`
+	Paths                  []string `yaml:"paths"`
+	URLs                   []string `yaml:"urls"`
+	AllowDespiteNativeDeny bool     `yaml:"allowDespiteNativeDeny"`
 }
 
 // ResolveConfigPath returns the config file path to use. An explicit path wins,
@@ -92,6 +118,9 @@ func ParseConfig(data []byte) (*Config, error) {
 	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
+	if cfg.Hooks.Disabled {
+		return cfg, nil
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -104,7 +133,7 @@ func (c *Config) Validate() error {
 	sets := []struct {
 		name  string
 		rules RuleSet
-	}{{"allow", pr.Allow}, {"deny", pr.Deny}}
+	}{{"allow", pr.Allow.RuleSet}, {"deny", pr.Deny}}
 	for _, s := range sets {
 		for _, r := range s.rules.Commands {
 			if _, err := ParseCommandRule(r); err != nil {
@@ -119,6 +148,19 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("hooks.permissionRequest.%s.tools: invalid pattern %q: %w", s.name, t, err)
 			}
 		}
+	}
+	for i, rule := range pr.Allow.ScopedTools {
+		if err := validateScopedToolRule(rule); err != nil {
+			return fmt.Errorf("hooks.permissionRequest.allow.scopedTools[%d]: %w", i, err)
+		}
+		for _, tool := range rule.Tools {
+			if pattern, ok := matchToolRules(pr.Allow.Tools, tool); ok {
+				return fmt.Errorf("hooks.permissionRequest.allow.scopedTools[%d]: tool %q also matches unscoped allow rule %q", i, tool, pattern)
+			}
+		}
+	}
+	if err := pr.EnvironmentAssignments.validate(); err != nil {
+		return fmt.Errorf("hooks.permissionRequest.environmentAssignments: %w", err)
 	}
 	return nil
 }

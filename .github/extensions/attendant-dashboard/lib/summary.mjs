@@ -7,6 +7,7 @@
 import { sessionModelEntry, unitCost } from "../ui/model-view.mjs";
 import { workspaceEntry, workspaceUnitCost } from "../ui/workspace-view.mjs";
 import { activityFilterError } from "../ui/filter-view.mjs";
+import { hookActivityView } from "../ui/hook-view.mjs";
 import { SANDBOX_STATES } from "./query.mjs";
 
 const MAX_KEY = 200;
@@ -231,6 +232,30 @@ function sandboxSummary(sandbox, limit, note) {
     };
 }
 
+function hookSummary(data, limit) {
+    const activity = hookActivityView(data.HookActivity);
+    if (!activity) return {};
+    if (activity.error) return { hookActivityError: activity.error };
+    if (!activity.byTool) return { hookActivity: activity };
+    const maximum = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : 10));
+    const byTool = activity.byTool.slice(0, maximum);
+    const byTarget = activity.byTarget.slice(0, maximum);
+    const byDecisionTool = {
+        allow: activity.byDecisionTool.allow.slice(0, maximum),
+        deny: activity.byDecisionTool.deny.slice(0, maximum),
+    };
+    const unlistedDecisionCounts = Object.fromEntries(["allow", "deny"].map((decision) => [
+        decision, activity.decisions[decision] - byDecisionTool[decision].reduce((sum, entry) => sum + entry.total, 0),
+    ]));
+    return {
+        hookActivity: {
+            ...activity, byTool, omittedToolRows: activity.byTool.length - byTool.length,
+            byDecisionTool, unlistedDecisionCounts,
+            byTarget, omittedTargetRows: activity.byTarget.length - byTarget.length,
+        },
+    };
+}
+
 function fusionSummary(data, limit) {
     const fusion = data.Fusion;
     if (fusion == null) return {};
@@ -363,6 +388,7 @@ export function summarize(source, data, limit = 10, query) {
             } : {}),
             ...(data.BySandbox != null ? { bySandbox: counts(data.BySandbox, limit) } : {}),
             ...sandboxSummary(data.Sandbox, limit, "Completed shell executions and other tools with a recorded sandboxApplied outcome. Shell executions without an outcome are unknown; unfinished calls are excluded. Session scope, completion-time bounds, and the sandbox filter apply; other permission filters do not."),
+            ...hookSummary(data, limit),
             byReadOnly: counts(data.ByReadOnly, limit),
             byKind: counts(data.ByKind, limit),
             byCommand: counts(data.ByCommand, limit),

@@ -9,10 +9,15 @@ import (
 func NewHookCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hook",
-		Short: "Run and install GitHub Copilot CLI hooks",
+		Short: "Run, install, and manage GitHub Copilot CLI hooks",
 	}
 	cmd.AddCommand(hook.NewPermissionRequestCmd())
+	cmd.AddCommand(hook.NewPreToolUseCmd())
 	cmd.AddCommand(hook.NewInstallCmd())
+	cmd.AddCommand(hook.NewUninstallCmd())
+	cmd.AddCommand(hook.NewStatusCmd())
+	cmd.AddCommand(hook.NewDisableCmd())
+	cmd.AddCommand(hook.NewEnableCmd())
 	return cmd
 }
 

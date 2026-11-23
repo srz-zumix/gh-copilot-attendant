@@ -694,6 +694,22 @@ textarea {
     margin: 4px 0 8px;
 }
 
+.hook-shares {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+    gap: 12px;
+}
+
+.hook-share h3,
+.hook-details h3 {
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.hook-details > summary {
+    cursor: pointer;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;

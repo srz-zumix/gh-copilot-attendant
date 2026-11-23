@@ -3,6 +3,41 @@ import assert from "node:assert/strict";
 import { summarize, composePrompt } from "../lib/summary.mjs";
 import { projectFusion } from "../lib/fusion-data.mjs";
 import { emptyFusionDataset, fusionDataset } from "./fixtures/fusion.mjs";
+import { hookDataset } from "./fixtures/hook.mjs";
+
+test("hook summaries and Ask agent preserve observed counts, gaps, and row limits", () => {
+    const data = { HookActivity: hookDataset() };
+    const summary = summarize("session", data, 1).hookActivity;
+    assert.equal(summary.invocations, 7);
+    assert.equal(summary.decisions.allow, 5);
+    assert.equal(summary.outputs.writeFailed, 1);
+    assert.equal(summary.processing.outputError, 1);
+    assert.equal(summary.unidentified.ambiguous, 1);
+    assert.equal(summary.malformedRecords, 3);
+    assert.deepEqual(summary.byTool, [{ key: "view", total: 2 }]);
+    assert.equal(summary.omittedToolRows, 4);
+    assert.deepEqual(summary.byDecisionTool, {
+        allow: [{ key: "view", total: 2 }], deny: [{ key: "write", total: 1 }],
+    });
+    assert.deepEqual(summary.unlistedDecisionCounts, { allow: 3, deny: 1 });
+    const noRows = summarize("session", data, 0).hookActivity;
+    assert.deepEqual(noRows.byDecisionTool, { allow: [], deny: [] });
+    assert.deepEqual(noRows.unlistedDecisionCounts, { allow: 5, deny: 2 });
+    assert.deepEqual(summary.byTarget, [{ decision: "allow", tool: "view", target: "/work/src/main.go", truncated: false, total: 1 }]);
+    assert.equal(summary.omittedTargetRows, 2);
+    assert.match(summary.note, /permission filters do not/);
+    const prompt = composePrompt({ source: "session", query: {}, argv: [], data, text: "Summarize hook activity" });
+    assert.match(prompt, /"hookActivity"/);
+    assert.match(prompt, /"writeFailed": 1/);
+    assert.match(prompt, /not permission requests or proof/);
+    assert.equal("hookActivity" in summarize("session", {}), false);
+    assert.equal("hookActivity" in summarize("vscode", data), false);
+    assert.equal("hookActivity" in summarize("session", projectFusion({ ...fusionDataset(), ...data })), false);
+    const missing = summarize("session", { HookActivity: { Version: 1, State: "missing", Data: null } }).hookActivity;
+    assert.equal(missing.state, "missing");
+    assert.equal("invocations" in missing, false);
+    assert.match(summarize("session", { HookActivity: { Version: 9 } }).hookActivityError, /unsupported/);
+});
 
 test("CLI summary includes unfinished usage totals, incomplete coverage, and role attribution", () => {
     const data = {

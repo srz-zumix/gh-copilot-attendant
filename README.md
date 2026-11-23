@@ -79,27 +79,84 @@ for permissions, enterprise policies, and runner inheritance.
 
 ### hook
 
-Approve or deny Copilot CLI tool calls in every session from rules in
+Automatically approve selected Copilot CLI tools using rules in
 `~/.config/gh-copilot-attendant/config.yaml`:
 
 ```yaml
 hooks:
   permissionRequest:
     allow:
-      commands: ["git status:*", "go test:*"]
-    deny:
-      commands: ["rm:*"]
+      tools: ["list_repositories"]
+      scopedTools:
+        - tools: ["view", "rg", "grep", "glob"]
+          paths: ["/absolute/path/to/trusted/repo"]
 ```
+
+Replace the example path with an existing directory to approve those read
+tools only within that directory.
 
 ```sh
 gh copilot-attendant hook install
 ```
 
-The install command registers a `permissionRequest` hook in
-`~/.copilot/hooks/gh-copilot-attendant.json`. Bash command lines are allowed
-only when every command in them matches an allow rule; unmatched requests fall
-back to the normal permission prompt. See the
-[usage guide](docs/usage.md#hook) for rule syntax and safety notes.
+The installer selects `preToolUse` for these rules or the gh, Git, and shell
+display presets, and `permissionRequest` for ordinary command-only rules.
+Mixed rules use `preToolUse` for all decisions. Other
+`permissionRequest` hooks can prevent `preToolUse` approvals. Replacing an
+existing hook requires `--force`; restart the session after installation.
+Hook approvals can override native CLI denials, and scoped rules are not a
+filesystem sandbox. See the
+[usage guide](docs/usage.md#hook) for both modes and safety notes.
+
+Unmatched rules produce no decision. Configuration or input errors emit a
+progress warning and fall through to normal permission handling; this can also
+skip explicitly configured deny rules. See the usage guide for failure limits.
+
+Set `hooks.permissionRequest.allow.ghRead: true` to opt in to the built-in
+`gh` read preset, with or without leading assignments. It checks supported
+operations, flags, and explicit hosts without requiring individual command
+rules. Explicit command rules remain independent and may be broader; see the
+[usage guide](docs/usage.md#hook) for the preset's limits.
+
+Set `hooks.permissionRequest.allow.gitRead: true` to opt in to supported Git
+read operations. Only recognized command and option forms match; other forms
+fall through. Git configuration and inherited environment can still run
+programs or cause side effects, even for read operations.
+
+Set `hooks.permissionRequest.allow.shellDisplay: true` to opt in to selected
+forms of `basename`, `cat`, `cut`, `dirname`, `echo`, `find`, `head`, `jq`,
+`ls`, `nl`, `printf`, `pwd`, `sed`, `sort`, `stat`, `tail`, `tr`, `uniq`, and
+`wc`. File operands must resolve inside the session working directory or a
+configured `allow.scopedTools.paths` root. `sort` may create temporary files
+outside these roots. The preset is not a filesystem sandbox; see the
+[usage guide](docs/usage.md#hook) for supported forms and limitations.
+
+Leading Bash assignments can be ignored when matching existing command rules
+for allowed commands. Assignment-bearing requests still restrict direct `gh`
+commands to a conservative set of built-in read-only operations. The default
+environment-variable allowlist permits GitHub token and display variables;
+the optional denylist mode is broader and excludes common shell, Git, Go, proxy,
+and runtime-control variables. `PATH` is never allowed. The preset and
+assignment-bearing requests check explicit `gh` host targets against trusted
+hosts, and assignment values are redacted from hook logs.
+The denylist is not a safety boundary: unknown variables, allowed command
+arguments, inherited environment, and subprocesses can change execution.
+The hook does not expand variable references or inspect `gh` configuration,
+credentials, proxies, or redirects; see the
+[usage guide](docs/usage.md#hook) before enabling this policy.
+
+On Linux and on macOS builds with cgo ACL support, calculated allow and deny
+hook decisions are logged locally by default. Calls without a decision are not
+logged; older no-decision records remain on disk but are excluded from
+statistics. Set `hooks.logging.disabled: true` to turn logging off; see the
+usage guide for privacy and storage details.
+
+```sh
+gh copilot-attendant hook status     # show the installed hook and config state
+gh copilot-attendant hook disable    # ignore all rules without uninstalling
+gh copilot-attendant hook enable     # apply the rules again
+gh copilot-attendant hook uninstall  # remove the hook config file
+```
 
 ### metrics
 
@@ -148,6 +205,11 @@ sandbox outcome (`applied`, `not-applied`, or `unknown`).
 The assisted example selects human-approved shell permission requests while
 Assisted Permissions was enabled; it does not prove a safety review ran.
 Command breakdowns contain identifiers, not full command lines.
+Hook activity is reported separately from permission requests, including
+recorded allow and deny decisions, output states, and coverage gaps. The
+dashboard shows the tool shares for each decision and starts with its detail
+tables collapsed. A missing log does not prove that no hooks ran; see the
+[usage guide](docs/usage.md#session-stats) for scope and limitations.
 The dashboard also shows sessions with recorded events by local date and hour;
 this is not a continuous-activity measurement. When `--agent-mode` is selected,
 the heatmap counts matching permission requests by request time. With `--sandbox`,

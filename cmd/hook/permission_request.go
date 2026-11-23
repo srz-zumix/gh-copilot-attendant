@@ -18,12 +18,15 @@ func NewPermissionRequestCmd() *cobra.Command {
 {"behavior":"allow"} or {"behavior":"deny","message":"..."} according to the
 hooks.permissionRequest rules in the config file. Nothing is printed when no rule
 decides the request, so Copilot CLI continues with its normal permission flow.
+Configuration and input errors produce a progress warning without a decision.
 
 The config file is read from --config, then $GH_COPILOT_ATTENDANT_CONFIG, then
 $XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml (default
 ~/.config/gh-copilot-attendant/config.yaml). A missing config file produces no decision.
 
-Deny rules win over allow rules. A bash command is allowed only when every simple
+Config deny rules win over config allow rules. Hook approvals can override native
+CLI denials; scoped URL rules require allowDespiteNativeDeny: true. A bash command
+is allowed only when every simple
 command separated by ";", "&", "&&", "||", "|", or newlines matches an allow command rule.
 Commands with expansions, substitutions, subshells, comments, input redirection, or
 output redirection other than /dev/null or a file descriptor are never allowed.

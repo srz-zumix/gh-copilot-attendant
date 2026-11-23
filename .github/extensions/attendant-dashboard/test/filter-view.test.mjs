@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { activityFilterError, panelClearPatch } from "../ui/filter-view.mjs";
+import { hookActivityView } from "../ui/hook-view.mjs";
 import { normalizeQuery, FILTERS } from "../lib/query.mjs";
 import { Dashboard } from "../lib/dashboard.mjs";
 import { vscodeDataset } from "./fixtures/vscode.mjs";
@@ -11,6 +12,7 @@ import * as workspaceView from "../ui/workspace-view.mjs";
 import * as tableView from "../ui/table-view.mjs";
 import { projectFusion } from "../lib/fusion-data.mjs";
 import { emptyFusionDataset, fusionDataset } from "./fixtures/fusion.mjs";
+import { hookDataset } from "./fixtures/hook.mjs";
 
 class Element {
     constructor(tag) {
@@ -50,7 +52,7 @@ function renderedPanels(query, data, { storage, filters = FILTERS } = {}) {
     const submitted = [];
     const warnings = [];
     const context = vm.createContext({
-        ...modelView, ...workspaceView, ...tableView, activityFilterError, panelClearPatch, Intl,
+        ...modelView, ...workspaceView, ...tableView, activityFilterError, panelClearPatch, hookActivityView, Intl,
         Node: Element, document: {
             querySelector: (selector) => selector === 'meta[name="dashboard-token"]' ? { content: "test" } : null,
             createElement: (tag) => new Element(tag),
@@ -213,6 +215,88 @@ function tableCell(view, table, column) {
     assert.ok(index >= 0, `missing column ${column}`);
     return view.walk(table).find((node) => node.tag === "tbody").children[0].children[index];
 }
+
+test("the CLI Hook activity panel keeps hook results separate and shows gaps", () => {
+    const data = { HookActivity: hookDataset() };
+    const view = renderedPanels(normalizeQuery({ source: "session" }), data);
+    const panel = view.panels.find((entry) => view.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity"));
+    assert.ok(panel);
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    const content = text(panel);
+    for (const part of ["Recorded decisions", "Calculated allow", "Calculated deny", "Allow by tool", "Deny by tool",
+        "1 failed", "output errors: 1", "1 ambiguous", "3 malformed", "1 unsupported version",
+        "<unknown>", "not permission requests", "permission filters do not",
+        "/work/src/main.go", "git status <b>--short</b> …", "<not recorded>"]) {
+        assert.ok(content.includes(part), part);
+    }
+    assert.equal(content.includes("No decision"), false);
+    const shareRows = (decision) => {
+        const group = view.walk(panel).find((node) => node.attributes["aria-labelledby"] === `hook-${decision}-share-title`);
+        return view.walk(group).filter((node) => node.attributes["data-hook-share-row"]);
+    };
+    const allow = shareRows("allow");
+    assert.deepEqual(allow.map(text), ["view2 · 40%", "Other1 · 20%", "<unknown>1 · 20%", "Other tools (not listed)1 · 20%"]);
+    assert.equal(allow[1].attributes["data-hook-share-row"], "tool");
+    assert.equal(allow[3].attributes["data-hook-share-row"], "unlisted");
+    assert.equal(view.walk(allow[0]).find((node) => node.tag === "i").style.width, "40%");
+    assert.equal(view.walk(allow[3]).find((node) => node.tag === "i").style.width, "20%");
+    assert.deepEqual(shareRows("deny").map(text), ["write1 · 50%", "Other tools (not listed)1 · 50%"]);
+    const details = view.walk(panel).find((node) => Object.hasOwn(node.attributes, "data-hook-details-disclosure"));
+    assert.equal(details.open, false);
+    assert.equal(view.walk(details).filter((node) => node.tag === "table").length, 2);
+    assert.equal(view.walk(panel).some((node) => node.tag === "b"), false);
+    const position = (title) => view.nodes.findIndex((node) => view.walk(node).some((child) => child.tag === "h2" && child.children[0] === title));
+    assert.ok(position("Hook activity") >= 0);
+    assert.equal(position("Hook activity") + 1, position("Session activity"));
+    const missing = renderedPanels(normalizeQuery({ source: "session" }), { HookActivity: { Version: 1, State: "missing", Data: null } });
+    const missingPanel = missing.panels.find((entry) => missing.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity"));
+    assert.match(text(missingPanel), /does not establish that no hooks ran/);
+    assert.doesNotMatch(text(missingPanel), /Recorded decisions/);
+    const old = renderedPanels(normalizeQuery({ source: "session" }), {});
+    assert.equal(old.panels.some((entry) => old.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity")), false);
+    const fusion = renderedPanels(normalizeQuery({ source: "session", fusionOnly: true }), projectFusion({ ...fusionDataset(), ...data }));
+    assert.equal(fusion.panels.some((entry) => fusion.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity")), false);
+    const vscode = renderedPanels(normalizeQuery({ source: "vscode" }), data);
+    assert.equal(vscode.panels.some((entry) => vscode.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity")), false);
+});
+
+test("hook activity shows empty graphs without inventing tool shares", () => {
+    const raw = hookDataset();
+    Object.assign(raw.Data, {
+        Invocations: 0, PermissionRequests: 0, PreToolUses: 0,
+        Decisions: { Allow: 0, Deny: 0, None: 0 },
+        Outputs: { NotAttempted: 0, WriteSucceeded: 0, WriteFailed: 0 },
+        Processing: { Success: 0, InputError: 0, OutputError: 0 },
+        ByTool: [], ByDecisionTool: { Allow: [], Deny: [] }, ByTarget: [],
+    });
+    const view = renderedPanels(normalizeQuery({ source: "session" }), { HookActivity: raw });
+    const panel = view.panels.find((entry) => view.walk(entry).some((node) => node.tag === "h2" && node.children[0] === "Hook activity"));
+    const text = (node) => typeof node === "string" ? node : node instanceof Element ? node.children.map(text).join("") : "";
+    assert.match(text(panel), /No recorded allow decisions/);
+    assert.match(text(panel), /No recorded deny decisions/);
+    assert.equal(view.walk(panel).some((node) => node.attributes["data-hook-share-row"]), false);
+});
+
+test("hook detail tables remain open across rerenders and source changes", () => {
+    const data = { HookActivity: hookDataset() };
+    const app = interactiveFusion(data);
+    const details = () => app.walk(app.content).find((node) => Object.hasOwn(node.attributes, "data-hook-details-disclosure"));
+    const summary = () => details().children[0];
+    assert.equal(details().open, false);
+    details().open = true;
+    app.context.document.activeElement = summary();
+    vm.runInContext("render();", app.context);
+    assert.equal(details().open, true);
+    assert.equal(app.context.document.activeElement, summary());
+    vm.runInContext(`
+        state.results.vscode = { status: "ok", data: { ByModel: [], ByWorkspace: [], ByTool: [] }, command: [] };
+        state.query = { ...state.query, source: "vscode" };
+        render();
+        state.query = { ...state.query, source: "session" };
+        render();
+    `, app.context);
+    assert.equal(details().open, true);
+});
 
 test("the harness warning stays visible only on VS Code, including loading, empty, and failed results", () => {
     const { context } = renderedPanels(normalizeQuery({ source: "vscode" }), {});

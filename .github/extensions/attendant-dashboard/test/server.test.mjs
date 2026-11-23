@@ -73,7 +73,7 @@ test("index.html explains harness-based tab routing without implying a VS Code v
 test("table view modules are served as same-origin JavaScript", async (t) => {
     const { server } = await setup();
     t.after(() => server.close());
-    for (const [file, exported] of [["model-view.mjs", "sortModels"], ["workspace-view.mjs", "sortWorkspaces"], ["table-view.mjs", "sortTableEntries"], ["filter-view.mjs", "panelClearPatch"]]) {
+    for (const [file, exported] of [["model-view.mjs", "sortModels"], ["workspace-view.mjs", "sortWorkspaces"], ["table-view.mjs", "sortTableEntries"], ["filter-view.mjs", "panelClearPatch"], ["hook-view.mjs", "hookActivityView"]]) {
         const res = await call(`${server.origin}/${file}`);
         assert.equal(res.status, 200);
         assert.match(res.headers["content-type"], /^text\/javascript/);
