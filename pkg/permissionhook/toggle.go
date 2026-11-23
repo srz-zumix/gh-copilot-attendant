@@ -48,6 +48,11 @@ func SetDisabled(p string, disabled bool) (ToggleResult, error) {
 		return res, fmt.Errorf("invalid config %s: %w", p, err)
 	}
 	if !changed {
+		if !disabled && !res.Created {
+			if _, err := ParseConfig(data); err != nil {
+				return res, fmt.Errorf("invalid config %s: %w", p, err)
+			}
+		}
 		return res, nil
 	}
 	if _, err := ParseConfig(out); err != nil {

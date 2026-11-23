@@ -292,6 +292,9 @@ func (p *bashParser) parse() error {
 			p.word.WriteByte(c)
 			i++
 		default:
+			if c == '~' && !p.inWord {
+				return unsupported("tilde expansion")
+			}
 			p.beginWord(i)
 			if c == '=' && p.assignmentName == "" && p.candidateAssignment {
 				name := p.word.String()

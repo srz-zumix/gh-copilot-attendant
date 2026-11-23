@@ -43,7 +43,7 @@ var gitReadCommands = map[string]gitReadSpec{
 	"show": {flags: gitHistoryFlags, numericArgs: true},
 	"diff": {flags: gitHistoryFlags},
 	"branch": {listOnly: true, flags: gitFlags(
-		`--list -l --show-current --all -a --remotes -r --verbose -v -vv
+		`--list --show-current --all -a --remotes -r --verbose -v -vv
 		--no-color --ignore-case -i --omit-empty`,
 		`--sort --format --points-at`, `--color --abbrev --column`)},
 	"tag": {listOnly: true, flags: gitFlags(
@@ -145,7 +145,7 @@ command:
 				return false
 			}
 		}
-		if flag == "--list" || flag == "-l" {
+		if flag == "--list" || (flag == "-l" && name == "tag") {
 			list = true
 		}
 	}

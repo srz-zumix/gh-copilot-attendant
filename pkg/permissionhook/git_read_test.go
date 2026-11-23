@@ -57,6 +57,7 @@ hooks:
 		{"git push", BehaviorNone},
 		{"git reset --hard", BehaviorNone},
 		{"git branch new-name", BehaviorNone},
+		{"git branch -l new-name", BehaviorNone},
 		{"git branch --delete name", BehaviorNone},
 		{"git branch --list -D name", BehaviorNone},
 		{"git tag new-name", BehaviorNone},
