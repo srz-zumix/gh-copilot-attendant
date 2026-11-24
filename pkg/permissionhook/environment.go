@@ -155,7 +155,8 @@ func normalizeTrustedHost(raw string) (string, bool) {
 				return "", false
 			}
 			for _, c := range label {
-				if !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '-' {
+				validChar := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+				if !validChar {
 					return "", false
 				}
 			}

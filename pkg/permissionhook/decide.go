@@ -164,12 +164,13 @@ func decideShell(rules PermissionRequestConfig, req *Request) Decision {
 		}
 		_, commandAllowed := matchCommandRules(rules.Allow.Commands, command)
 		gitRead := rules.Allow.GitRead && gitReadCommandAllowed(command)
+		allowedByRuleOrPreset := commandAllowed || (rules.Allow.GHRead && ghRead) || gitRead
 		displayAllowed, displayUsesPath := false, false
 		if rules.Allow.ShellDisplay && hasSafeShellDisplayArguments(req) && !hasUnquotedTilde(req.Command, segments[i]) {
 			piped := i > 0 && isDisplayPipe(req.Command, segments[i-1], segments[i])
 			displayAllowed, displayUsesPath = shellDisplayCommandAllowed(command, req.CWD, rules.Allow.ScopedTools, piped)
 		}
-		if !commandAllowed && !(rules.Allow.GHRead && ghRead) && !gitRead {
+		if !allowedByRuleOrPreset {
 			if !displayAllowed || parsed.hasRedirect || (displayUsesPath && !priorDisplayOnly) {
 				return Decision{}
 			}

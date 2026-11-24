@@ -15,6 +15,7 @@ func loggingDiagnostic() {
 		return
 	}
 	file := os.NewFile(uintptr(fd), "hook-diagnostic")
-	defer file.Close()
+	// Diagnostic cleanup must not change the hook decision.
+	defer func() { _ = file.Close() }()
 	_, _ = fmt.Fprintln(file, "permission hook: unable to record invocation")
 }

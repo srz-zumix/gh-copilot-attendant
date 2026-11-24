@@ -119,8 +119,9 @@ func parseManagedHook(data []byte) (*managedHook, error) {
 			if e.Args[i] != "hook" {
 				continue
 			}
-			if !((executable == "gh" || executable == "gh.exe") && i == 1 && e.Args[0] == "copilot-attendant") &&
-				!((executable == "gh-copilot-attendant" || executable == "gh-copilot-attendant.exe") && i == 0) {
+			managedInvocation := ((executable == "gh" || executable == "gh.exe") && i == 1 && e.Args[0] == "copilot-attendant") ||
+				((executable == "gh-copilot-attendant" || executable == "gh-copilot-attendant.exe") && i == 0)
+			if !managedInvocation {
 				return nil, nil
 			}
 			cmd, ok := hookCommands[e.Args[i+1]]

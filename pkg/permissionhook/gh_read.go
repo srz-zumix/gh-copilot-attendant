@@ -379,8 +379,9 @@ func validRepositoryName(value string) bool {
 	}
 	for _, part := range parts {
 		for _, c := range part {
-			if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') &&
-				!(c >= '0' && c <= '9') && !strings.ContainsRune("._-", c) {
+			validChar := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				(c >= '0' && c <= '9') || strings.ContainsRune("._-", c)
+			if !validChar {
 				return false
 			}
 		}
