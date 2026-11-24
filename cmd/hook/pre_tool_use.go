@@ -17,9 +17,9 @@ func NewPreToolUseCmd() *cobra.Command {
 		Short: "Decide scoped Copilot CLI tool calls",
 		Long: `Read a Copilot CLI preToolUse hook payload from stdin and approve scoped
 view, rg, grep, or glob calls that match path rules, web_fetch calls that match
-exact URLs, and configured list_repositories calls. Tool deny rules take
-precedence over allow rules in this config. Hook approvals can override native
-CLI denials. Scoped URL rules require allowDespiteNativeDeny: true. Unmatched
+exact or current-repository URLs, and configured list_repositories calls.
+Tool deny rules take precedence over allow rules in this config. Hook approvals
+can override native CLI denials. Scoped URL rules require allowDespiteNativeDeny: true. Unmatched
 calls fall through to normal permission handling.
 With --all-rules, also evaluate command and unscoped tool rules.
 Configuration and input errors produce a progress warning without a decision.

@@ -189,6 +189,11 @@ func TestScopedRuleValidation(t *testing.T) {
 		{"URL credentials", "tools: [web_fetch]\n          urls: ['https://user@example.invalid/']\n          allowDespiteNativeDeny: true"},
 		{"URL without native deny acknowledgment", "tools: [web_fetch]\n          urls: ['https://example.invalid/']"},
 		{"native deny acknowledgment on path", fmt.Sprintf("tools: [view]\n          paths: [%q]\n          allowDespiteNativeDeny: true", root)},
+		{"repository without acknowledgment", "tools: [web_fetch]\n          currentRepository: true"},
+		{"wrong repository tool", "tools: [view]\n          currentRepository: true\n          allowDespiteNativeDeny: true"},
+		{"repository and URLs", "tools: [web_fetch]\n          currentRepository: true\n          urls: ['https://example.invalid/']\n          allowDespiteNativeDeny: true"},
+		{"repository and paths", fmt.Sprintf("tools: [web_fetch]\n          currentRepository: true\n          paths: [%q]\n          allowDespiteNativeDeny: true", root)},
+		{"disabled repository without scope", "tools: [web_fetch]\n          currentRepository: false"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			input := "hooks:\n  permissionRequest:\n    allow:\n      scopedTools:\n        - " + tt.rule + "\n"

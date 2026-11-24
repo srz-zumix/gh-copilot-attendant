@@ -64,9 +64,15 @@ func validateScopedToolRule(rule ScopedToolRule) error {
 	if len(rule.Tools) == 0 {
 		return errors.New("tools must not be empty")
 	}
-	hasPaths, hasURLs := len(rule.Paths) > 0, len(rule.URLs) > 0
-	if hasPaths == hasURLs {
-		return errors.New("specify either paths or urls")
+	hasPaths, hasURLs := len(rule.Paths) > 0, len(rule.URLs) > 0 || rule.CurrentRepository
+	scopes := 0
+	for _, enabled := range []bool{hasPaths, len(rule.URLs) > 0, rule.CurrentRepository} {
+		if enabled {
+			scopes++
+		}
+	}
+	if scopes != 1 {
+		return errors.New("specify exactly one of paths, urls, or currentRepository")
 	}
 	if hasURLs && !rule.AllowDespiteNativeDeny {
 		return errors.New("scoped URL rules require allowDespiteNativeDeny: true because hook approval can override native URL denials")
@@ -92,7 +98,8 @@ func validateScopedToolRule(rule ScopedToolRule) error {
 	return nil
 }
 
-func matchesScopedTools(rules []ScopedToolRule, req *Request) bool {
+func decideScopedTools(rules []ScopedToolRule, req *Request) Decision {
+	currentRepository := false
 	for _, rule := range rules {
 		matchesTool := false
 		for _, tool := range rule.Tools {
@@ -105,13 +112,27 @@ func matchesScopedTools(rules []ScopedToolRule, req *Request) bool {
 			continue
 		}
 		if len(rule.Paths) > 0 && matchScopedPaths(rule.Paths, req) {
-			return true
+			return Decision{Behavior: BehaviorAllow}
 		}
 		if len(rule.URLs) > 0 && rule.AllowDespiteNativeDeny && matchScopedURLs(rule.URLs, req) {
-			return true
+			return Decision{Behavior: BehaviorAllow}
+		}
+		currentRepository = currentRepository || (rule.CurrentRepository && rule.AllowDespiteNativeDeny)
+	}
+	if currentRepository {
+		requested, ok := stringArgument(req.Arguments, "url")
+		if !ok || !validRepositoryRequestURL(requested) {
+			return Decision{}
+		}
+		remote, err := currentRepositoryRemote(req.CWD)
+		if err != nil {
+			return Decision{Message: "could not resolve the hook cwd's origin repository"}
+		}
+		if matchesRepositoryURL(remote, requested) {
+			return Decision{Behavior: BehaviorAllow}
 		}
 	}
-	return false
+	return Decision{}
 }
 
 func hasKnownScopedArguments(req *Request) bool {

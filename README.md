@@ -90,10 +90,17 @@ hooks:
       scopedTools:
         - tools: ["view", "rg", "grep", "glob"]
           paths: ["/absolute/path/to/trusted/repo"]
+        - tools: ["web_fetch"]
+          currentRepository: true
+          allowDespiteNativeDeny: true
 ```
 
 Replace the example path with an existing directory to approve those read
-tools only within that directory.
+tools only within that directory. The `web_fetch` rule approves HTTPS Web,
+repository API, and raw file URLs for the Git `origin` fetch remote resolved
+from the hook's `cwd`, including subdirectories and worktrees. Missing or
+unresolvable origins are not automatically allowed. This is opt-in: hook URL
+approvals can override native denials, and redirects are not restricted.
 
 ```sh
 gh copilot-attendant hook install

@@ -57,10 +57,7 @@ func Decide(cfg *Config, req *Request) Decision {
 	if _, ok := matchToolRules(rules.Allow.Tools, req.ToolName); ok {
 		return Decision{Behavior: BehaviorAllow}
 	}
-	if matchesScopedTools(rules.Allow.ScopedTools, req) {
-		return Decision{Behavior: BehaviorAllow}
-	}
-	return Decision{}
+	return decideScopedTools(rules.Allow.ScopedTools, req)
 }
 
 // DecidePreToolUse evaluates scoped tool rules before a tool executes.
@@ -80,10 +77,7 @@ func DecidePreToolUse(cfg *Config, req *Request) Decision {
 			return Decision{Behavior: BehaviorAllow}
 		}
 	}
-	if matchesScopedTools(rules.Allow.ScopedTools, req) {
-		return Decision{Behavior: BehaviorAllow}
-	}
-	return Decision{}
+	return decideScopedTools(rules.Allow.ScopedTools, req)
 }
 
 // DecideAllRulesPreToolUse evaluates all rules before a tool executes.
@@ -252,10 +246,13 @@ func denyDecision(reason string) Decision {
 	return Decision{Behavior: BehaviorDeny, Message: "Denied by gh-copilot-attendant: " + reason}
 }
 
-// WriteDecision writes the hook output. No output is written when there is no decision,
-// so that Copilot CLI falls through to its normal permission flow.
+// WriteDecision writes a decision or an evaluation warning. Unmatched calls produce
+// no output, so Copilot CLI falls through to its normal permission flow.
 func WriteDecision(w io.Writer, d Decision) error {
 	if d.Behavior == BehaviorNone {
+		if d.Message != "" {
+			return writeEvaluationWarning(w, d.Message)
+		}
 		return nil
 	}
 	data, err := json.Marshal(d)
@@ -269,6 +266,9 @@ func WriteDecision(w io.Writer, d Decision) error {
 // WritePreToolDecision writes the preToolUse representation of a decision.
 func WritePreToolDecision(w io.Writer, d Decision) error {
 	if d.Behavior == BehaviorNone {
+		if d.Message != "" {
+			return writeEvaluationWarning(w, d.Message)
+		}
 		return nil
 	}
 	output := struct {
