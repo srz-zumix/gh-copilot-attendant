@@ -1,7 +1,9 @@
 package hook
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/srz-zumix/gh-copilot-attendant/pkg/permissionhook"
@@ -48,6 +50,12 @@ next hook call.`,
 			}
 			msg := fmt.Sprintf("Hook rules %s in %s\n", state, res.Path)
 			if !res.Changed {
+				if !disable {
+					if _, statErr := os.Stat(res.Path); errors.Is(statErr, os.ErrNotExist) {
+						_, err = fmt.Fprintf(cmd.OutOrStdout(), "No config found at %s; nothing to enable\n", res.Path)
+						return err
+					}
+				}
 				msg = fmt.Sprintf("Hook rules already %s in %s\n", state, res.Path)
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), msg)

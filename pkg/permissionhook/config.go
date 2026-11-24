@@ -60,11 +60,12 @@ type RuleSet struct {
 	Tools []string `yaml:"tools"`
 }
 
-// ScopedToolRule approves the named tools only for the configured paths or URLs.
+// ScopedToolRule approves the named tools only for a configured path or URL scope.
 type ScopedToolRule struct {
 	Tools                  []string `yaml:"tools"`
 	Paths                  []string `yaml:"paths"`
 	URLs                   []string `yaml:"urls"`
+	CurrentRepository      bool     `yaml:"currentRepository"`
 	AllowDespiteNativeDeny bool     `yaml:"allowDespiteNativeDeny"`
 }
 
