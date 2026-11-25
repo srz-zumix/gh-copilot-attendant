@@ -58,6 +58,16 @@ separately from Agent modes. Missing or invalid modes are unknown. Use --permiss
 with --decision-source human_response to select human decisions made while assisted
 permissions were enabled; the mode does not imply a safety review ran.
 
+Hook activity separately counts recorded allow and deny permissionRequest and preToolUse
+decisions, processing outcomes, and output states. Older no-decision records are excluded
+without changing the log. It does not prove that the CLI accepted a decision or count
+hooks that never reached the log. Session and directory
+scope and record-time bounds apply; permission filters do not. Unidentified session IDs
+are reported across the time window and included only when no session or directory scope
+is selected. Malformed and unsupported records are counted across the file. Missing,
+unreadable, unsupported, or partially read logs do not establish that no hooks ran.
+--top limits tool and target rows, not totals.
+
 Fusion statistics count recorded resolved turns by pattern and recorded usage by pattern,
 phase, role, and model. They include only explicitly attributed usage records, not planned
 phases or checkpoint-only usage. Missing AIU and identifiers are shown as incomplete.

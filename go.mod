@@ -8,8 +8,10 @@ require (
 	github.com/google/go-github/v93 v93.0.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/spf13/cobra v1.10.2
-	github.com/srz-zumix/go-gh-extension v0.7.10
+	github.com/srz-zumix/go-gh-extension v0.7.11
 	github.com/stretchr/testify v1.12.1
+	golang.org/x/sys v0.49.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -85,8 +87,6 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -29,6 +29,25 @@ func sampleSessionStats() *sessionstats.Stats {
 			StartDate: "2026-01-01", EndDate: "2026-01-01",
 			Days: []sessionstats.ActivityDay{{Date: "2026-01-01", Hours: [24]int{0, 2}}},
 		},
+		HookActivity: sessionstats.HookActivity{
+			Version: 1, State: "available", Data: &sessionstats.HookActivityData{
+				Invocations: 2, PermissionRequests: 1, PreToolUses: 1,
+				Decisions:    sessionstats.HookDecisions{Allow: 1, Deny: 1},
+				Outputs:      sessionstats.HookOutputs{WriteSucceeded: 1, WriteFailed: 1},
+				Processing:   sessionstats.HookProcessing{Success: 1, OutputError: 1},
+				Unidentified: sessionstats.HookUnidentified{Missing: 1}, Attribution: "available",
+				MalformedRecords: 1, UnsupportedVersions: 2,
+				ByTool: []sessionstats.HookToolCount{{Key: "view", Total: 1}, {Key: "", Total: 1}},
+				ByDecisionTool: sessionstats.HookDecisionTools{
+					Allow: []sessionstats.HookToolCount{{Key: "view", Total: 1}},
+					Deny:  []sessionstats.HookToolCount{{Key: "", Total: 1}},
+				},
+				ByTarget: []sessionstats.HookTargetCount{
+					{Tool: "bash", Decision: "allow", Target: "git status\n  --short", Truncated: true, Total: 1},
+					{Tool: "write", Decision: "deny", Total: 1},
+				},
+			},
+		},
 	}
 }
 
@@ -42,6 +61,10 @@ func TestRenderCopilotSessionStatsTable(t *testing.T) {
 		"SUMMARY", "sessions: 2, requests: 3", "FUSION", "resolved_turns: 1", ">= 3.000",
 		"FUSION_PATTERN", "FUSION_PHASE", "cascade", "judge", "model-a", "1/2",
 		"checkpoint-only usage cannot be attributed", "not an atomic snapshot",
+		"HOOK_ACTIVITY", "recorded_invocations: 2", "write_succeeded 1", "output_error 1",
+		"malformed 1, unsupported_version 2", "HOOK_TOOL", "<unknown>",
+		"HOOK_TARGET", "git status --short …", "<not recorded>",
+		"permission filters do not",
 	} {
 		if !strings.Contains(output, part) {
 			t.Errorf("table output missing %q:\n%s", part, output)
@@ -83,5 +106,30 @@ func TestRenderCopilotSessionStatsJSON(t *testing.T) {
 	if err := json.Unmarshal(data["SessionActivity"], &activity); err != nil || activity.Version != 1 ||
 		activity.TimeZone != "UTC" || len(activity.Days) != 1 || activity.Days[0].Hours[1] != 2 {
 		t.Fatalf("SessionActivity = %+v, error %v", activity, err)
+	}
+	var hook sessionstats.HookActivity
+	if err := json.Unmarshal(data["HookActivity"], &hook); err != nil || hook.Version != 1 ||
+		hook.State != "available" || hook.Data == nil || hook.Data.Invocations != 2 ||
+		hook.Data.Outputs.WriteSucceeded != 1 || hook.Data.Unidentified.Missing != 1 {
+		t.Fatalf("HookActivity = %+v, error %v", hook, err)
+	}
+}
+
+func TestRenderUnavailableHookActivity(t *testing.T) {
+	for _, state := range []string{"missing", "unreadable", "unsupported"} {
+		t.Run(state, func(t *testing.T) {
+			stats := sampleSessionStats()
+			stats.HookActivity = sessionstats.HookActivity{Version: 1, State: state}
+			sr := sharedrender.NewStringRenderer(nil)
+			if err := RenderCopilotSessionStats(&sr.Renderer, stats); err != nil {
+				t.Fatal(err)
+			}
+			output := sr.Stdout.String()
+			if !strings.Contains(output, "log: "+state) ||
+				!strings.Contains(output, "does not establish that no hooks ran") ||
+				strings.Contains(output, "recorded_invocations: 0") {
+				t.Fatalf("unavailable hook output:\n%s", output)
+			}
+		})
 	}
 }

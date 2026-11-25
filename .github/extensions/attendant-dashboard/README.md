@@ -190,16 +190,35 @@ is required to run the canvas.
   activity in the normal CLI view; Fusion usage in the Fusion-only view; and
   Usage and Tools (Tools and Subagents) on the VS Code tab. The Permissions
   category groups the Summary (permission cards, decision legend, and response
-  wait), Agent modes, Results, Decision sources, Read-only vs read-write, Tool
-  kinds, Commands, Paths, URLs, and Working directories panels. Each panel,
-  including Models, Workspaces, and Copilot Fusion, can also be toggled
-  independently. Categories and panels start expanded and retain their state
-  across dashboard updates and view changes. CLI and VS Code panels keep
+  wait), Agent modes, Results, Decision sources, Read-only vs
+  read-write, Tool kinds, Commands, Paths, URLs, and Working directories panels.
+  Each panel, including Models, Workspaces, and Copilot Fusion, can also be
+  toggled independently. Categories and panels start expanded and retain their
+  state across dashboard updates and view changes. CLI and VS Code panels keep
   separate states; matching CLI panels share state with the Fusion-only view.
   Option-clicking any category or panel heading expands all included
   disclosures when any are collapsed, or collapses all when they are already
   expanded. The Usage and Permissions categories are excluded; their inner
   panels are still included.
+- **Hook activity** — placed directly above Session activity in the normal CLI
+  view, it shows recorded allow and deny decisions, output and processing states,
+  and coverage gaps. Separate allow and deny graphs show each tool's share of
+  all recorded decisions of that type; decisions omitted by Top appear as
+  Other. Tool and target detail tables start collapsed and retain their state
+  across updates and view changes. Targets are shown as text; truncated
+  targets end with `…`, and older records show `<not recorded>`. These are not
+  permission requests or proof the CLI accepted an output. Session/directory
+  scope and hook record-time bounds apply; permission filters do not. Older
+  no-decision records are excluded without changing the log. Top limits each
+  tool breakdown and target rows. Missing, unmatched, ambiguous, unscopable, and
+  unavailable attribution counts cover the whole selected time window and are
+  included in totals only when all directories and sessions are selected.
+  Malformed and unsupported records are counted across the file. Missing,
+  unreadable, unsupported, or partially read logs cannot establish that no hooks
+  ran. `get_data`, `get_summary`, and Ask agent use the same aggregate;
+  summaries cap each tool and target list at ten and report unlisted decision
+  counts. An older CLI without tool breakdowns requires an update or the
+  `source` runner; Fusion-only and VS Code views exclude the panel.
 - **Agent modes** — the normal CLI permission view groups requests and their
   approval, location-approval, denial, and unresolved outcomes by the mode
   recorded at permission evaluation. This is separate from main/subagent

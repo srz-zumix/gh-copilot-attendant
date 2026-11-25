@@ -7,6 +7,7 @@ dashboard behavior.
 ## Contents
 
 - [Copilot extensions and code review settings](#copilot)
+- [Copilot CLI permission hook](#hook)
 - [Organization and enterprise metrics](#metrics)
 - [Local Copilot CLI sessions](#session)
 - [Agent skills](#skills)
@@ -205,6 +206,489 @@ inherits the coding agent configuration. The output shows `runner_type`,
 `runner_labels`, `runner_group_name`, `allow_repository_customization`, and
 `configured_by` when reported. JSON, jq, and template output use one
 API-shaped object and preserve null values.
+
+### hook
+
+The `hook` commands let GitHub Copilot CLI
+[`permissionRequest` and `preToolUse` hooks](https://docs.github.com/en/copilot/reference/hooks-reference)
+approve or deny tool calls from rules in a config file. Unlike
+`permissions-config.json`, which is scoped per location, these rules apply to
+every session that loads the hook.
+
+The config file is YAML. It is read from `--config`, then
+`$GH_COPILOT_ATTENDANT_CONFIG`, then
+`$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml` (default
+`~/.config/gh-copilot-attendant/config.yaml`):
+
+```yaml
+hooks:
+  permissionRequest:
+    allow:
+      tools:
+        - "list_repositories"
+      scopedTools:
+        - tools: ["view", "rg", "grep", "glob"]
+          paths: ["/absolute/path/to/trusted/repo"]
+        - tools: ["web_fetch"]
+          urls: ["https://docs.example.invalid/guide"]
+          allowDespiteNativeDeny: true
+```
+
+Install this example using `hook install`. For command rules, configure rules
+such as:
+
+```yaml
+hooks:
+  permissionRequest:
+    allow:
+      commands: ["git status:*", "git log"]
+      tools: ["example-mcp-read_*"]
+    deny:
+      commands: ["rm:*", "git push:*"]
+      tools: ["example-mcp-delete_*"]
+```
+
+- `commands` match bash command lines. A rule is split on whitespace and
+  compared with the command's arguments after quote removal. `git log` matches
+  only that exact command; a trailing `:*` (`git status:*`) also allows any
+  additional arguments.
+- `allow.ghRead: true` enables the built-in `gh` read preset. Default: `false`.
+  The preset matches supported direct `gh` read operations with or without
+  leading assignments; individual command rules are not required. Its
+  restrictions and supported operations are described below.
+- `allow.gitRead: true` enables the Git read preset. Default: `false`. It
+  matches only supported direct Git commands and option forms; individual
+  command rules are not required.
+- `allow.shellDisplay: true` enables the scoped shell display preset.
+  Default: `false`. Its supported commands, path checks, and limitations
+  are described below.
+- `tools` are glob patterns (`*`, `?`, `[...]`) matched against the hook
+  `toolName`, such as `web_fetch` or an MCP tool name. These rules are
+  unscoped; they do not restrict paths or URLs. A tool with opaque, non-object
+  arguments is not automatically allowed because its arguments cannot be
+  inspected, but a matching tool deny rule still applies.
+- `allow.scopedTools` contains rules for exact tool names. A rule must specify
+  either `paths` or `urls`, not both. Path rules support `view`, `rg`, `grep`,
+  and `glob`; URL rules support `web_fetch`. A scoped tool cannot also match
+  an unconditional `allow.tools` pattern. Scoped deny rules are not supported.
+- `paths` lists literal absolute roots, not glob patterns or regular
+  expressions. Every requested path must resolve within one of the roots of
+  the same rule, including after resolving symlinks. `rg`,
+  `grep`, and `glob` use the hook's `cwd` when `paths` is omitted. Missing
+  paths, unknown arguments, or paths that cannot be resolved fall through to
+  normal permission handling. A `glob` pattern must be relative; patterns
+  containing `..`, backslashes, `~`, `$`, `!`, parentheses, or slashes inside
+  brace alternatives or character classes also fall through. The literal
+  prefix before a wildcard must resolve within an allowed root.
+- `urls` lists complete, exact HTTP or HTTPS URLs, including any query string
+  or fragment. Credentials in URLs are not accepted. The rule checks only the
+  requested URL, not redirect destinations. Each URL rule requires the explicit
+  `allowDespiteNativeDeny: true` acknowledgment.
+- Config deny rules win over config allow rules. A request that matches no
+  rule produces no decision, so Copilot CLI continues with its normal
+  permission flow. `permissionRequest.deny` rules explicitly deny matching
+  calls; the environment-assignment denylist instead only prevents the hook
+  from automatically allowing those assignments.
+- Copilot CLI skips `permissionRequest` for read permissions. The installer
+  selects `preToolUse` for the gh, Git, or shell display presets, scoped
+  rules, or tool rules matching supported read tools, and evaluates all
+  configured rules there.
+  Otherwise it selects `permissionRequest`. Explicit `--scoped-tools` selects
+  the strict scoped mode, which supports the scoped path and URL rules,
+  unconditional `list_repositories` allow, and exact tool deny rules for
+  `view`, `rg`, `grep`, `glob`, `web_fetch`, and `list_repositories`. It rejects
+  the read presets, command rules, other unconditional allow rules, and other
+  deny rules when installed or invoked rather than silently ignoring them.
+- Automatic mode is selected at installation time. If rules are changed later,
+  run `hook status` and reinstall with `--force` when the selected mode no
+  longer covers them. Existing sessions must be restarted.
+- Some Copilot CLI versions do not apply `preToolUse` approvals when any
+  `permissionRequest` hook is registered, even if its matcher does not match.
+  Inspect all hook sources for conflicting registrations; installing scoped
+  mode does not remove other hooks.
+- A bash command line is split into simple commands at `;`, `&`, `&&`, `||`,
+  `|`, `|&`, and newlines. It is allowed only when every simple command matches
+  an allow rule or preset, and denied when any simple command matches a deny
+  rule.
+- To allow the built-in `gh` read operations without enumerating them, opt in:
+
+  ```yaml
+  hooks:
+    permissionRequest:
+      allow:
+        ghRead: true
+  ```
+
+  The preset applies the same operation, flag, and host checks to every
+  matching `gh` segment, including segments without assignments. It does not
+  restrict separately configured command rules: for example, an explicit
+  `gh pr view:*` rule can allow `gh pr view --web` without assignments. Remove
+  or narrow such rules if their broader behavior is not intended.
+- Enable `allow.gitRead: true` to opt in to the Git read preset. It supports
+  selected forms of `status`, `log`, `show`, `diff`, `branch` and `tag`
+  listings, `rev-parse`, `ls-files`, `ls-tree`, `show-ref`, `for-each-ref`,
+  `describe`, `cat-file`, `rev-list`, `diff-tree`, `diff-index`, `diff-files`,
+  `remote`, and `worktree list`. Branch and tag patterns require `--list` or
+  `-l`; creation, deletion, and other mutating forms are not included. Only
+  recognized flags are allowed. Unknown flags, global `-c` or `--config-env`,
+  output files, external diff and textconv options, and executable paths fall
+  through. `git -C <directory>` is supported and is not workspace-scoped.
+  Separate explicit command rules remain independent and may be broader.
+  Inherited Git configuration, environment, filesystem state, helpers,
+  pagers, and hooks are not inspected; read operations can still execute
+  programs, access the network, or write incidental Git metadata.
+- Enable `allow.shellDisplay: true` to opt in to selected direct forms of
+  `basename`, `cat`, `cut`, `dirname`, `echo`, `find`, `head`, `jq`, `ls`,
+  `nl`, `printf`, `pwd`, `sed`, `sort`, `stat`, `tail`, `tr`, `uniq`, and
+  `wc`. File operands must exist and resolve, including symlinks, within the
+  hook's working directory or any `paths` root in `allow.scopedTools`. These
+  roots are shared with the preset regardless of which tools the scoped rule
+  names. `find`, `ls`, and `stat` also accept directories; other file inputs
+  must be regular files. `basename`, `dirname`, `echo`, and `printf` process
+  text rather than file operands.
+  Options must precede file operands. Unquoted tilde expansion, unknown
+  options, recursive or symlink-following `ls`, following `tail`, `printf -v`,
+  `%n`, shell redirections, and unknown shell tool arguments fall through.
+  For `sort`, `tail`, and `uniq`, use `--` before file operands beginning
+  with `+`; legacy offset syntax falls through. `uniq` accepts at most one
+  input operand. `stat` excludes ambiguous `-f` and `-t` options. `find`
+  permits selected predicates and does not follow descendant symlinks;
+  execution, deletion, file-output and reference-file predicates fall through.
+  `sed` accepts only numeric or `$` address ranges with `p` commands, such as
+  `sed -n '1,10p' file`; in-place editing, external scripts and file or program
+  operations fall through. `jq` accepts static selectors such as
+  `.items[] | .name`, with selected display flags; functions, modules,
+  external-input options and other expressions fall through. Explicit output
+  files, temporary-directory overrides and external programs are excluded from
+  `sort`, but `sort` may still create its own temporary files outside the
+  permitted roots.
+  Commands that read standard input require an immediately preceding pipeline
+  segment; `jq -n` instead uses null input. A path-dependent preset command
+  falls through when an earlier segment is outside the display preset; piped or
+  background mixtures with other commands also fall through when the preset
+  accesses paths. Other segments still need their own allow rules or presets.
+  The hook cannot inspect the CLI's live additional directory permissions;
+  other paths fall through to normal CLI permission handling. Explicit command
+  rules remain independent and can allow broader operations. The path checks
+  are not a sandbox: filesystem changes after inspection, inherited
+  environment, shell functions, and executable lookup can change behavior.
+- Leading Bash assignments can be stripped before matching an existing allow
+  rule or a preset, subject to the environment policy below. If any segment
+  has an assignment, every direct `gh` segment in the request must satisfy the
+  built-in read-only checks, even when matched by an explicit command rule.
+  The preset and those checks cover
+  `pr view|list|status|checks|diff`, `issue view|list|status`, `repo view|list`,
+  `run view|list`, `workflow view|list`, `release view|list`, `gist view|list`,
+  `search code|repos|issues|prs|commits`, and `status`. `gh auth status`
+  requires `--no-refresh`; `gh auth token` and token-display flags are excluded.
+  `gh api` must be statically identifiable as GET. Unknown `gh` commands or
+  flags, executable paths, `--web`, browser-launching forms, local-output
+  commands, file/stdin API bodies, and unverified forms fall through from the
+  preset. A separate command rule can still allow these forms when no segment
+  has assignments; requests without assignments retain their existing explicit
+  command-rule behavior.
+- `hooks.permissionRequest.environmentAssignments` controls assignment names.
+  The default `allowlist` permits `GH_TOKEN`, `GITHUB_TOKEN`,
+  `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `NO_COLOR`, `CLICOLOR`,
+  `CLICOLOR_FORCE`, `GH_COLOR_LABELS`, `GH_ACCESSIBLE_COLORS`, `GH_MDWIDTH`,
+  and `GH_SPINNER_DISABLED`. A custom `allow` list adds patterns; a custom
+  `deny` list excludes patterns and always takes precedence. Patterns use
+  case-sensitive Go path globs. `PATH` is always excluded and cannot be
+  re-allowed.
+- Set `mode: denylist` to permit other variable names except the standard
+  exclusions: `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `IFS`, `CDPATH`,
+  `LD_*`, `DYLD_*`, `GIT_*`, `GCONV_PATH`, `GIO_EXTRA_MODULES`,
+  `GLIBC_TUNABLES`, `MALLOC_*`, `GH_HOST`, `GH_REPO`, `GH_CONFIG_DIR`,
+  `GH_PATH`, `GH_EDITOR`, `GH_BROWSER`, `GH_PAGER`, `GH_DEBUG`,
+  `GH_FORCE_TTY`, `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `XDG_CACHE_HOME`, `EDITOR`, `VISUAL`, `PAGER`, `BROWSER`, `LESSOPEN`,
+  `LESSCLOSE`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`,
+  `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy`, `SSL_CERT_FILE`,
+  `SSL_CERT_DIR`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_OPTIONS`,
+  `NODE_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PERL5OPT`, `PERL5LIB`,
+  `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
+  `_JAVA_OPTIONS`, `GOFLAGS`, `GOCACHEPROG`, `GOAUTH`, `GOENV`, `GOROOT`,
+  `GOTOOLCHAIN`, `CC`, `CXX`, `FC`, `AR`, `PKG_CONFIG`, `GCCGO`,
+  `GCCGOTOOLDIR`, `CGO_CFLAGS*`, `CGO_CPPFLAGS*`, `CGO_CXXFLAGS*`,
+  `CGO_FFLAGS*`, and `CGO_LDFLAGS*`. These Go and compiler exclusions also
+  affect existing denylist configurations. Explicit `allow` patterns can
+  override standard exclusions, except for `PATH`; use this mode only when you
+  accept the broader risk.
+- For example, the following configuration allows `GOPROXY=off GOSUMDB=off
+  go build` and permits other non-excluded variables for commands matched by
+  the rule:
+
+  ```yaml
+  hooks:
+    permissionRequest:
+      allow:
+        commands: ["go build:*"]
+      environmentAssignments:
+        mode: denylist
+  ```
+
+  `go build:*` permits arbitrary arguments, including `-toolexec`, which can
+  run another program. `GOSUMDB=off` disables the checksum database, not checks
+  against existing `go.sum` entries. Use a narrower command rule if needed.
+- Assignment values may be fixed literals or a whole simple `$NAME` or
+  `${NAME}` reference. The hook never expands or executes those values. Other
+  expansions and assignment-only segments are not auto-approved. `env
+  NAME=value` and `export NAME=value` do not use assignment stripping; their
+  existing command-rule behavior is unchanged. An explicit command rule or the
+  preset must match after assignments are removed. A deny rule is checked
+  against both forms first; if a dynamic value might match a deny rule, the hook
+  abstains instead.
+- The denylist is not a safety boundary: unknown variables, explicit overrides,
+  allowed arguments, inherited environment, executable resolution, shell
+  functions, and subprocesses can change command behavior or run programs.
+  The hook does not resolve assignment values or determine whether they name
+  executable files. Allowlist mode and denylist exclusions do not guarantee
+  that an allowed command is safe.
+- `GH_HOST` and `GH_REPO` are excluded by default. If explicitly allowed,
+  their values on direct `gh` commands must be static and any explicit host
+  must be trusted. `github.com` is trusted by default; add Enterprise hosts with
+  `trustedHosts`, for example:
+
+  ```yaml
+  hooks:
+    permissionRequest:
+      environmentAssignments:
+        mode: allowlist
+        allow: ["GH_HOST"]
+        trustedHosts: ["github.enterprise.example"]
+  ```
+
+  For the preset and assignment-bearing requests, explicit `--hostname`,
+  repository URLs, and API URLs are also checked.
+  Omitting a host deliberately trusts the execution environment, including its
+  `gh` configuration. In particular, `api_host`, inherited environment,
+  credentials, DNS, redirects, proxy settings, and subprocesses can affect
+  routing or expose credentials; this hook cannot constrain them.
+- Bash assignment values are replaced with `[REDACTED]` in allow and deny log
+  targets before truncation. If the command cannot be parsed safely, its target
+  is omitted. Other command arguments may still contain secrets.
+- Command lines with other `$` expansions, command substitution, subshells,
+  brace groups, `!`, comments, input redirection, or output redirection other
+  than `/dev/null` or a file descriptor (`2>&1`) are never decided.
+- `powershell` commands are never allowed, and `tools` rules never allow the
+  `bash` or `powershell` tools. Requests that ask to bypass the sandbox are
+  never allowed.
+- Unknown config keys and invalid rules are errors.
+- `hooks.disabled: true` makes both hook commands abstain from every request
+  without removing rules or the hook registration. Other rules are not
+  validated while disabled. Use [hook disable](#hook-disable) and
+  [hook enable](#hook-enable) to toggle it.
+
+On Linux and on macOS builds with cgo ACL support, calculated allow and deny
+hook decisions are logged by default to
+`$COPILOT_HOME/gh-copilot-attendant/permission-hook/events.jsonl` (default
+`~/.copilot/gh-copilot-attendant/permission-hook/events.jsonl`). Set
+`hooks.logging.disabled: true` to disable logging independently of hook
+decisions. No-decision calls, missing or disabled configuration, and errors
+before a decision are not logged. Configuration and input evaluation errors
+emit a sanitized hook progress warning and produce no permission decision.
+The normal permission flow can still allow the call, and explicit hook deny
+rules are not applied if evaluation fails. Progress warnings are displayed by
+supporting Copilot CLI clients; older or other clients may not display them.
+If a command hook cannot start, crashes, or cannot write its output, it can
+still fail closed in `preToolUse`. Copilot CLI handles hook timeouts separately
+and falls through to the normal permission flow.
+`hook status` reports the current logging configuration and path, not whether
+logging succeeded. Logging is unsupported on other platforms and macOS builds
+without cgo; those builds report a generic diagnostic instead of recording.
+
+The log records the time, hook event, safe tool name, explicit valid session
+ID, calculated decision, and processing and output states, including output
+failures after a decision. Records also include the decision target: the shell
+command line, the `view`
+path, the `rg`/`grep`/`glob` search paths (or the working directory when none
+are given), or the `web_fetch` URL. Targets are truncated so each record fits
+in 1,024 bytes and are marked as truncated. No-decision records, other tool
+arguments, configuration, and raw errors are not recorded. Command lines can
+contain secrets, and session IDs, tool names, paths, and URLs may be sensitive.
+Existing no-decision records remain in the file but are excluded from
+statistics. The log grows without automatic deletion; manage it manually. Unsafe
+log permissions or write errors
+prevent recording and produce a generic diagnostic without changing the hook
+decision. A record shows the hook's output, not whether Copilot CLI accepted
+it, and does not cover calls that never reached the hook. Updating a dashboard
+source runner does not update an installed hook's pinned executable.
+
+An allowed command name does not guarantee a read-only operation. A `:*` rule
+authorizes all remaining arguments; for example, `git diff:*` also permits
+`git diff --output=<file>`. Git configuration, such as `core.fsmonitor`, can
+run programs even for `git status`. Allow only commands you trust in every
+workspace, and prefer exact rules for commands with dangerous options.
+
+Scoped rules decide whether to auto-approve a call; they are not a sandbox.
+Hook approvals can take precedence over native CLI denials. For example, an
+allowed URL can bypass `--deny-url` without changing that setting. Enable
+`allowDespiteNativeDeny` only when this behavior is intended; do not assume
+native deny rules take precedence over hook approvals for other tools.
+Recursive search and glob rules rely on the current tools not following
+symlinks beneath their search roots. Filesystem changes between the check and
+execution, other hooks that change arguments or permissions, and URL redirects
+are not confined by these rules. Unmatched calls follow the CLI's existing
+permissions, which can independently allow access. A failing `preToolUse`
+command can deny a call; a timeout falls through to normal permission handling.
+
+#### hook disable
+
+```sh
+gh copilot-attendant hook disable [--config <path>] [--path <file>]
+```
+
+Sets `hooks.disabled: true` in the config file so the installed hook makes no
+decision for any request and Copilot CLI uses its normal permission flow. Other
+rules and comments are kept, and [hook enable](#hook-enable) restores them. A
+missing config file is created with only this flag.
+
+The config file is selected by `--config`, then the config pinned by the hook
+installed at `--path`, then `$GH_COPILOT_ATTENDANT_CONFIG`, then
+`$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml` (default
+`~/.config/gh-copilot-attendant/config.yaml`). The change applies to the next
+hook call; no session restart is needed.
+
+- `--config`: config file path. Default: the config pinned by the installed
+  hook, then the normal resolution order.
+- `--path`: hook config file used to find a pinned config. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
+
+#### hook enable
+
+```sh
+gh copilot-attendant hook enable [--config <path>] [--path <file>]
+```
+
+Removes `hooks.disabled` from the config file so the installed hook applies its
+rules again. Other rules and comments are kept. The command fails without
+changing the file when the resulting config is invalid. A missing config file is
+left unchanged.
+
+The config file is selected by `--config`, then the config pinned by the hook
+installed at `--path`, then `$GH_COPILOT_ATTENDANT_CONFIG`, then
+`$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml` (default
+`~/.config/gh-copilot-attendant/config.yaml`). The change applies to the next
+hook call; no session restart is needed.
+
+- `--config`: config file path. Default: the config pinned by the installed
+  hook, then the normal resolution order.
+- `--path`: hook config file used to find a pinned config. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
+
+#### hook install
+
+```sh
+gh copilot-attendant hook install [--config <path>] [--force] \
+  [--path <file>] [--scoped-tools[=true|false]] [--timeout <seconds>]
+```
+
+Writes a user-level Copilot CLI hook config. It selects a single hook from the
+current rules: `preToolUse` with all rules when a read preset, scoped, or
+supported read-tool rules are present, otherwise `permissionRequest`. With
+`--scoped-tools`, it instead registers the strict scoped `preToolUse` mode. The
+file is written to
+`$COPILOT_HOME/hooks/gh-copilot-attendant.json` (default
+`~/.copilot/hooks/gh-copilot-attendant.json`). Copilot CLI loads hooks when a
+session starts. Switching modes at the same path requires `--force` and does
+not remove registrations from other files or sources.
+
+- `--config`: config file path, passed to the hook as an absolute path.
+  Default: none, so the hook uses its own resolution order.
+- `--force`: overwrite an existing hook config file. Default: `false`.
+- `--path`: destination hook config file. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
+- `--scoped-tools`: explicitly select strict scoped `preToolUse` (`true`) or
+  `permissionRequest` (`false`). Default: select automatically.
+- `--timeout`: hook `timeoutSec` in seconds. Default: `10`.
+
+#### hook permission-request
+
+```sh
+gh copilot-attendant hook permission-request [--config <path>]
+```
+
+Reads a `permissionRequest` hook payload from stdin and prints
+`{"behavior":"allow"}` or `{"behavior":"deny","message":"..."}` according to
+the config rules. Nothing is printed when no rule decides the request or the
+config file does not exist. Copilot CLI invokes this command; run it manually
+only to test rules:
+
+```sh
+echo '{"toolName":"bash","toolInput":{"command":"git status"}}' |
+  gh copilot-attendant hook permission-request
+```
+
+The payload may use `toolName`/`toolInput`, `tool_name`/`tool_input`, or
+`toolArgs`; structured input may be an object or a JSON-encoded object string.
+Other input values are treated as opaque for tools without structured rules.
+Invalid JSON envelopes, duplicate keys, conflicting values, invalid structured
+input, and config errors produce a single sanitized progress warning, exit with
+status 0, and do not produce a decision. A failure writing hook output still
+returns an error.
+
+- `--config`: config file path. Default: `$GH_COPILOT_ATTENDANT_CONFIG`, then
+  `$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml`.
+
+#### hook pre-tool-use
+
+```sh
+gh copilot-attendant hook pre-tool-use [--all-rules] [--config <path>]
+```
+
+Reads a `preToolUse` hook payload from stdin and prints
+`{"permissionDecision":"allow"}` for a matching scoped read or URL rule, or
+an allowed `list_repositories` call. A matching tool deny rule prints
+`{"permissionDecision":"deny","permissionDecisionReason":"..."}`. Nothing is
+printed when no rule decides the call. Copilot CLI invokes this command; use
+the same config resolution and input validation as
+[hook permission-request](#hook-permission-request). Rules unsupported by the
+scoped mode cause a progress warning and no decision. `--all-rules` also
+evaluates command and unscoped tool rules; hook approvals can override native
+CLI denials.
+
+- `--all-rules`: evaluate all configured rules. Default: `false`.
+- `--config`: config file path. Default: `$GH_COPILOT_ATTENDANT_CONFIG`, then
+  `$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml`.
+
+#### hook status
+
+```sh
+gh copilot-attendant hook status [--config <path>] [--path <file>]
+```
+
+Shows the effective state (`active`, `disabled`, `no config`, `config error`,
+`unmanaged`, or `not installed`), whether the hook config file exists and was
+generated by [hook install](#hook-install), its mode, executable, and timeout,
+and the rules config it reads with rule counts and gh read preset state. It
+warns if a permissionRequest installation no longer covers configured read
+rules. In preToolUse mode, other
+files in the same hook directory that register `permissionRequest` hooks are
+reported as warnings; hooks from other sources are not inspected.
+
+- `--config`: config file path used when the hook does not pin one. Default:
+  `$GH_COPILOT_ATTENDANT_CONFIG`, then
+  `$XDG_CONFIG_HOME/gh-copilot-attendant/config.yaml`.
+- `--path`: hook config file. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
+
+#### hook uninstall
+
+```sh
+gh copilot-attendant hook uninstall [--force] [--path <file>]
+```
+
+Removes the hook config file written by [hook install](#hook-install). A file
+not generated by `hook install` is kept unless `--force` is given. A missing
+file is not an error. The rules config file and any executable referenced by
+the hook are not removed. Copilot CLI loads hooks when a session starts, so
+running sessions keep the hook until restarted; use [hook disable](#hook-disable)
+to stop decisions immediately.
+
+- `--force`: remove the file even if it was not generated by `hook install`.
+  Default: `false`.
+- `--path`: hook config file. Default:
+  `$COPILOT_HOME/hooks/gh-copilot-attendant.json`.
 
 ### metrics
 
@@ -481,6 +965,41 @@ requests, AIU, and token counts), including unfinished sessions, summed overall
 and broken down by working directory. Usage is not recorded per permission
 request: `--agent-mode` selects sessions through matching requests, while other
 permission filters do not affect usage totals.
+
+`HOOK_ACTIVITY`, `HOOK_TOOL`, and `HOOK_TARGET` (versioned `HookActivity` in
+JSON) separately count recorded `permissionRequest` and `preToolUse` hook
+invocations with a calculated allow or deny decision. They distinguish output
+written/failed states and successful/output-error processing. No-decision
+records from older logs are excluded without modifying the log. Compatibility
+fields `Decisions.None`, `Outputs.NotAttempted`, and `Processing.InputError`
+remain zero.
+These counts are not permission requests, decision sources, unique tool calls,
+or proof that the CLI accepted a hook output. Unlogged or failed-to-log hooks
+cannot be reconstructed. `ByDecisionTool` groups recorded tools independently
+for allow and deny; `--top` limits each list separately, not the decision
+totals. `HOOK_TARGET` (`ByTarget`) groups allow and deny
+invocations by decision, tool, and recorded target; truncated targets end with
+`…`, and records written before targets were logged show `<not recorded>`.
+
+The hook log belongs to the same Copilot profile as the session history.
+`--since` and `--until` select hook record timestamps with an inclusive lower
+and exclusive upper bound; `--period` sets the lower bound. Directory and
+session scope use exact recorded session IDs and readable session metadata.
+Missing, unmatched, duplicate, or unscopable IDs are not guessed into a scoped
+result. Their separate counts cover the entire selected time window, not just
+the selected workspace. They are included in totals when neither a directory
+nor a session is selected (`--all` without `--session`), and otherwise
+excluded. Skipped session metadata can leave IDs unmatched; a session-state
+directory that cannot be listed also fails the session statistics scan.
+Permission filters, including `--sandbox` and `--agent-mode`, do not apply.
+`--top` limits tool and target rows, not totals.
+
+Malformed, interrupted, oversized, and unsupported-version records are counted
+as file-wide coverage gaps because their time or scope may be unknown. JSON
+`HookActivity.State` is `available`, `missing`, `unreadable`, `unsupported`, or
+`partial`; `Data` is `null` when no log can be read. An unsafe log is
+unreadable, and a partial read retains only completed observations. Missing,
+unreadable, or incomplete data does not establish that no hooks ran.
 
 `AGENT_MODE` (`ByAgentMode` in JSON) groups permission requests by the
 `agentMode` recorded when permission evaluation began. It includes
@@ -831,9 +1350,18 @@ row. Fusion-only and VS Code views do not show this full-session activity. The
 dashboard groups CLI permission panels into a collapsible Permissions category;
 its Summary panel uses the same bordered panel style as the other panels and
 also shows confirmed human permission wait and separate other/unknown-source
-decision timing. Select `assisted` in Permission modes and `human_response` in
-Decision sources to filter human decisions while Assisted Permissions was
-enabled; optionally select `approved` in Results and `shell` in Tool kinds.
+decision timing. A separate Hook activity panel, placed directly above Session
+activity, shows recorded decisions, output and processing states, and coverage
+gaps. Separate allow and deny tool-share graphs use all recorded decisions of
+each type as their denominators; tools omitted by Top are grouped as Other.
+Tool and target detail tables start collapsed and retain their state across
+dashboard updates and view changes. The panel and agent summaries use the same
+hook aggregate; an older CLI without tool breakdowns requires an update or the
+`source` runner. Fusion-only and VS Code views exclude the panel. Select
+`assisted` in Permission modes and
+`human_response` in Decision sources to filter human decisions while Assisted
+Permissions was enabled; optionally select `approved` in Results and `shell` in
+Tool kinds.
 The Permission modes filter does not restrict usage, session activity, Fusion,
 sandbox execution, or user-question statistics. Each panel, including Models
 and Workspaces, can be collapsed
