@@ -48,6 +48,10 @@ next hook call.`,
 			}
 			msg := fmt.Sprintf("Hook rules %s in %s\n", state, res.Path)
 			if !res.Changed {
+				if res.Missing {
+					_, err = fmt.Fprintf(cmd.OutOrStdout(), "No config found at %s; nothing to enable\n", res.Path)
+					return err
+				}
 				msg = fmt.Sprintf("Hook rules already %s in %s\n", state, res.Path)
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), msg)

@@ -18,6 +18,8 @@ type ToggleResult struct {
 	Changed bool
 	// Created is true when a new config file was written.
 	Created bool
+	// Missing is true when the config file did not exist and was left absent.
+	Missing bool
 }
 
 // SetDisabled sets or clears hooks.disabled in the config file at p, keeping the
@@ -36,6 +38,7 @@ func SetDisabled(p string, disabled bool) (ToggleResult, error) {
 			return res, err
 		}
 		if !disabled {
+			res.Missing = true
 			return res, nil
 		}
 		res.Created = true

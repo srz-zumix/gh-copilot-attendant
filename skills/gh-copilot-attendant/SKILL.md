@@ -112,6 +112,21 @@ PowerShell is never allowed, and tool rules never allow shell tools.
 tool names and supports
 `view`, `rg`, `grep`, and `glob` with literal absolute path roots, not glob or
 regular-expression paths, or `web_fetch` with exact HTTP/HTTPS URLs.
+Alternatively, set `currentRepository: true` on a `web_fetch` scoped rule
+(default false; mutually exclusive with `paths` and `urls`) to approve HTTPS
+Web, repository API, and raw file URLs for the hook cwd's Git `origin` fetch
+remote. It also requires `allowDespiteNativeDeny: true`. The first fetch URL,
+including Git `insteadOf` rewriting, determines the repository; push URLs,
+upstream, `GH_REPO`, and inherited `GIT_*` overrides do not. Resolution works
+from subdirectories and worktrees, with a two-second timeout. Missing or
+unresolvable origins produce a sanitized progress warning unless another rule
+matches independently. GitHub.com API/raw hosts and Enterprise `/api/v3/repos`
+and `raw.HOST` URLs are supported, limited to that repository's path boundary.
+Only HTTPS requests with no port or port 443 match; HTTP(S) remotes with
+non-default ports are unsupported. Credentials, traversal, encoded separators,
+and nested escapes in request paths are rejected. Queries and fragments are
+unrestricted, and redirects are not checked. Git remote configuration is
+trusted and can change the approved repository.
 Each URL rule requires `allowDespiteNativeDeny: true`: hook approvals can bypass
 native denials such as `--deny-url`, without changing the native setting. Do not
 assume native deny rules take precedence for other tools.

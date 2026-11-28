@@ -232,6 +232,9 @@ hooks:
         - tools: ["web_fetch"]
           urls: ["https://docs.example.invalid/guide"]
           allowDespiteNativeDeny: true
+        - tools: ["web_fetch"]
+          currentRepository: true
+          allowDespiteNativeDeny: true
 ```
 
 Install this example using `hook install`. For command rules, configure rules
@@ -268,7 +271,8 @@ hooks:
   arguments is not automatically allowed because its arguments cannot be
   inspected, but a matching tool deny rule still applies.
 - `allow.scopedTools` contains rules for exact tool names. A rule must specify
-  either `paths` or `urls`, not both. Path rules support `view`, `rg`, `grep`,
+  exactly one of `paths`, `urls`, or `currentRepository: true`.
+  Path rules support `view`, `rg`, `grep`,
   and `glob`; URL rules support `web_fetch`. A scoped tool cannot also match
   an unconditional `allow.tools` pattern. Scoped deny rules are not supported.
 - `paths` lists literal absolute roots, not glob patterns or regular
@@ -284,6 +288,34 @@ hooks:
   or fragment. Credentials in URLs are not accepted. The rule checks only the
   requested URL, not redirect destinations. Each URL rule requires the explicit
   `allowDespiteNativeDeny: true` acknowledgment.
+- `currentRepository: true` (optional, default `false`) permits `web_fetch`
+  HTTPS URLs for the Git `origin` fetch remote resolved from the hook's
+  absolute `cwd`, including subdirectories and worktrees. It requires
+  `allowDespiteNativeDeny: true` and cannot be combined with `paths` or `urls`
+  in the same rule. Supported remotes are HTTP(S), SSH (including scp-like
+  syntax), and Git URLs with an `OWNER/REPO` path. Only the first fetch URL is
+  used, after Git's `insteadOf` rewriting; push URLs, `upstream`, `GH_REPO`,
+  and inherited `GIT_*` overrides do not select the repository.
+  Git resolution has a two-second timeout. Missing/relative `cwd`, a missing
+  origin, unsupported remotes, or Git failures emit a sanitized progress
+  warning without automatic approval, unless another rule independently
+  matches. Git configuration is trusted: changing `origin` or local URL
+  rewrites changes the approved repository.
+  Web URLs must match the remote's exact host and `/OWNER/REPO` path or a
+  descendant. GitHub.com also supports
+  `https://api.github.com/repos/OWNER/REPO/...` and
+  `https://raw.githubusercontent.com/OWNER/REPO/...`.
+  Enterprise hosts support `https://HOST/api/v3/repos/OWNER/REPO/...`,
+  `https://HOST/OWNER/REPO/raw/...`, and
+  `https://raw.HOST/OWNER/REPO/...` for subdomain-isolated raw content.
+  Other hosts and repositories are not allowed. Owner and repository
+  comparisons are case-insensitive; descendant paths are not otherwise
+  rewritten. Requests require HTTPS with no port or port 443; HTTP(S)
+  remotes with non-default ports are unsupported. Credentials, dot segments,
+  repeated path separators, backslashes, encoded separators, control
+  characters, and nested percent escapes in request paths are rejected.
+  Query strings and fragments are unrestricted, but only the requested URL
+  is checked, not redirect destinations.
 - Config deny rules win over config allow rules. A request that matches no
   rule produces no decision, so Copilot CLI continues with its normal
   permission flow. `permissionRequest.deny` rules explicitly deny matching
